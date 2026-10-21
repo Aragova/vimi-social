@@ -1,119 +1,145 @@
 # ViMi Social — Context for AI / new chat
 
-If you are a new AI agent or chat session, read these first:
+Read these first:
 
 1. `docs/PRODUCT_VISION.md`
-2. `AGENTS.md`
-3. `docs/PROJECT_STATUS.md`
+2. `docs/PROJECT_STATUS.md`
+3. `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md`
+4. `AGENTS.md`
 
 ## What this project is
 
-ViMi Social is a production **Telegram-first, AI-first** multi-tenant SaaS for automated social-media content discovery, preparation, adaptation and publishing/orchestration.
+ViMi Social is a production **Telegram-first, AI-first, automation-first** multi-tenant SaaS for discovering/receiving content, analyzing it, creating destination-specific variants, publishing safely and operating recurring content workflows.
 
-The Telegram bot is the **primary customer interface**. It provides onboarding, storefront/tariffs/subscription entry points, AI task intake, candidate previews, approvals, publication configuration, status/history, usage and day-to-day control.
+The Telegram bot is the primary customer interface. Web/Next.js is secondary.
 
-The primary content source is **AI-assisted discovery/automation**. The normal user journey begins with an intent/task, not a finished upload. Manual content upload remains a secondary path and must reuse the same downstream analysis/adaptation/publication pipeline.
+## Fundamental source model
 
-Adult/18+ content is an expected and frequent workload. The system must therefore treat explicitness classification, platform eligibility and compliant variant generation as first-class product behavior.
+There are exactly three first-class source modes in the current product concept:
 
-Web/Next.js is secondary: marketing landing, optional linked account/dashboard, browser-required integration flows, richer analytics/admin views where justified. Normal MVP use must not require leaving Telegram.
+1. **AI Search** — primary automated path. User describes the task; Scout searches authorized source connectors.
+2. **Manual Upload** — user supplies/forwards a specific asset; it enters the same downstream pipeline.
+3. **Source Feed** — a persistent Telegram channel/group/topic becomes a managed queue consumed over time according to an automation policy.
 
-## Where we are
+These modes converge into one downstream pipeline. Do not build three separate processing systems.
 
-On 2026-10-21 architecture PR #8 was merged after exact-head Composition + PoC A–E CI passed. The architecture laboratory is closed as the active development target. Production repository foundation PR #1 is open and its latest CI has passed. We are at Telegram-first, AI-first production foundation / vertical slice 1.
+## Scout / source integrations
 
-## Chosen production shape
+Scout is not generic web search. It routes through a typed Source Connector Registry, e.g. X, Telegram, Reddit, adult-content source adapters and future permitted sources. Generic web search is fallback/supplement only.
 
-- Modular-monolith monorepo initially.
-- First-class Telegram bot interface/process.
-- Python 3.12+ backend, FastAPI/application services.
-- PostgreSQL, SQLAlchemy 2, psycopg 3, Alembic.
-- Temporal for durable orchestration.
-- Isolated media worker boundary.
-- Specialized AI components (`Scout`, `Curator`, `SceneRanker`, `VariantPlanner`, `CaptionGenerator`, `AnalyticsInsight`) behind controlled typed tools.
-- Platform capability/compliance preflight before publication.
-- Next.js + TypeScript retained as a secondary web surface.
-- Telegram identity is the first interaction identity for bot-originated customer flows; Telegram identifiers are resolved server-side into ViMi user/workspace/tenant authority.
-- Managed IdP may still be used for web/admin experiences.
-- S3-compatible object storage.
+Connectors may only use permitted access methods and must not bypass auth, paywalls, DRM, age gates, anti-bot protections or source restrictions.
+
+## Adult/18+ workload
+
+Legal adult/18+ content, including explicit gay adult material, is an expected frequent workload. Adult classification, scene-level suitability, provenance/rights metadata and destination policy eligibility are normal pipeline concerns.
+
+Destination decision examples:
+
+```text
+DIRECT_ALLOWED
+ADAPTATION_REQUIRED
+MANUAL_REVIEW_REQUIRED
+BLOCKED
+```
+
+Adaptation must create a genuinely policy-compliant derivative. Never disguise prohibited content or attempt to bypass moderation.
+
+## International / regional contract
+
+Design international-ready from the first slices:
+
+- persisted event timestamps: UTC;
+- schedules/quiet hours: IANA timezone IDs;
+- initial UI locales: Russian + English;
+- UI locale != content language != search language != destination/account language;
+- Telegram `language_code` is only an initial hint;
+- region/country is separate from language;
+- money always has ISO 4217 currency;
+- recurring schedules must preserve local wall-clock intent across DST;
+- VM/server timezone never defines customer schedule behavior.
+
+Do not block MVP on many translations, global taxes or full age/KYC, but do not design data models that make them expensive to add.
+
+## Workspace / brand / accounts
+
+Do not assume one tenant equals one social account/brand.
+
+Conceptual shape:
+
+```text
+User -> Membership -> Workspace/Tenant -> Brand/Project
+                                      -> Sources/SourceFeeds
+                                      -> Connected destination accounts
+                                      -> Automation policies
+```
+
+User UI/notification preferences remain separate from workspace/brand publishing defaults.
+
+## Production architecture that remains valid
+
+- modular monolith initially;
+- Python 3.12+, FastAPI/application services;
+- PostgreSQL + RLS, SQLAlchemy/psycopg/Alembic;
+- Temporal durable workflows;
+- isolated media worker;
+- S3-compatible object storage;
+- specialized AI components behind typed tools;
+- source connectors separate from destination/provider adapters;
+- Next.js secondary web surface;
 - GitHub Actions, Ruff, strict Pyright, pytest, OpenTelemetry.
 
-## Architecture invariants already decided
+## Architecture invariants
 
-1. Stable external `operation_key` is the logical identity for publication/workflow operations.
-2. Irreversible external mutations are not blindly retried after ambiguity.
-3. Ambiguous mutation outcomes become `UNKNOWN` and require reconciliation.
-4. PostgreSQL is the correctness authority for tenant commercial usage.
-5. Quota is reserved atomically before expensive work; ledger history is append-only.
-6. Tenant DB context is transaction-local; application roles cannot bypass RLS.
-7. Telegram/provider/webhook claims do not authorize arbitrary tenant selection; ownership is resolved server-side.
-8. Remote media is hostile input and must pass SSRF/DNS pinning, redirect, streaming and isolation controls.
-9. Privileged cross-tenant access requires durable/non-rollbackable audit evidence before results leave the trusted boundary.
-10. Durable authority/fencing prevents stale actors and raw I/O paths from bypassing accepted delete/live-stop/recovery decisions.
-11. Bot handlers are interface code, not the home of business/domain logic.
-12. AI agents do not receive unrestricted shell/database/secrets/network authority; they act through typed application tools and budgets.
-13. Adult-content adaptation is compliance transformation, not moderation evasion. If a destination cannot accept either the original or a genuinely compliant derivative, block it.
+1. Stable `operation_key` identity for externally visible operations.
+2. Ambiguous external mutations become `UNKNOWN`; never blind-retry.
+3. PostgreSQL is the commercial-usage correctness authority.
+4. Quota is reserved atomically before expensive work; ledger is append-only.
+5. Tenant context is transaction-local; app DB roles are non-owner/non-superuser/NOBYPASSRLS.
+6. Caller-controlled tenant IDs are never authority.
+7. Telegram identity is resolved server-side into ViMi user/workspace authority.
+8. Remote/discovered media is untrusted and goes through secure ingest/isolation.
+9. AI has no unrestricted shell/DB/secrets/network authority.
+10. Bot handlers, source connectors and provider adapters do not own core business rules.
+11. Platform/content policies are versioned/testable, not scattered ad-hoc conditionals.
+12. Privileged cross-tenant access requires durable audit evidence.
+
+## Current reality / correction to the initial foundation
+
+Production foundation PR #1 was created before the final product concept was fully clarified. It is mostly reusable, but it must not be merged/extended blindly as if the product were web-first or managed-IdP-first.
+
+Important corrections:
+
+- `ExecutionContext` must be a source-neutral trusted envelope. Telegram is the first customer identity adapter; managed IdP remains optional for web/admin.
+- Next.js stays but is secondary.
+- PostgreSQL roles/RLS integration tests still need production-like hardening.
+- Usage reservation has a known concurrent-first-seen operation race and is not production-complete.
+- Telegram bot/source models, Source Feed, source connectors and internationalization primitives have not yet been implemented.
+
+See `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md` for the explicit KEEP / CHANGE / DEFER decisions.
 
 ## Current task
 
-Implement Telegram-native, AI-first vertical slice 1:
+Align the foundation first, then implement vertical slice 1:
 
 ```text
 Telegram /start
--> trusted Telegram ingress
--> server-side Telegram identity/workspace resolution
--> onboarding/main menu
--> user describes desired content/task
--> Scout discovers candidates from an authorized source
--> Curator ranks/filters candidates
--> MediaProbe + SceneDetector + SceneRanker
--> adult/content classification + platform compliance preflight
--> VariantPlanner proposes a direct or compliant adapted variant
+-> trusted Telegram identity/workspace resolution
+-> localized RU/EN-ready menu
+-> AI Search task
+-> one real authorized source connector
+-> normalized candidates + Curator
+-> media/scene analysis
+-> adult classification + platform preflight
+-> one direct/compliant variant
 -> Telegram preview/approval
--> tenant RLS transaction
--> atomic usage reservation
--> persisted operation
--> Temporal workflow start
--> provider dispatch
--> bot progress/status
--> UNKNOWN-safe reconciliation
--> final result in Telegram
+-> usage reservation + persisted operation
+-> Temporal
+-> one real destination adapter
+-> publication/status/reconciliation
 ```
 
-Manual upload is secondary and reuses the pipeline starting at provenance/media analysis.
+Deploy to staging/VM as soon as this works end-to-end. Manual Upload and Telegram Source Feed are early follow-ups through the same pipeline.
 
-The first VM/staging deployment should happen as soon as that AI-first path works end-to-end for one authorized source and one real destination. Do not wait for a complete web dashboard or every social platform.
+## Sources of truth
 
-## Product behavior expected from the bot
-
-The bot should feel like the product itself, not a thin command console. Prefer guided flows, inline keyboards, previews and concise status cards. It should eventually cover:
-
-- welcome/onboarding and product explanation;
-- plan comparison, subscription/storefront entry points and usage;
-- AI task creation as the main content input;
-- candidate discovery and ranked previews;
-- scene selection/clipping and platform-specific adaptation;
-- adult/explicitness classification and per-destination eligibility;
-- direct publication where allowed;
-- compliant derivative generation where the original is not allowed but an allowed version can be produced;
-- destination blocking with clear reason when no compliant version is possible;
-- optional manual upload;
-- destination/account selection and recommendations;
-- scheduling and publication options;
-- approval/preview;
-- publication status and reconciliation;
-- history, connected accounts and selected analytics;
-- support/help entry points.
-
-## Historical documentation map
-
-- `docs/history/architecture-poc/README.md` and `ROADMAP.md`
-- `docs/history/architecture-poc/product/PRODUCT_CONCEPT.md`
-- `docs/history/architecture-poc/architecture/ARCHITECTURE_BASELINE_0_10.md` + split parts
-- `docs/history/architecture-poc/architecture/POST_POC_DECISIONS.md`
-- `docs/history/architecture-poc/architecture/RED_TEAM_AUDIT_V1.md` + split parts
-- `docs/history/architecture-poc/architecture/RED_TEAM_AUDIT_V2.md` + split parts
-- `docs/history/poc-a` through `poc-e`
-- `docs/history/red-team-v2`
-
-The copied documents are historical evidence. `docs/PRODUCT_VISION.md` is the live product/UI/automation source of truth and `docs/PROJECT_STATUS.md` is the live phase/status document. Historical references to Next.js or manual upload as the dominant customer path are superseded on product priority; validated architecture contracts remain in force.
+`docs/PRODUCT_VISION.md` is the canonical product concept. `docs/PROJECT_STATUS.md` is the live implementation status. Historical architecture under `docs/history/` remains authoritative for validated security/reliability contracts unless explicitly superseded.
