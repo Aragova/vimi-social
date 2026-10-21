@@ -166,7 +166,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute(
         """
-        ALTER FUNCTION IF EXISTS resolve_source_task_tenant(text, uuid)
+        ALTER FUNCTION resolve_source_task_tenant(text, uuid)
             OWNER TO vimi_migration_owner;
         DROP FUNCTION IF EXISTS resolve_source_task_tenant(text, uuid);
         DROP TABLE IF EXISTS source_task_candidate;
