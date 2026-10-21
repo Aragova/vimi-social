@@ -22,6 +22,7 @@ This repository is a disposable architecture laboratory for ViMi Social. It is *
 - Tenant isolation tests must use production-like database roles where applicable.
 - AI components must not receive unrestricted shell, database, or secret access.
 - Media tests must treat URLs and uploaded media as untrusted input.
+- A PoC proves one architecture hypothesis; it should not grow into the production application.
 
 ## Code quality
 
