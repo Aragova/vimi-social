@@ -45,8 +45,8 @@ The audit requires adding or strengthening the following concepts:
 3. **Deterministic workflow IDs + outbox deduplication** between PostgreSQL and Temporal.
 4. **Temporal workflow versioning / worker versioning policy**.
 5. **External mutation safety model**: `NOT_STARTED / STARTED / ACCEPTED / UNKNOWN / CONFIRMED`.
-6. **OAuth credential concurrency control**.
-7. **Usage reservation**, not only post-factum UsageLedger.
+6. **OAuth credential versioning + single-flight refresh**.
+7. **Quota reservation**, not only post-factum UsageLedger.
 8. **Provider quota coordinator** separate from tenant fairness.
 9. **Webhook ordering/replay model**.
 10. **Safe remote media fetch service** with redirect and DNS-rebinding protection.
