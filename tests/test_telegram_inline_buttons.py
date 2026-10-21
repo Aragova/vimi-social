@@ -1,4 +1,5 @@
 import json
+from typing import cast
 
 import httpx
 import pytest
@@ -12,8 +13,9 @@ async def test_telegram_client_serializes_url_and_callback_buttons() -> None:
     seen_payload: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        decoded = json.loads(request.content)
-        assert isinstance(decoded, dict)
+        decoded_obj: object = json.loads(request.content)
+        assert isinstance(decoded_obj, dict)
+        decoded = cast(dict[str, object], decoded_obj)
         seen_payload.update(decoded)
         return httpx.Response(200, json={"ok": True})
 
@@ -33,10 +35,23 @@ async def test_telegram_client_serializes_url_and_callback_buttons() -> None:
         ),
     )
 
-    reply_markup = seen_payload["reply_markup"]
-    assert isinstance(reply_markup, dict)
-    keyboard = reply_markup["inline_keyboard"]
-    assert isinstance(keyboard, list)
-    assert keyboard[0][0]["url"] == "https://x.com/i/web/status/1"
-    assert keyboard[0][1]["callback_data"].startswith("candidate:select:")
+    reply_markup_obj = seen_payload["reply_markup"]
+    assert isinstance(reply_markup_obj, dict)
+    reply_markup = cast(dict[str, object], reply_markup_obj)
+    keyboard_obj = reply_markup["inline_keyboard"]
+    assert isinstance(keyboard_obj, list)
+    keyboard = cast(list[object], keyboard_obj)
+    first_row_obj = keyboard[0]
+    assert isinstance(first_row_obj, list)
+    first_row = cast(list[object], first_row_obj)
+    view_obj = first_row[0]
+    select_obj = first_row[1]
+    assert isinstance(view_obj, dict)
+    assert isinstance(select_obj, dict)
+    view = cast(dict[str, object], view_obj)
+    select = cast(dict[str, object], select_obj)
+    assert view["url"] == "https://x.com/i/web/status/1"
+    callback_data = select["callback_data"]
+    assert isinstance(callback_data, str)
+    assert callback_data.startswith("candidate:select:")
     await gateway.aclose()
