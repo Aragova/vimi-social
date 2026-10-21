@@ -1,0 +1,1 @@
+"""ViMi Social production application."""
