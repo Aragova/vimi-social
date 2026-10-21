@@ -8,11 +8,22 @@ This is the production ViMi Social SaaS repository. It is not an architecture la
 
 Before changing code, read:
 
-1. `docs/PROJECT_STATUS.md`
-2. `docs/CONTEXT_FOR_AI.md`
-3. `docs/history/architecture-poc/architecture/POST_POC_DECISIONS.md`
-4. `docs/history/architecture-poc/architecture/RED_TEAM_AUDIT_V2.md`
-5. Relevant detailed baseline/audit parts under `docs/history/architecture-poc/architecture/`
+1. `docs/PRODUCT_VISION.md`
+2. `docs/PROJECT_STATUS.md`
+3. `docs/CONTEXT_FOR_AI.md`
+4. `docs/history/architecture-poc/architecture/POST_POC_DECISIONS.md`
+5. `docs/history/architecture-poc/architecture/RED_TEAM_AUDIT_V2.md`
+6. Relevant detailed baseline/audit parts under `docs/history/architecture-poc/architecture/`
+
+## Product interface contract
+
+- ViMi Social is **Telegram-first**.
+- The Telegram bot is the primary customer product surface: onboarding, storefront, tariffs/subscriptions, content intake, agent tasks, publication setup, approvals, status, history, usage and day-to-day control.
+- A user must not be forced into a web dashboard for the normal MVP workflow.
+- Web/Next.js is secondary: marketing landing, optional linked account/dashboard, richer analytics/admin views, and browser-required integration flows.
+- Bot handlers are an interface layer only. Business rules belong in application/domain services and durable workflows.
+- Telegram identity/update data must be resolved server-side into ViMi user/workspace/tenant authority. Never accept an arbitrary tenant ID from the client.
+- Historical documents describing Next.js as the main customer frontend are superseded only on interface priority by `docs/PRODUCT_VISION.md`; their validated security/reliability contracts remain in force.
 
 ## Non-negotiable architecture contracts
 
@@ -41,4 +52,4 @@ Before changing code, read:
 
 ## Source of truth
 
-`docs/PROJECT_STATUS.md` is the current-stage source of truth. Historical PoC documents explain why contracts exist but do not mean the production project is still in PoC phase.
+`docs/PRODUCT_VISION.md` is the product/interface source of truth. `docs/PROJECT_STATUS.md` is the current-stage source of truth. Historical PoC documents explain why contracts exist but do not mean the production project is still in PoC phase.
