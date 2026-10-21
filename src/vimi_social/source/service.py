@@ -13,9 +13,9 @@ from vimi_social.usage.models import ReservationRequest
 from vimi_social.usage.repository import UsageRepository
 
 _EXPLICIT_SOURCE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("x", re.compile(r"(?:^|\W)(?:x|twitter|твиттер)(?:\W|$)", re.IGNORECASE)),
-    ("telegram", re.compile(r"(?:telegram|телеграм)", re.IGNORECASE)),
-    ("reddit", re.compile(r"(?:reddit|реддит)", re.IGNORECASE)),
+    ("x", re.compile(r"(?:^|\W)(?:x|twitter|твиттер\w*)(?:\W|$)", re.IGNORECASE)),
+    ("telegram", re.compile(r"(?:telegram|телеграм\w*)", re.IGNORECASE)),
+    ("reddit", re.compile(r"(?:reddit|реддит\w*)", re.IGNORECASE)),
 )
 
 
