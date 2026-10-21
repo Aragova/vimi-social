@@ -1,15 +1,21 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from secrets import compare_digest
-from typing import Annotated
+from typing import Annotated, Protocol
 
 from fastapi import FastAPI, Header, HTTPException, Response, status
 
 from vimi_social.telegram.models import TelegramUpdate
-from vimi_social.telegram.service import TelegramBotService, TelegramUpdateBusy
+from vimi_social.telegram.service import TelegramUpdateBusy
 
 
-def build_telegram_app(service: TelegramBotService, webhook_secret: str) -> FastAPI:
+class TelegramUpdateHandler(Protocol):
+    async def handle_update(self, update: TelegramUpdate) -> None: ...
+
+    async def aclose(self) -> None: ...
+
+
+def build_telegram_app(service: TelegramUpdateHandler, webhook_secret: str) -> FastAPI:
     secret = webhook_secret.strip()
     if not secret:
         raise ValueError("telegram webhook secret must not be empty")
