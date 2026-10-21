@@ -65,7 +65,59 @@ user-supplied asset
 -> same analysis, adaptation and publication pipeline
 ```
 
-## 4. Adult/18+ content as a first-class workload
+## 4. Multi-source Scout / Source Connector Registry
+
+Scout must not depend on one generic web search. Content discovery is a first-class integration layer built from **source-specific connectors** behind one typed contract and registry.
+
+Conceptual flow:
+
+```text
+user task
+-> Scout
+-> Source Router
+   -> XSourceConnector
+   -> TelegramSourceConnector
+   -> AdultSiteSourceConnector(s)
+   -> RedditSourceConnector
+   -> other platform/site connectors
+   -> GenericWebSearchConnector as fallback/supplement
+-> normalized CandidateContent records
+-> Curator / downstream pipeline
+```
+
+Potential sources include X, Telegram, adult-content platforms and sites (including gay/adult catalogues), Reddit, public websites, and future sources that satisfy product, legal, authorization and technical requirements.
+
+Each connector should expose a common capability model such as:
+
+```text
+search(query, filters, cursor)
+get_candidate_metadata(candidate_id)
+get_media_references(candidate_id)
+get_author/source_context(candidate_id)
+get_provenance_hints(candidate_id)
+get_policy/availability_hints(candidate_id)
+```
+
+Each source adapter must also declare its operational capabilities and restrictions, including:
+
+- official API/search availability;
+- authenticated-access requirements;
+- whether public web access is supported;
+- pagination/rate limits;
+- video/image/media metadata availability;
+- sensitive/adult-content visibility behavior;
+- allowed automation/download/reuse paths;
+- regional/account/age restrictions where relevant;
+- provenance/rights evidence that can be collected;
+- connector health/version/policy status.
+
+If the user explicitly names a source (for example, "find this on X"), Scout should route to that source connector first rather than silently replacing the request with a generic browser search. If the user asks broadly, Scout may query several eligible connectors in parallel and rank the normalized candidates together.
+
+Generic browser/web search is a fallback or supplemental discovery tool, not a substitute for source-native integration when a dedicated connector exists.
+
+Connectors must use permitted access methods only. ViMi must not bypass authentication, paywalls, DRM, age gates, access controls, anti-bot protections, or platform restrictions. Where an official API or permitted authenticated integration exists, prefer it over brittle scraping.
+
+## 5. Adult/18+ content as a first-class workload
 
 Adult/18+ content is an expected and frequent product workload, including explicit adult material. The architecture must therefore treat adult-content classification and destination eligibility as normal product behavior, not as an exceptional edge case.
 
@@ -103,7 +155,7 @@ Adaptation must make the resulting asset actually compliant with the destination
 
 Because policies differ by platform, account type, region, feature and policy version, eligibility must be versioned and data-driven through the Platform Capability/Compliance registries rather than hard-coded assumptions.
 
-## 5. Interface priority
+## 6. Interface priority
 
 ### Tier 1 — Telegram bot
 
@@ -137,9 +189,9 @@ Web is optional/secondary and must not become a prerequisite for normal MVP use.
 
 ### Tier 3 — Internal APIs/workers
 
-FastAPI, PostgreSQL, Temporal, media workers, storage, AI Tool Gateway, provider adapters, and other backend components remain core architecture. They serve the Telegram experience first and secondary web surfaces second.
+FastAPI, PostgreSQL, Temporal, media workers, storage, AI Tool Gateway, provider adapters, source connectors, and other backend components remain core architecture. They serve the Telegram experience first and secondary web surfaces second.
 
-## 6. Identity and tenancy direction
+## 7. Identity and tenancy direction
 
 For Telegram-originated customer flows, Telegram identity is the first interaction identity. Incoming bot updates must be accepted only through the trusted Telegram integration boundary and mapped server-side from immutable Telegram identifiers to ViMi users/workspaces/tenants.
 
@@ -147,7 +199,7 @@ A client must never be able to choose an arbitrary tenant by sending a tenant ID
 
 A managed web identity provider may still be used for browser/admin experiences, but the MVP customer journey must not require a separate web login before the Telegram bot can be used.
 
-## 7. AI component model
+## 8. AI component model
 
 The historical Architecture 1.0 specialization remains the intended direction:
 
@@ -162,7 +214,7 @@ Deterministic components remain authoritative for media probing, platform valida
 
 There is no unrestricted universal MegaAgent. AI acts through typed tools, tenant/entitlement/budget controls, and auditable application services.
 
-## 8. Publication model
+## 9. Publication model
 
 Initial destination family remains multi-platform and can include Telegram, X, Instagram, TikTok, YouTube/Shorts, Reddit, Bluesky, and future adapters.
 
@@ -186,7 +238,7 @@ ambiguous external outcome
 
 No blind duplicate publication is allowed after an ambiguous external mutation.
 
-## 9. Commercial experience
+## 10. Commercial experience
 
 The bot is the primary storefront. It should be able to present:
 
@@ -201,12 +253,13 @@ The bot is the primary storefront. It should be able to present:
 
 The exact payment provider/mechanism is an implementation decision and must respect Telegram/platform/payment-store policy. Product architecture must keep subscription entitlements separate from identity and from provider API quotas.
 
-## 10. Product architecture consequence
+## 11. Product architecture consequence
 
 The existing modular-monolith architecture remains valid, but product priorities are:
 
 - first-class Telegram bot application/process boundary;
 - AI-first task intake and automated content discovery/preparation;
+- Source Connector Registry with typed source adapters and routing;
 - first-class adult-content classification and platform eligibility/preflight;
 - scene-level analysis and variant generation before publication;
 - trusted Telegram update handling with server-side tenant/workspace resolution;
@@ -216,9 +269,9 @@ The existing modular-monolith architecture remains valid, but product priorities
 - Temporal remains the durable workflow engine for scouting, media preparation, approvals, scheduling, publication and reconciliation;
 - PostgreSQL remains the correctness authority;
 - media processing remains isolated;
-- provider adapters remain independent of Telegram UI code.
+- source connectors and provider adapters remain independent of Telegram UI code.
 
-## 11. MVP vertical slice
+## 12. MVP vertical slice
 
 The first real product slice is Telegram-native and AI-first:
 
@@ -227,7 +280,8 @@ Telegram /start
 -> server-side Telegram identity/workspace resolution
 -> onboarding/main menu
 -> user describes desired content/task
--> Scout discovers candidate material from an authorized source
+-> Scout routes to one authorized source connector
+-> source connector discovers candidate material
 -> Curator ranks/filters candidates
 -> MediaProbe + SceneDetector + SceneRanker
 -> adult/content classification + platform policy preflight
@@ -245,9 +299,9 @@ Telegram /start
 
 Manual upload must reuse the same downstream pipeline but is not the primary MVP source path.
 
-The first staging/VM deployment should happen as soon as this AI-first path works end-to-end for one authorized content source and one real destination, rather than waiting for a complete web dashboard or every social platform.
+The first staging/VM deployment should happen as soon as this AI-first path works end-to-end for one authorized content source and one real destination. Additional source connectors should then be added incrementally behind the same typed contract rather than as ad-hoc search code.
 
-## 12. Source-of-truth precedence
+## 13. Source-of-truth precedence
 
 For current product intent, read in this order:
 
