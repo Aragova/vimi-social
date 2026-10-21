@@ -37,13 +37,25 @@ class _XMedia(BaseModel):
     type: str
 
 
+def _empty_users() -> list[_XUser]:
+    return []
+
+
+def _empty_media() -> list[_XMedia]:
+    return []
+
+
+def _empty_posts() -> list[_XPost]:
+    return []
+
+
 class _XIncludes(BaseModel):
-    users: list[_XUser] = Field(default_factory=list)
-    media: list[_XMedia] = Field(default_factory=list)
+    users: list[_XUser] = Field(default_factory=_empty_users)
+    media: list[_XMedia] = Field(default_factory=_empty_media)
 
 
 class _XSearchResponse(BaseModel):
-    data: list[_XPost] = Field(default_factory=list)
+    data: list[_XPost] = Field(default_factory=_empty_posts)
     includes: _XIncludes = Field(default_factory=_XIncludes)
 
 
@@ -101,8 +113,12 @@ class XRecentSearchConnector:
         except (ValueError, ValidationError):
             raise SourceConnectorUnavailable("X source returned an invalid response") from None
 
-        users = {user.id: user.username for user in payload.includes.users}
-        media = {item.media_key: item.type for item in payload.includes.media}
+        users: dict[str, str] = {
+            user.id: user.username for user in payload.includes.users
+        }
+        media: dict[str, str] = {
+            item.media_key: item.type for item in payload.includes.media
+        }
         candidates: list[CandidateContent] = []
 
         for post in payload.data:
