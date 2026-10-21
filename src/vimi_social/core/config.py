@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     object_storage_endpoint: str = "http://localhost:9000"
     object_storage_bucket: str = "vimi-media"
     otel_service_name: str = "vimi-social"
+    telegram_bot_token: str | None = None
+    telegram_webhook_secret: str | None = None
 
 
 @lru_cache(maxsize=1)
