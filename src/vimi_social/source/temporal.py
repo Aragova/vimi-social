@@ -1,6 +1,7 @@
 import asyncio
 
 from temporalio.client import Client
+from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from vimi_social.domain.source import ScoutWorkflowInput
@@ -27,6 +28,7 @@ class TemporalScoutWorkflowStarter:
                 workflow_input,
                 id=operation_key,
                 task_queue=self._task_queue,
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
             )
         except WorkflowAlreadyStartedError:
             return
