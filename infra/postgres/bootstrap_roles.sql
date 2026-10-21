@@ -16,6 +16,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vimi_app') THEN
         CREATE ROLE vimi_app LOGIN;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vimi_source_task_resolver') THEN
+        CREATE ROLE vimi_source_task_resolver NOLOGIN;
+    END IF;
 END
 $$;
 
@@ -25,12 +28,17 @@ ALTER ROLE vimi_migrator
     WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD NULL;
 ALTER ROLE vimi_app
     WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD NULL;
+ALTER ROLE vimi_source_task_resolver
+    WITH NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION BYPASSRLS;
 
 GRANT vimi_migration_owner TO vimi_migrator;
+GRANT vimi_source_task_resolver TO vimi_migration_owner;
 REVOKE vimi_migration_owner FROM vimi_app;
+REVOKE vimi_source_task_resolver FROM vimi_app;
 
 GRANT CONNECT ON DATABASE vimi TO vimi_migrator, vimi_app;
 GRANT CREATE ON DATABASE vimi TO vimi_migration_owner;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE, CREATE ON SCHEMA public TO vimi_migration_owner;
+GRANT USAGE, CREATE ON SCHEMA public TO vimi_source_task_resolver;
 GRANT USAGE ON SCHEMA public TO vimi_app;

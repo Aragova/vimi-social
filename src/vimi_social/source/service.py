@@ -1,5 +1,5 @@
-import re
 from collections.abc import Callable
+import re
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -38,14 +38,16 @@ class SourceTaskService:
         *,
         chat_id: int,
     ) -> None:
-        with self._session_factory() as session:
-            with tenant_transaction(session, principal.context.tenant_id):
-                self._repository.begin_ai_search_conversation(
-                    session,
-                    tenant_id=principal.context.tenant_id,
-                    user_id=principal.user_id,
-                    chat_id=chat_id,
-                )
+        with (
+            self._session_factory() as session,
+            tenant_transaction(session, principal.context.tenant_id),
+        ):
+            self._repository.begin_ai_search_conversation(
+                session,
+                tenant_id=principal.context.tenant_id,
+                user_id=principal.user_id,
+                chat_id=chat_id,
+            )
 
     def submit_ai_search_intent(
         self,
@@ -63,70 +65,74 @@ class SourceTaskService:
         operation_key = OperationKey(f"source-task:telegram:{chat_id}:{message_id}")
         requested_sources = infer_requested_sources(normalized_intent)
 
-        with self._session_factory() as session:
-            with tenant_transaction(session, principal.context.tenant_id):
-                task = self._repository.get_by_operation_key(session, operation_key)
-                if task is not None:
-                    self._repository.bind_existing_task(
-                        task,
-                        tenant_id=principal.context.tenant_id,
-                        actor_user_id=principal.user_id,
-                        user_intent=normalized_intent,
-                        telegram_update_id=update_id,
-                        telegram_message_id=message_id,
-                        telegram_chat_id=chat_id,
-                    )
-                else:
-                    if not self._repository.is_waiting_for_ai_search(
-                        session,
-                        tenant_id=principal.context.tenant_id,
-                        user_id=principal.user_id,
-                        chat_id=chat_id,
-                    ):
-                        return None
-                    task = self._repository.create_ai_search_task(
-                        session,
-                        tenant_id=principal.context.tenant_id,
-                        actor_user_id=principal.user_id,
-                        operation_key=operation_key,
-                        user_intent=normalized_intent,
-                        requested_sources=requested_sources,
-                        preferred_languages=(),
-                        telegram_update_id=update_id,
-                        telegram_message_id=message_id,
-                        telegram_chat_id=chat_id,
-                        locale=principal.locale.value,
-                    )
-                    self._repository.clear_ai_search_conversation(
-                        session,
-                        tenant_id=principal.context.tenant_id,
-                        user_id=principal.user_id,
-                        chat_id=chat_id,
-                    )
-
-                self._usage_repository.reserve(
-                    session,
-                    ReservationRequest(
-                        tenant_id=principal.context.tenant_id,
-                        operation_key=task.operation_key,
-                        metric="scout_run",
-                        quantity=1,
-                    ),
+        with (
+            self._session_factory() as session,
+            tenant_transaction(session, principal.context.tenant_id),
+        ):
+            task = self._repository.get_by_operation_key(session, operation_key)
+            if task is not None:
+                self._repository.bind_existing_task(
+                    task,
+                    tenant_id=principal.context.tenant_id,
+                    actor_user_id=principal.user_id,
+                    user_intent=normalized_intent,
+                    telegram_update_id=update_id,
+                    telegram_message_id=message_id,
+                    telegram_chat_id=chat_id,
                 )
-                return task
+            else:
+                if not self._repository.is_waiting_for_ai_search(
+                    session,
+                    tenant_id=principal.context.tenant_id,
+                    user_id=principal.user_id,
+                    chat_id=chat_id,
+                ):
+                    return None
+                task = self._repository.create_ai_search_task(
+                    session,
+                    tenant_id=principal.context.tenant_id,
+                    actor_user_id=principal.user_id,
+                    operation_key=operation_key,
+                    user_intent=normalized_intent,
+                    requested_sources=requested_sources,
+                    preferred_languages=(),
+                    telegram_update_id=update_id,
+                    telegram_message_id=message_id,
+                    telegram_chat_id=chat_id,
+                    locale=principal.locale.value,
+                )
+                self._repository.clear_ai_search_conversation(
+                    session,
+                    tenant_id=principal.context.tenant_id,
+                    user_id=principal.user_id,
+                    chat_id=chat_id,
+                )
+
+            self._usage_repository.reserve(
+                session,
+                ReservationRequest(
+                    tenant_id=principal.context.tenant_id,
+                    operation_key=task.operation_key,
+                    metric="scout_run",
+                    quantity=1,
+                ),
+            )
+            return task
 
     def select_candidate(
         self,
         principal: TelegramPrincipal,
         candidate_id: UUID,
     ) -> bool:
-        with self._session_factory() as session:
-            with tenant_transaction(session, principal.context.tenant_id):
-                return self._repository.select_candidate(
-                    session,
-                    candidate_id=candidate_id,
-                    actor_user_id=principal.user_id,
-                )
+        with (
+            self._session_factory() as session,
+            tenant_transaction(session, principal.context.tenant_id),
+        ):
+            return self._repository.select_candidate(
+                session,
+                candidate_id=candidate_id,
+                actor_user_id=principal.user_id,
+            )
 
 
 def infer_requested_sources(intent: str) -> tuple[str, ...]:

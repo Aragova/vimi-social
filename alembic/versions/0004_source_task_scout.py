@@ -126,6 +126,8 @@ def upgrade() -> None:
             ON telegram_conversation_state, source_task, source_task_candidate
             TO vimi_app;
 
+        GRANT SELECT ON source_task TO vimi_source_task_resolver;
+
         CREATE FUNCTION resolve_source_task_tenant(
             p_operation_key text,
             p_execution_token uuid
@@ -153,6 +155,8 @@ def upgrade() -> None:
         END;
         $$;
 
+        ALTER FUNCTION resolve_source_task_tenant(text, uuid)
+            OWNER TO vimi_source_task_resolver;
         REVOKE ALL ON FUNCTION resolve_source_task_tenant(text, uuid) FROM PUBLIC;
         GRANT EXECUTE ON FUNCTION resolve_source_task_tenant(text, uuid) TO vimi_app;
         """
@@ -162,6 +166,8 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute(
         """
+        ALTER FUNCTION IF EXISTS resolve_source_task_tenant(text, uuid)
+            OWNER TO vimi_migration_owner;
         DROP FUNCTION IF EXISTS resolve_source_task_tenant(text, uuid);
         DROP TABLE IF EXISTS source_task_candidate;
         DROP TABLE IF EXISTS source_task;

@@ -83,19 +83,21 @@ async def test_ai_search_task_is_durable_metered_and_activity_retry_is_idempoten
         guard = TelegramUpdateGuard(session_factory)
         assert guard.claim(update_id, telegram_user.id).value == "CLAIMED"
 
-        with session_factory() as session:
-            with tenant_transaction(session, principal.context.tenant_id):
-                session.execute(
-                    text(
-                        """
-                        INSERT INTO usage_capacity (tenant_id, metric, quota)
-                        VALUES (:tenant_id, 'scout_run', 5)
-                        ON CONFLICT (tenant_id, metric) DO UPDATE
-                        SET quota = GREATEST(usage_capacity.quota, 5)
-                        """
-                    ),
-                    {"tenant_id": str(principal.context.tenant_id.value)},
-                )
+        with (
+            session_factory() as session,
+            tenant_transaction(session, principal.context.tenant_id),
+        ):
+            session.execute(
+                text(
+                    """
+                    INSERT INTO usage_capacity (tenant_id, metric, quota)
+                    VALUES (:tenant_id, 'scout_run', 5)
+                    ON CONFLICT (tenant_id, metric) DO UPDATE
+                    SET quota = GREATEST(usage_capacity.quota, 5)
+                    """
+                ),
+                {"tenant_id": str(principal.context.tenant_id.value)},
+            )
 
         service = SourceTaskService(session_factory)
         service.begin_ai_search(principal, chat_id=chat_id)
@@ -136,51 +138,53 @@ async def test_ai_search_task_is_durable_metered_and_activity_retry_is_idempoten
         assert connector.calls == 1
 
         repository = SourceTaskRepository()
-        with session_factory() as session:
-            with tenant_transaction(session, principal.context.tenant_id):
-                stored = repository.get_by_operation_key(session, task.operation_key)
-                assert stored is not None
-                assert stored.state.value == "COMPLETED"
-                candidates = repository.list_candidates(session, task.id)
-                assert len(candidates) == 1
+        with (
+            session_factory() as session,
+            tenant_transaction(session, principal.context.tenant_id),
+        ):
+            stored = repository.get_by_operation_key(session, task.operation_key)
+            assert stored is not None
+            assert stored.state.value == "COMPLETED"
+            candidates = repository.list_candidates(session, task.id)
+            assert len(candidates) == 1
 
-                counters = session.execute(
-                    text(
-                        """
-                        SELECT reserved, committed
-                        FROM usage_capacity
-                        WHERE tenant_id = :tenant_id AND metric = 'scout_run'
-                        """
-                    ),
-                    {"tenant_id": str(principal.context.tenant_id.value)},
-                ).one()
-                assert counters.reserved == 0
-                assert counters.committed == 1
+            counters = session.execute(
+                text(
+                    """
+                    SELECT reserved, committed
+                    FROM usage_capacity
+                    WHERE tenant_id = :tenant_id AND metric = 'scout_run'
+                    """
+                ),
+                {"tenant_id": str(principal.context.tenant_id.value)},
+            ).one()
+            assert counters.reserved == 0
+            assert counters.committed == 1
 
-                reservation_state = session.execute(
-                    text(
-                        """
-                        SELECT state
-                        FROM usage_reservation
-                        WHERE operation_key = :operation_key
-                        """
-                    ),
-                    {"operation_key": task.operation_key.value},
-                ).scalar_one()
-                assert reservation_state == "COMMITTED"
+            reservation_state = session.execute(
+                text(
+                    """
+                    SELECT state
+                    FROM usage_reservation
+                    WHERE operation_key = :operation_key
+                    """
+                ),
+                {"operation_key": task.operation_key.value},
+            ).scalar_one()
+            assert reservation_state == "COMMITTED"
 
-                charges = session.execute(
-                    text(
-                        """
-                        SELECT count(*)
-                        FROM usage_ledger
-                        WHERE operation_key = :operation_key
-                          AND entry_kind = 'CHARGE'
-                        """
-                    ),
-                    {"operation_key": task.operation_key.value},
-                ).scalar_one()
-                assert charges == 1
+            charges = session.execute(
+                text(
+                    """
+                    SELECT count(*)
+                    FROM usage_ledger
+                    WHERE operation_key = :operation_key
+                      AND entry_kind = 'CHARGE'
+                    """
+                ),
+                {"operation_key": task.operation_key.value},
+            ).scalar_one()
+            assert charges == 1
     finally:
         engine.dispose()
 
@@ -211,18 +215,17 @@ def test_source_task_is_not_visible_from_another_tenant_context() -> None:
         update_id = 820000011
         TelegramUpdateGuard(session_factory).claim(update_id, 920000011)
 
-        with session_factory() as session:
-            with tenant_transaction(session, first.context.tenant_id):
-                session.execute(
-                    text(
-                        """
-                        INSERT INTO usage_capacity (tenant_id, metric, quota)
-                        VALUES (:tenant_id, 'scout_run', 2)
-                        ON CONFLICT (tenant_id, metric) DO NOTHING
-                        """
-                    ),
-                    {"tenant_id": str(first.context.tenant_id.value)},
-                )
+        with session_factory() as session, tenant_transaction(session, first.context.tenant_id):
+            session.execute(
+                text(
+                    """
+                    INSERT INTO usage_capacity (tenant_id, metric, quota)
+                    VALUES (:tenant_id, 'scout_run', 2)
+                    ON CONFLICT (tenant_id, metric) DO NOTHING
+                    """
+                ),
+                {"tenant_id": str(first.context.tenant_id.value)},
+            )
 
         service = SourceTaskService(session_factory)
         service.begin_ai_search(first, chat_id=920000011)
@@ -236,8 +239,7 @@ def test_source_task_is_not_visible_from_another_tenant_context() -> None:
         assert task is not None
 
         repository = SourceTaskRepository()
-        with session_factory() as session:
-            with tenant_transaction(session, second.context.tenant_id):
-                assert repository.get_by_operation_key(session, task.operation_key) is None
+        with session_factory() as session, tenant_transaction(session, second.context.tenant_id):
+            assert repository.get_by_operation_key(session, task.operation_key) is None
     finally:
         engine.dispose()

@@ -52,39 +52,6 @@ class ScoutActivities:
     @activity.defn(name="execute_scout_task")
     async def execute_scout_task(self, workflow_input: ScoutWorkflowInput) -> ScoutRunResult:
         task = self._authorized_task(workflow_input)
-
-        with self._session_factory() as session:
-            with tenant_transaction(session, task.tenant_id):
-                current = self._source_repository.get_by_operation_key(
-                    session, task.operation_key
-                )
-                if current is None:
-                    raise RuntimeError("source task disappeared from tenant context")
-                if current.state is SourceTaskState.COMPLETED:
-                    existing = self._source_repository.list_candidates(
-                        session, current.id, limit=100
-                    )
-                    return ScoutRunResult(
-                        operation_key=task.operation_key.value,
-                        state=SourceTaskState.COMPLETED,
-                        discovered_count=len(existing),
-                        candidate_count=len(existing),
-                    )
-                if current.state is SourceTaskState.FAILED_SAFE:
-                    return ScoutRunResult(
-                        operation_key=task.operation_key.value,
-                        state=SourceTaskState.FAILED_SAFE,
-                        discovered_count=0,
-                        candidate_count=0,
-                        failure_code=current.failure_code,
-                    )
-                self._source_repository.set_state(
-                    session,
-                    task.operation_key,
-                    SourceTaskState.SCOUTING,
-                )
-                self._usage_repository.commit(session, task.operation_key)
-
         request = ScoutSearchRequest(
             intent=task.user_intent,
             requested_sources=task.requested_sources,
@@ -94,6 +61,37 @@ class ScoutActivities:
 
         try:
             connectors = self._registry.route(request.requested_sources)
+        except SourceConnectorUnavailable:
+            return self._fail_safe(task, "SOURCE_UNAVAILABLE", release_usage=True)
+
+        with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
+            current = self._source_repository.get_by_operation_key(session, task.operation_key)
+            if current is None:
+                raise RuntimeError("source task disappeared from tenant context")
+            if current.state is SourceTaskState.COMPLETED:
+                existing = self._source_repository.list_candidates(session, current.id, limit=100)
+                return ScoutRunResult(
+                    operation_key=task.operation_key.value,
+                    state=SourceTaskState.COMPLETED,
+                    discovered_count=len(existing),
+                    candidate_count=len(existing),
+                )
+            if current.state is SourceTaskState.FAILED_SAFE:
+                return ScoutRunResult(
+                    operation_key=task.operation_key.value,
+                    state=SourceTaskState.FAILED_SAFE,
+                    discovered_count=0,
+                    candidate_count=0,
+                    failure_code=current.failure_code,
+                )
+            self._source_repository.set_state(
+                session,
+                task.operation_key,
+                SourceTaskState.SCOUTING,
+            )
+            self._usage_repository.commit(session, task.operation_key)
+
+        try:
             discovered: list[CandidateContent] = []
             for connector in connectors:
                 discovered.extend(await connector.search(request))
@@ -105,19 +103,18 @@ class ScoutActivities:
             return self._fail_safe(task, "SOURCE_UNAVAILABLE")
 
         normalized = _deduplicate(discovered)
-        with self._session_factory() as session:
-            with tenant_transaction(session, task.tenant_id):
-                persisted = self._source_repository.replace_candidates(
-                    session,
-                    task_id=task.id,
-                    tenant_id=task.tenant_id,
-                    candidates=normalized,
-                )
-                self._source_repository.set_state(
-                    session,
-                    task.operation_key,
-                    SourceTaskState.COMPLETED,
-                )
+        with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
+            persisted = self._source_repository.replace_candidates(
+                session,
+                task_id=task.id,
+                tenant_id=task.tenant_id,
+                candidates=normalized,
+            )
+            self._source_repository.set_state(
+                session,
+                task.operation_key,
+                SourceTaskState.COMPLETED,
+            )
 
         return ScoutRunResult(
             operation_key=task.operation_key.value,
@@ -149,13 +146,12 @@ class ScoutActivities:
 
         candidates: tuple[CandidateContent, ...] = ()
         if result.state is SourceTaskState.COMPLETED:
-            with self._session_factory() as session:
-                with tenant_transaction(session, task.tenant_id):
-                    candidates = self._source_repository.list_candidates(
-                        session,
-                        task.id,
-                        limit=5,
-                    )
+            with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
+                candidates = self._source_repository.list_candidates(
+                    session,
+                    task.id,
+                    limit=5,
+                )
 
         message = build_scout_results(UiLocale(task.locale), result, candidates)
         try:
@@ -192,22 +188,28 @@ class ScoutActivities:
                 execution_token=execution_token,
             )
 
-        with self._session_factory() as session:
-            with tenant_transaction(session, tenant_id):
-                task = self._source_repository.get_by_operation_key(session, operation_key)
-                if task is None or task.execution_token != execution_token:
-                    raise RuntimeError("source task authority binding mismatch")
-                return task
+        with self._session_factory() as session, tenant_transaction(session, tenant_id):
+            task = self._source_repository.get_by_operation_key(session, operation_key)
+            if task is None or task.execution_token != execution_token:
+                raise RuntimeError("source task authority binding mismatch")
+            return task
 
-    def _fail_safe(self, task: SourceTask, failure_code: str) -> ScoutRunResult:
-        with self._session_factory() as session:
-            with tenant_transaction(session, task.tenant_id):
-                self._source_repository.set_state(
-                    session,
-                    task.operation_key,
-                    SourceTaskState.FAILED_SAFE,
-                    failure_code=failure_code,
-                )
+    def _fail_safe(
+        self,
+        task: SourceTask,
+        failure_code: str,
+        *,
+        release_usage: bool = False,
+    ) -> ScoutRunResult:
+        with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
+            if release_usage:
+                self._usage_repository.release(session, task.operation_key)
+            self._source_repository.set_state(
+                session,
+                task.operation_key,
+                SourceTaskState.FAILED_SAFE,
+                failure_code=failure_code,
+            )
         return ScoutRunResult(
             operation_key=task.operation_key.value,
             state=SourceTaskState.FAILED_SAFE,
