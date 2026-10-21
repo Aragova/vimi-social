@@ -19,7 +19,9 @@ class TelegramGatewayRejected(TelegramGatewayError):
 class TelegramGatewayRateLimited(TelegramGatewayError):
     def __init__(self, retry_after_seconds: int) -> None:
         self.retry_after_seconds = retry_after_seconds
-        super().__init__(f"Telegram Bot API rate limited request; retry after {retry_after_seconds}s")
+        super().__init__(
+            f"Telegram Bot API rate limited request; retry after {retry_after_seconds}s"
+        )
 
 
 class TelegramGatewayAmbiguous(TelegramGatewayError):
