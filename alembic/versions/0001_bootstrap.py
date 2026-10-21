@@ -72,6 +72,20 @@ def upgrade() -> None:
         ON usage_ledger(operation_key)
         WHERE entry_kind = 'CHARGE';
 
+        CREATE FUNCTION reject_usage_ledger_mutation()
+        RETURNS trigger
+        LANGUAGE plpgsql
+        AS $$
+        BEGIN
+            RAISE EXCEPTION 'usage_ledger is append-only'
+                USING ERRCODE = '55000';
+        END;
+        $$;
+
+        CREATE TRIGGER usage_ledger_append_only
+        BEFORE UPDATE OR DELETE ON usage_ledger
+        FOR EACH ROW EXECUTE FUNCTION reject_usage_ledger_mutation();
+
         ALTER TABLE publication_operation ENABLE ROW LEVEL SECURITY;
         ALTER TABLE publication_operation FORCE ROW LEVEL SECURITY;
         ALTER TABLE usage_capacity ENABLE ROW LEVEL SECURITY;
@@ -105,8 +119,9 @@ def upgrade() -> None:
         REVOKE ALL ON publication_operation, usage_capacity, usage_reservation, usage_ledger
             FROM PUBLIC;
         GRANT SELECT, INSERT, UPDATE, DELETE
-            ON publication_operation, usage_capacity, usage_reservation, usage_ledger
+            ON publication_operation, usage_capacity, usage_reservation
             TO vimi_app;
+        GRANT SELECT, INSERT ON usage_ledger TO vimi_app;
         """
     )
 
@@ -115,6 +130,7 @@ def downgrade() -> None:
     op.execute(
         """
         DROP TABLE IF EXISTS usage_ledger;
+        DROP FUNCTION IF EXISTS reject_usage_ledger_mutation();
         DROP TABLE IF EXISTS usage_reservation;
         DROP TABLE IF EXISTS usage_capacity;
         DROP TABLE IF EXISTS publication_operation;
