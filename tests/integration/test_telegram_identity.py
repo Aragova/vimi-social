@@ -61,9 +61,12 @@ def test_telegram_resolver_provisions_stable_workspace_and_preserves_locale_over
 def test_application_role_cannot_bypass_identity_resolver_with_direct_table_reads() -> None:
     engine = create_engine(_database_dsn())
     try:
-        with pytest.raises(DBAPIError) as error:
-            with Session(engine) as session, session.begin():
-                session.execute(text("SELECT * FROM telegram_identity")).all()
+        with (
+            pytest.raises(DBAPIError) as error,
+            Session(engine) as session,
+            session.begin(),
+        ):
+            session.execute(text("SELECT * FROM telegram_identity")).all()
         assert getattr(error.value.orig, "sqlstate", None) == "42501"
     finally:
         engine.dispose()
