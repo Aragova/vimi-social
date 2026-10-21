@@ -159,26 +159,32 @@ def test_usage_ledger_is_append_only_for_application_role() -> None:
                 {"tenant_id": str(tenant_id), "operation_key": operation_key},
             )
 
-        with pytest.raises(DBAPIError) as update_error:
-            with Session(engine) as session, tenant_transaction(session, TenantId(tenant_id)):
-                session.execute(
-                    text(
-                        """
-                        UPDATE usage_ledger
-                        SET quantity = 99
-                        WHERE operation_key = :operation_key
-                        """
-                    ),
-                    {"operation_key": operation_key},
-                )
+        with (
+            pytest.raises(DBAPIError) as update_error,
+            Session(engine) as session,
+            tenant_transaction(session, TenantId(tenant_id)),
+        ):
+            session.execute(
+                text(
+                    """
+                    UPDATE usage_ledger
+                    SET quantity = 99
+                    WHERE operation_key = :operation_key
+                    """
+                ),
+                {"operation_key": operation_key},
+            )
         assert getattr(update_error.value.orig, "sqlstate", None) == "42501"
 
-        with pytest.raises(DBAPIError) as delete_error:
-            with Session(engine) as session, tenant_transaction(session, TenantId(tenant_id)):
-                session.execute(
-                    text("DELETE FROM usage_ledger WHERE operation_key = :operation_key"),
-                    {"operation_key": operation_key},
-                )
+        with (
+            pytest.raises(DBAPIError) as delete_error,
+            Session(engine) as session,
+            tenant_transaction(session, TenantId(tenant_id)),
+        ):
+            session.execute(
+                text("DELETE FROM usage_ledger WHERE operation_key = :operation_key"),
+                {"operation_key": operation_key},
+            )
         assert getattr(delete_error.value.orig, "sqlstate", None) == "42501"
 
         with Session(engine) as session, tenant_transaction(session, TenantId(tenant_id)):
