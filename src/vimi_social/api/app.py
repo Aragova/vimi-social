@@ -2,7 +2,11 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, status
 
-from vimi_social.api.schemas import HealthResponse, PublicationCreateRequest, PublicationCreateResponse
+from vimi_social.api.schemas import (
+    HealthResponse,
+    PublicationCreateRequest,
+    PublicationCreateResponse,
+)
 from vimi_social.auth.context import ExecutionContext, require_execution_context
 from vimi_social.domain.identity import OperationKey
 from vimi_social.domain.publication import PublicationCommand, PublicationState
@@ -15,7 +19,11 @@ def health() -> HealthResponse:
     return HealthResponse()
 
 
-@app.post("/v1/publications", response_model=PublicationCreateResponse, status_code=status.HTTP_202_ACCEPTED)
+@app.post(
+    "/v1/publications",
+    response_model=PublicationCreateResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 def create_publication(
     body: PublicationCreateRequest,
     execution: Annotated[ExecutionContext, Depends(require_execution_context)],
@@ -32,4 +40,7 @@ def create_publication(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return PublicationCreateResponse(operation_key=command.operation_key.value, state=PublicationState.REQUESTED)
+    return PublicationCreateResponse(
+        operation_key=command.operation_key.value,
+        state=PublicationState.REQUESTED,
+    )

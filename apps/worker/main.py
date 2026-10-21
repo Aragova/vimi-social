@@ -9,8 +9,15 @@ from vimi_social.workflows.publication import PublicationWorkflow
 
 async def run() -> None:
     settings = get_settings()
-    client = await Client.connect(settings.temporal_target, namespace=settings.temporal_namespace)
-    worker = Worker(client, task_queue=settings.temporal_task_queue, workflows=[PublicationWorkflow])
+    client = await Client.connect(
+        settings.temporal_target,
+        namespace=settings.temporal_namespace,
+    )
+    worker = Worker(
+        client,
+        task_queue=settings.temporal_task_queue,
+        workflows=[PublicationWorkflow],
+    )
     await worker.run()
 
 
