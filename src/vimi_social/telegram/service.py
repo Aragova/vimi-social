@@ -51,9 +51,11 @@ class TelegramBotService:
         message = update.message
         if message is None or message.from_user is None or message.from_user.is_bot:
             return
-        if message.chat.type != "private":
+        if message.chat.type != "private" or message.text is None:
             return
-        if message.text is None or not message.text.split(maxsplit=1)[0].startswith("/start"):
+
+        tokens = message.text.strip().split(maxsplit=1)
+        if not tokens or tokens[0].split("@", maxsplit=1)[0] != "/start":
             return
 
         principal = self._identity_resolver.resolve(message.from_user)
