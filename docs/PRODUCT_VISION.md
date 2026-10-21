@@ -3,231 +3,624 @@
 **Status:** Canonical live product direction  
 **Updated:** 2026-10-21  
 **Primary interface:** Telegram bot  
-**Primary content source:** AI-assisted discovery/automation
+**Primary operating model:** AI-first automation  
+**Core source model:** AI Search / Manual Upload / Source Feed
 
 ## 1. Product definition
 
-ViMi Social is a Telegram-first, AI-first content operating system for discovering, selecting, preparing, adapting, scheduling, publishing, and analyzing authorized social content across multiple platforms.
+ViMi Social is a **Telegram-first, AI-first content operating system** for discovering, receiving, analyzing, selecting, preparing, adapting, scheduling, publishing and measuring authorized social content across multiple platforms.
 
-The **Telegram bot is the primary product interface**. It is the user's storefront, onboarding flow, control panel, task entry point, approval UI, subscription surface, status center, and day-to-day workspace.
+The user should primarily manage **goals, rules and approval level**, not routine technical work. ViMi should automate search, candidate selection, scene analysis, clipping, platform adaptation, captions/metadata, destination recommendation, scheduling, publication, reconciliation and analytics wherever it can do so safely and lawfully.
 
-The primary workflow is **not** "user uploads a finished file and ViMi posts it". The normal workflow starts with the user describing the desired content/task. ViMi's controlled AI components discover candidate material, rank and curate it, analyze scenes, plan platform variants, prepare compliant derivatives, recommend eligible destinations, and orchestrate publication. Manual upload remains an important secondary input path.
+The Telegram bot is the primary product interface. Web/Next.js is secondary and may serve marketing, OAuth/provider callbacks, optional dashboards, analytics and administration.
 
-A web application may exist, but it is secondary. Its expected roles are marketing/landing pages, optional account/dashboard views linked to Telegram, selected administrative tools, richer analytics, and browser-required integration flows. The core product must remain usable from Telegram.
+## 2. Core product principles
 
-## 2. Intended user journey
+- **Telegram-first** — normal customer use happens in the bot.
+- **AI-first** — AI discovery and preparation is a primary product capability, not an add-on.
+- **Automation-first** — the product is not merely cross-posting software.
+- **Multi-source** — content may originate from search, direct user input, or persistent feeds.
+- **Multi-platform** — one source asset may produce multiple destination-specific variants.
+- **Adult-content aware** — legal adult/18+ content, including gay adult content, is an expected frequent workload.
+- **Policy-aware** — destination eligibility is determined against versioned technical and content-policy constraints.
+- **Human-controllable** — workflows range from per-item approval to configured autopilot.
+- **International-ready** — timezone, locale, language, region and currency are first-class data from the beginning.
+- **Reliability-first** — ambiguous external mutations become `UNKNOWN` and are reconciled rather than blindly repeated.
 
-A typical user should be able to:
+## 3. Telegram as the primary product surface
 
-1. Discover and open the ViMi Social Telegram bot.
-2. Press Start and receive a polished welcome/onboarding experience.
-3. Understand the service through bot-native menus, examples, demos, help, and plan comparison.
-4. View tariffs/subscriptions and enter a purchase/subscription flow from the bot where platform/payment policy permits.
-5. Start working without first visiting a website.
-6. Describe the desired content/task in natural language: topic, style, audience, destination preferences, schedule, and automation level.
-7. Let ViMi agents discover candidate source material from authorized sources and return ranked options with provenance/policy metadata.
-8. Let ViMi analyze scenes, choose the strongest usable segments, create cuts/derivatives, generate captions/metadata, and prepare platform-specific variants.
-9. Receive an eligibility/preflight result for each destination: direct publish, adapted variant required, manual review required, or blocked.
-10. Review/approve the proposed content and destinations when the configured workflow requires approval.
-11. Publish to authorized social accounts/platforms and receive progress, confirmation, UNKNOWN/reconciliation states, failures, and actionable next steps in Telegram.
-12. View usage, remaining quota, subscription state, connected accounts, publication history, and selected analytics from bot menus.
-13. As a secondary path, send a ready video/photo/link/document to the bot and run the same analysis/adaptation/publication pipeline.
+The bot should provide:
 
-The interaction should feel like a premium autonomous service, not a terminal wrapped in chat commands. Prefer buttons, inline keyboards, guided steps, previews, concise status cards, and progressive disclosure over requiring users to memorize commands.
+- `/start`, onboarding and product explanation;
+- storefront, tariffs/subscriptions and usage;
+- source selection;
+- AI task intake;
+- candidate previews and approvals;
+- source-feed management;
+- connected destinations/accounts;
+- scheduling and automation policies;
+- publication status and reconciliation;
+- history and selected analytics;
+- notifications, settings and support entry points.
 
-## 3. Automation-first content pipeline
+The experience should feel like a premium application, not a command-line interface inside chat. Prefer buttons, inline keyboards, previews, concise status cards and guided flows.
 
-The default product flow is:
+## 4. Web scope
+
+Web is secondary and must not become a prerequisite for normal MVP use. Appropriate roles include:
+
+- public marketing/SEO/ad landing pages;
+- OAuth/provider connection flows that require a browser;
+- optional linked customer dashboard;
+- richer analytics/media inspection;
+- internal administration/support tools.
+
+## 5. The three source modes
+
+Before a content workflow starts, the user chooses where ViMi gets material.
+
+Conceptual Telegram menu:
+
+```text
+Choose source:
+
+[ AI Search ]
+[ Add content ]
+[ Channel / Group / Topic ]
+```
+
+These three modes are fundamental product concepts and must converge into the same downstream analysis/adaptation/publication pipeline.
+
+### 5.1 AI Search — primary automated source
+
+The user provides intent rather than a finished asset, for example:
+
+> Find fresh high-quality videos about this topic, choose the best ones, prepare versions for my connected destinations and publish according to my schedule.
+
+Flow:
 
 ```text
 user intent/task
--> Scout: discover candidate content from authorized sources
--> Curator: filter/rank candidates and verify provenance/policy metadata
--> MediaProbe / SceneDetector
--> SceneRanker: identify useful scenes/segments
--> Content classification + platform policy preflight
--> VariantPlanner: decide direct-use vs adapted derivatives per platform
--> RenderRecipe / RenderService
--> CaptionGenerator / metadata preparation
--> destination recommendation
--> approval when required
--> scheduling/publication
--> reconciliation/status/analytics
+-> Scout
+-> Source Router
+-> source-specific connectors
+-> normalized candidates
+-> Curator
+-> media/scene analysis
+-> classification/policy preflight
+-> VariantPlanner
+-> preparation
+-> approval or automation policy
+-> publication
 ```
 
-The user should not need to manually perform routine searching, downloading, scene selection, clipping, formatting, or destination matching when ViMi can safely automate them.
+The user should not have to manually perform routine searching, downloading, scene selection, clipping, formatting or destination matching when ViMi can automate them safely.
 
-Manual content upload is the secondary source path:
+### 5.2 Manual Upload — secondary direct source
+
+The user may provide a specific item by uploading/forwarding video, photo, document, link, text or another supported asset.
+
+It enters the same downstream pipeline:
 
 ```text
 user-supplied asset
 -> provenance/rights/policy checks
--> same analysis, adaptation and publication pipeline
+-> MediaProbe
+-> SceneDetector
+-> SceneRanker
+-> content/adult classification
+-> platform preflight
+-> VariantPlanner
+-> RenderService
+-> publication
 ```
 
-## 4. Multi-source Scout / Source Connector Registry
+Manual upload is important, but it is not the dominant product model.
 
-Scout must not depend on one generic web search. Content discovery is a first-class integration layer built from **source-specific connectors** behind one typed contract and registry.
+### 5.3 Source Feed — persistent channel/group/topic source
 
-Conceptual flow:
+A user may connect an existing Telegram content library and let ViMi consume it over time.
+
+Supported conceptual sources include:
+
+- Telegram channel;
+- Telegram group;
+- forum-style group;
+- a specific topic/thread inside a group;
+- other supported persistent Telegram repositories the user is authorized to use.
+
+Example:
 
 ```text
-user task
--> Scout
+Source:
+Content Library
+
+Topic:
+Muscle
+
+Destinations:
+X account
+Telegram channel
+Reddit account
+
+Cadence:
+one item every 6 hours
+```
+
+The connected source becomes a managed `SourceFeed`, not a one-time upload.
+
+## 6. Source Feed behavior
+
+ViMi must track, for every feed and source item:
+
+- source/channel/group/topic identity;
+- source message/item identity;
+- whether the item is new, claimed, processed, skipped or blocked;
+- whether it has already been published;
+- derived variants;
+- destination publications and outcomes;
+- when the next item may be claimed.
+
+Conceptual lifecycle:
+
+```text
+NEW
+-> CLAIMED
+-> ANALYZING
+-> PREPARING
+-> READY
+-> SCHEDULED
+-> PUBLISHING
+-> PUBLISHED
+```
+
+Side states may include:
+
+```text
+SKIPPED
+BLOCKED
+NEEDS_REVIEW
+FAILED_SAFE
+UNKNOWN
+```
+
+A source item must not be accidentally claimed by multiple concurrent workflows or published twice because of retries.
+
+## 7. Source Feed automation levels
+
+### Manual approval
+
+ViMi prepares the next item and asks:
+
+```text
+[ Publish ] [ Edit ] [ Skip ]
+```
+
+### Assisted automation
+
+ViMi claims, analyzes, clips, adapts and prepares captions automatically. The user approves the final publication bundle.
+
+### Autopilot
+
+The user configures a policy once:
+
+```text
+source
+selection rules
+destinations
+cadence/schedule
+adaptation rules
+language/style
+stop conditions
+```
+
+ViMi then processes items continuously until an explicit stop condition or intervention state occurs.
+
+Autopilot must pause/ask for action when required by low confidence, missing rights/provenance, policy ambiguity, source exhaustion, authorization failure, quota limits, `UNKNOWN`, or other configured safety/operational conditions.
+
+## 8. Source is not Destination
+
+ViMi separates:
+
+- **Source** — where material comes from.
+- **Destination** — where a prepared variant is published.
+
+A platform can play both roles. X and Telegram may be both source and destination. Some adult sites or catalogues may be sources only.
+
+## 9. Multi-source Scout / Source Connector Registry
+
+Scout must not depend on one generic browser search. Content discovery is a first-class integration layer of source-specific connectors behind a typed registry.
+
+```text
+Scout
 -> Source Router
    -> XSourceConnector
    -> TelegramSourceConnector
    -> AdultSiteSourceConnector(s)
    -> RedditSourceConnector
-   -> other platform/site connectors
+   -> WebsiteSourceConnector
+   -> future connectors
    -> GenericWebSearchConnector as fallback/supplement
--> normalized CandidateContent records
--> Curator / downstream pipeline
+-> CandidateContent
+-> Curator
 ```
 
-Potential sources include X, Telegram, adult-content platforms and sites (including gay/adult catalogues), Reddit, public websites, and future sources that satisfy product, legal, authorization and technical requirements.
+Potential sources include X, Telegram, Reddit, adult-content platforms and catalogues, public sites and future permitted sources.
 
-Each connector should expose a common capability model such as:
+If the user explicitly names a source, Scout should route there first. If the request is broad, Scout may query multiple eligible connectors and rank normalized candidates together.
+
+Generic web/browser search is a fallback or supplemental mechanism, not a substitute for a dedicated connector when one exists.
+
+Connectors must use permitted access methods only. ViMi must not bypass authentication, paywalls, DRM, age gates, access controls, anti-bot protections or source restrictions.
+
+## 10. Common source connector model
+
+A connector should expose a common capability shape such as:
 
 ```text
 search(query, filters, cursor)
 get_candidate_metadata(candidate_id)
 get_media_references(candidate_id)
-get_author/source_context(candidate_id)
+get_source_context(candidate_id)
 get_provenance_hints(candidate_id)
-get_policy/availability_hints(candidate_id)
+get_policy_availability_hints(candidate_id)
 ```
 
-Each source adapter must also declare its operational capabilities and restrictions, including:
+It also declares operational capabilities/restrictions, for example:
 
 - official API/search availability;
-- authenticated-access requirements;
-- whether public web access is supported;
-- pagination/rate limits;
-- video/image/media metadata availability;
-- sensitive/adult-content visibility behavior;
-- allowed automation/download/reuse paths;
-- regional/account/age restrictions where relevant;
-- provenance/rights evidence that can be collected;
+- authentication requirements;
+- pagination and rate limits;
+- media metadata availability;
+- adult/sensitive-content visibility behavior;
+- permitted automation/download/reuse paths;
+- regional/account/age restrictions;
+- provenance/rights evidence availability;
 - connector health/version/policy status.
 
-If the user explicitly names a source (for example, "find this on X"), Scout should route to that source connector first rather than silently replacing the request with a generic browser search. If the user asks broadly, Scout may query several eligible connectors in parallel and rank the normalized candidates together.
+## 11. Normalized candidate model
 
-Generic browser/web search is a fallback or supplemental discovery tool, not a substitute for source-native integration when a dedicated connector exists.
-
-Connectors must use permitted access methods only. ViMi must not bypass authentication, paywalls, DRM, age gates, access controls, anti-bot protections, or platform restrictions. Where an official API or permitted authenticated integration exists, prefer it over brittle scraping.
-
-## 5. Adult/18+ content as a first-class workload
-
-Adult/18+ content is an expected and frequent product workload, including explicit adult material. The architecture must therefore treat adult-content classification and destination eligibility as normal product behavior, not as an exceptional edge case.
-
-For every candidate or supplied asset, ViMi should determine at minimum:
-
-- adult/explicitness classification and confidence;
-- provenance/usage basis and any required consent/rights metadata;
-- scene-level suitability where useful;
-- destination-specific policy eligibility;
-- whether the original can be published directly;
-- whether a genuinely policy-compliant derivative can be created;
-- whether the target must be blocked.
-
-The intended decision model is:
+Different sources normalize into a common internal concept such as:
 
 ```text
-platform permits this content as-is
--> prepare technical variant if needed
--> publish directly
-
-platform does not permit the original explicit form,
-but a genuinely compliant derivative can be created
--> select allowed/non-explicit scenes
--> remove/crop/censor prohibited elements as required
--> adjust cut, duration, framing, cover, caption and metadata
--> run platform preflight again
--> publish only if the resulting variant is compliant
-
-no compliant variant can be produced
--> block that destination
--> explain why and suggest eligible alternatives
+CandidateContent
+  source
+  source_id
+  source_url
+  author/source context
+  published_at
+  media_type
+  duration
+  technical metadata
+  caption/tags
+  relevance_score
+  quality_score
+  adult_classification
+  explicitness_score
+  provenance/rights/consent metadata
+  engagement metadata
+  availability/policy hints
 ```
 
-Adaptation must make the resulting asset actually compliant with the destination's rules; ViMi must not attempt to disguise prohibited content or bypass moderation.
+Downstream AI/media components should not need source-specific scraping/API knowledge.
 
-Because policies differ by platform, account type, region, feature and policy version, eligibility must be versioned and data-driven through the Platform Capability/Compliance registries rather than hard-coded assumptions.
+## 12. AI component model
 
-## 6. Interface priority
+ViMi should use specialized components rather than one unrestricted MegaAgent.
 
-### Tier 1 — Telegram bot
+- `Scout` — discovers candidate material.
+- `Curator` — filters/ranks candidates and their context.
+- `SceneRanker` — ranks scenes/segments for reuse.
+- `VariantPlanner` — plans destination-specific variants.
+- `CaptionGenerator` — prepares captions/title/description/tags/metadata.
+- `AnalyticsInsight` — turns performance data into future recommendations.
 
-Telegram owns the primary customer experience:
+Deterministic components remain authoritative for media probing, rendering, policy gates, authorization, usage/billing, scheduling and publication lifecycle.
 
-- `/start` and onboarding;
-- main navigation/menu;
-- product explanation and examples;
-- tariffs/subscriptions/storefront;
-- account and workspace setup;
-- AI task creation as the primary content source;
-- candidate discovery/results/review;
-- optional manual content upload/inbox;
-- content preparation and approval;
-- target/platform recommendation and selection;
-- scheduling;
-- publication progress and reconciliation;
-- history and status;
-- usage/quota/subscription information;
-- notifications and support entry points.
+AI acts through typed tools with tenant, entitlement, budget, validation and audit controls.
 
-### Tier 2 — Web
+## 13. Common media pipeline
 
-Web is optional/secondary and must not become a prerequisite for normal MVP use. Suitable roles include:
+All source modes converge into one processing path:
 
-- public marketing landing page and SEO/ad destination;
-- optional linked personal account/dashboard;
-- richer analytics or media inspection where a browser genuinely helps;
-- selected administrative/support functions;
-- OAuth/provider connection callbacks or other browser-required integrations.
+```text
+Original/Candidate Asset
+-> MediaProbe
+-> SceneDetector
+-> Feature Extraction
+-> SceneRanker
+-> Content Classification
+-> Platform Capability + Compliance Preflight
+-> VariantPlanner
+-> RenderRecipe
+-> RenderService
+-> Platform Variant
+-> Caption/Metadata
+-> Destination Recommendation
+```
 
-### Tier 3 — Internal APIs/workers
+Do not build separate downstream systems for AI Search, Manual Upload and Source Feed.
 
-FastAPI, PostgreSQL, Temporal, media workers, storage, AI Tool Gateway, provider adapters, source connectors, and other backend components remain core architecture. They serve the Telegram experience first and secondary web surfaces second.
+## 14. Adult/18+ content as a first-class workload
 
-## 7. Identity and tenancy direction
+Legal adult/18+ content, including explicit gay adult material, is an expected and frequent workload rather than an exceptional edge case.
 
-For Telegram-originated customer flows, Telegram identity is the first interaction identity. Incoming bot updates must be accepted only through the trusted Telegram integration boundary and mapped server-side from immutable Telegram identifiers to ViMi users/workspaces/tenants.
+For candidate and supplied assets ViMi should determine, as applicable:
 
-A client must never be able to choose an arbitrary tenant by sending a tenant ID. Existing Architecture 1.0 tenant-isolation and RLS rules remain unchanged.
+- adult/explicitness classification and confidence;
+- scene-level explicitness/suitability;
+- provenance and usage basis;
+- available rights/consent information;
+- destination-specific eligibility;
+- whether the original is allowed;
+- whether a genuinely compliant derivative can be produced;
+- whether the destination must be blocked.
 
-A managed web identity provider may still be used for browser/admin experiences, but the MVP customer journey must not require a separate web login before the Telegram bot can be used.
+The system must never assume that public availability implies permission to redistribute.
 
-## 8. AI component model
+## 15. Platform policy decision model
 
-The historical Architecture 1.0 specialization remains the intended direction:
+For a content/destination combination, the result should be explicit, for example:
 
-- `Scout` — discovers candidate source material;
-- `Curator` — evaluates/ranks candidate material and context;
-- `SceneRanker` — ranks scenes/segments for reuse;
-- `VariantPlanner` — plans destination-specific variants;
-- `CaptionGenerator` — prepares text/metadata;
-- `AnalyticsInsight` — turns performance data into recommendations.
+```text
+DIRECT_ALLOWED
+ADAPTATION_REQUIRED
+MANUAL_REVIEW_REQUIRED
+BLOCKED
+```
 
-Deterministic components remain authoritative for media probing, platform validation, rendering, rights/policy gates, authorization, billing/usage, scheduling, and publication lifecycle execution.
+### Original permitted
 
-There is no unrestricted universal MegaAgent. AI acts through typed tools, tenant/entitlement/budget controls, and auditable application services.
+```text
+original
+-> technical variant if needed
+-> publish
+```
 
-## 9. Publication model
+### Original not permitted, but a compliant derivative is possible
 
-Initial destination family remains multi-platform and can include Telegram, X, Instagram, TikTok, YouTube/Shorts, Reddit, Bluesky, and future adapters.
+```text
+original
+-> scene analysis
+-> select allowed/non-explicit segments
+-> cut/crop/censor as genuinely required
+-> adjust duration/framing/cover/caption/metadata
+-> policy preflight again
+-> publish only if compliant
+```
 
-Platform recommendation must combine:
+### No compliant derivative is possible
 
-- technical capability;
-- content-policy/compliance eligibility;
-- account/feature restrictions;
-- media-format requirements;
-- availability of a compliant derivative;
-- user preferences and connected accounts.
+```text
+BLOCKED
+-> do not publish there
+-> explain reason
+-> suggest eligible alternatives
+```
 
-The validated reliability contract is unchanged:
+Adaptation must produce genuinely compliant content. It must not disguise prohibited content or bypass moderation.
+
+## 16. Platform Capability and Compliance registries
+
+Technical capability and policy/compliance are separate concerns.
+
+Capability examples:
+
+```text
+supports_video
+supports_images
+supports_carousel
+supports_stories
+max_video_duration
+max_video_bytes
+supported_aspect_ratios
+caption_limit
+async_publish
+status_poll
+webhook
+analytics
+delete
+comments
+```
+
+Compliance examples:
+
+```text
+policy_version
+adult_policy
+allowed_account_types
+required_scopes
+region_restrictions
+feature_restrictions
+technical_status
+commercial_status
+reviewed_at
+```
+
+Eligibility must be versioned/data-driven rather than scattered hard-coded assumptions.
+
+## 17. Destination recommendation
+
+ViMi should recommend destinations and variants, not merely ask the user to choose blindly.
+
+Example:
+
+```text
+Telegram   DIRECT_ALLOWED      original variant
+X          DIRECT_ALLOWED      original/technical variant
+Reddit     ADAPTATION_REQUIRED variant A
+Platform Y MANUAL_REVIEW       safe variant candidate
+Platform Z BLOCKED             no compliant variant
+```
+
+The user may confirm/change the recommendation, or an approved automation policy may act automatically.
+
+## 18. Scheduling, timezones and calendars
+
+Timezone correctness is a core requirement from day one.
+
+Rules:
+
+- all persisted event timestamps are stored as UTC instants (`timestamptz` where applicable);
+- user/workspace schedules use an **IANA timezone** such as `Europe/Moscow` or `Asia/Bangkok`, never a fixed numeric offset as the source of truth;
+- recurring schedules preserve the intended local wall-clock time across DST transitions;
+- VM/server timezone must not define customer schedule behavior;
+- analytics and bot displays render time in the relevant user/workspace timezone;
+- Source Feed cadence and quiet hours are timezone-aware.
+
+Future scheduling may also support analytics-driven posting windows instead of only fixed times.
+
+## 19. Internationalization and language model
+
+The system is international-ready from the first production slices without requiring many translations immediately.
+
+Initial UI languages should be:
+
+- Russian (`ru`);
+- English (`en`).
+
+UI strings must use localization keys/resources rather than hard-coded customer-facing prose throughout business code.
+
+The following concepts are distinct:
+
+```text
+user interface locale
+workspace default locale
+content language
+source/search languages
+destination/account content language
+```
+
+A Russian UI user may publish English content to X and Russian content to Telegram. Scout may expand/search across languages independently of the interface language.
+
+Telegram `language_code` may be used as an initial hint but must not be treated as permanent authoritative preference; the user can override it.
+
+## 20. Region and adult eligibility readiness
+
+Region is distinct from language and may affect platform policy, payment availability, legal/commercial behavior and adult-content eligibility.
+
+Data models should be ready to represent at least:
+
+```text
+locale
+timezone
+region/country
+preferred_content_languages
+```
+
+Adult-facing product flows should also be able to represent an eligibility state without forcing a full KYC implementation in the MVP, for example:
+
+```text
+UNKNOWN
+DECLARED_18_PLUS
+VERIFIED_18_PLUS
+RESTRICTED
+```
+
+The exact verification mechanism is a later implementation/compliance decision.
+
+## 21. Currency and money
+
+Money must never be modeled as a bare number or as a hard-coded single currency.
+
+Conceptually:
+
+```text
+Money
+  amount
+  currency (ISO 4217)
+```
+
+Examples: RUB, USD, EUR.
+
+The MVP may expose only a small number of currencies/payment options, but pricing, billing records and UI formatting must be currency-aware from the beginning.
+
+## 22. Locale-aware formatting and notifications
+
+Customer-facing formatting should respect locale for dates, time, numbers and money.
+
+Notification preferences should support local-time behavior, including future quiet-hours controls such as:
+
+```text
+quiet hours: 23:00-08:00 in user timezone
+normal notifications
+important-only notifications
+critical override policy
+```
+
+## 23. Workspace, Brand and multi-account model
+
+The product must not assume one customer equals one social account or one content identity.
+
+Conceptual hierarchy:
+
+```text
+User
+-> Membership
+-> Workspace/Tenant
+   -> Brand/Project
+      -> Sources
+      -> Source Feeds
+      -> Connected Destination Accounts
+      -> Automation Policies
+      -> Content Language/Style defaults
+```
+
+A workspace may operate multiple brands/projects. A brand may have several Telegram channels, X accounts, Reddit identities or other destination accounts with different languages, schedules and policies.
+
+User preferences (for example UI language/notification timezone) and workspace/brand publishing defaults must remain distinct.
+
+## 24. Commercial experience
+
+The Telegram bot is the primary storefront and should expose:
+
+- free/trial capability if offered;
+- plan comparison and current plan;
+- usage/remaining limits;
+- AI/Scout/media-processing consumption where relevant;
+- connected account/source limits;
+- Source Feed/automation limits;
+- upgrade/renewal/subscription state;
+- billing/help links where external/browser flows are required.
+
+Plans/entitlements remain separate from identity and external provider API quotas.
+
+## 25. Usage model
+
+Useful metering dimensions may include:
+
+```text
+scout_run
+ai_token
+vision_frame
+video_second_processed
+rendered_video_minute
+published_post
+scheduled_post
+storage_byte_hour
+egress_byte
+connected_account
+source_feed
+workspace_member
+```
+
+PostgreSQL remains the correctness authority for commercial usage. Expensive work reserves quota before execution and the ledger is append-only.
+
+## 26. Identity and tenancy
+
+For Telegram-originated flows, Telegram identity is the first interaction identity.
+
+Incoming Telegram updates must be accepted only through a trusted integration boundary and mapped server-side from immutable Telegram identifiers to ViMi user/workspace/tenant authority.
+
+A caller must never choose an arbitrary tenant by supplying a tenant ID.
+
+A managed IdP may still be used for web/admin experiences, but normal Telegram MVP use must not depend on a separate web login.
+
+## 27. Reliability and publication lifecycle
+
+External publication is an irreversible distributed side effect.
+
+The central rule remains:
 
 ```text
 ambiguous external outcome
@@ -236,79 +629,92 @@ ambiguous external outcome
 -> confirmed / pending / proved absent / still unknown
 ```
 
-No blind duplicate publication is allowed after an ambiguous external mutation.
+No blind second publication occurs after a lost response, timeout or cancellation after dispatch may have begun.
 
-## 10. Commercial experience
+Stable `operation_key` identity, typed outcomes, bounded safe retry and reconciliation remain Architecture 1.0 contracts.
 
-The bot is the primary storefront. It should be able to present:
+## 28. Security boundaries
 
-- free/trial capability if offered;
-- plan comparison;
-- current plan;
-- usage and limits;
-- AI/scout/media-processing consumption where relevant;
-- upgrade/renewal entry points;
-- purchase/subscription state;
-- billing/help links where a browser or external payment flow is required.
+- PostgreSQL RLS remains defense-in-depth tenant isolation.
+- Application roles are non-owner/non-superuser/NOBYPASSRLS.
+- Remote and AI-discovered media are untrusted input.
+- Media processing remains isolated and bounded.
+- AI has no unrestricted shell, SQL, secrets or arbitrary authority.
+- Source connectors and provider adapters operate through controlled credentials/policies.
+- Privileged cross-tenant access requires durable audit evidence.
+- No plaintext production secrets in source/docs/logs.
 
-The exact payment provider/mechanism is an implementation decision and must respect Telegram/platform/payment-store policy. Product architecture must keep subscription entitlements separate from identity and from provider API quotas.
+## 29. MVP / first real product slice
 
-## 11. Product architecture consequence
-
-The existing modular-monolith architecture remains valid, but product priorities are:
-
-- first-class Telegram bot application/process boundary;
-- AI-first task intake and automated content discovery/preparation;
-- Source Connector Registry with typed source adapters and routing;
-- first-class adult-content classification and platform eligibility/preflight;
-- scene-level analysis and variant generation before publication;
-- trusted Telegram update handling with server-side tenant/workspace resolution;
-- bot handlers call domain/application services rather than contain business logic;
-- backend API remains useful internally and for optional web surfaces;
-- Next.js is secondary and must not consume MVP effort ahead of core bot/AI workflows;
-- Temporal remains the durable workflow engine for scouting, media preparation, approvals, scheduling, publication and reconciliation;
-- PostgreSQL remains the correctness authority;
-- media processing remains isolated;
-- source connectors and provider adapters remain independent of Telegram UI code.
-
-## 12. MVP vertical slice
-
-The first real product slice is Telegram-native and AI-first:
+The first production slice should prove the defining product idea rather than only file upload.
 
 ```text
 Telegram /start
--> server-side Telegram identity/workspace resolution
--> onboarding/main menu
+-> trusted Telegram identity/workspace resolution
+-> localized onboarding/menu (RU/EN-ready)
+-> user chooses AI Search
 -> user describes desired content/task
--> Scout routes to one authorized source connector
--> source connector discovers candidate material
--> Curator ranks/filters candidates
+-> Scout routes to one authorized real source connector
+-> candidates normalized
+-> Curator selects/ranks candidate(s)
 -> MediaProbe + SceneDetector + SceneRanker
--> adult/content classification + platform policy preflight
--> VariantPlanner proposes one usable platform variant
--> user preview/approval
--> tenant RLS transaction
--> atomic usage reservation
--> persisted operation keyed by operation_key
+-> adult/content classification
+-> platform capability/compliance preflight
+-> VariantPlanner creates/recommends one usable variant
+-> preview/approval in Telegram
+-> tenant-scoped usage reservation + persisted operation
 -> Temporal workflow
--> one real provider dispatch
--> bot status updates
+-> one real destination adapter
+-> publication
+-> bot status
 -> UNKNOWN-safe reconciliation
--> final result shown in Telegram
 ```
 
-Manual upload must reuse the same downstream pipeline but is not the primary MVP source path.
+Immediately after that, early production expansion must add:
 
-The first staging/VM deployment should happen as soon as this AI-first path works end-to-end for one authorized content source and one real destination. Additional source connectors should then be added incrementally behind the same typed contract rather than as ad-hoc search code.
+1. Manual Upload through the same downstream pipeline.
+2. Telegram Source Feed using a channel/group/topic as a persistent queue.
+3. Automation cadence/scheduling with timezone correctness.
+4. Additional source connectors behind the same registry contract.
+5. Additional destination adapters.
 
-## 13. Source-of-truth precedence
+The first staging/VM deployment should happen as soon as the initial AI-first slice works end-to-end for one authorized source and one real destination.
+
+## 30. Product UX summary
+
+The desired user experience is:
+
+> I tell ViMi what content I need and how I want my accounts operated. ViMi finds or receives the material, analyzes it, selects the useful parts, prepares compliant destination-specific versions, shows me what needs approval, publishes according to my rules, tracks the result and continues the automation.
+
+Customer-facing statuses should remain understandable, for example:
+
+```text
+Searching
+Selecting candidates
+Analyzing video
+Preparing clips
+Checking destinations
+Creating variants
+Ready for review
+Scheduled
+Publishing
+Provider processing
+Published
+Needs decision
+Destination blocked
+```
+
+Infrastructure complexity such as PostgreSQL, Temporal, workers and reconciliation internals should remain hidden from ordinary customers.
+
+## 31. Source-of-truth precedence
 
 For current product intent, read in this order:
 
-1. `docs/PRODUCT_VISION.md` — current product/UI/automation direction.
-2. `docs/PROJECT_STATUS.md` — current implementation stage.
+1. `docs/PRODUCT_VISION.md` — canonical product/interface/source/automation/internationalization direction.
+2. `docs/PROJECT_STATUS.md` — live implementation stage and immediate work.
 3. `docs/CONTEXT_FOR_AI.md` — compact handoff context.
 4. `AGENTS.md` — engineering constraints.
-5. Historical architecture documents under `docs/history/` — validated contracts and rationale.
+5. `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md` — review of existing foundation against the clarified concept.
+6. Historical architecture documents under `docs/history/` — validated security/reliability contracts and rationale.
 
-Historical documents that imply manual upload or Next.js is the dominant customer path are superseded on product priority by this document. Their reliability, security, tenancy, media, usage, workflow, AI-boundary and provider-lifecycle contracts remain authoritative unless explicitly revised by a later production decision.
+Historical documents that imply web-first or manual-upload-first product priority are superseded on product priority by this document. Their validated reliability, security, tenancy, media, usage, workflow, AI-boundary and provider-lifecycle contracts remain authoritative unless explicitly revised by a later production decision.
