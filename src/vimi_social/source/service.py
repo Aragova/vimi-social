@@ -12,7 +12,6 @@ from vimi_social.telegram.identity import TelegramPrincipal
 from vimi_social.usage.models import ReservationRequest
 from vimi_social.usage.repository import UsageRepository
 
-
 _EXPLICIT_SOURCE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("x", re.compile(r"(?:^|\W)(?:x|twitter|твиттер)(?:\W|$)", re.IGNORECASE)),
     ("telegram", re.compile(r"(?:telegram|телеграм)", re.IGNORECASE)),
