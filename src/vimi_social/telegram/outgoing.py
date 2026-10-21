@@ -11,6 +11,7 @@ from vimi_social.telegram.client import (
     TelegramGateway,
     TelegramGatewayAmbiguous,
     TelegramGatewayError,
+    TelegramGatewayRateLimited,
     TelegramGatewayRejected,
 )
 from vimi_social.telegram.menus import OutgoingMessage
@@ -31,6 +32,12 @@ class TelegramDispatchDecision(StrEnum):
     FAILED_SAFE = "FAILED_SAFE"
 
 
+class TelegramMessageRetryAfter(RuntimeError):
+    def __init__(self, retry_after_seconds: int) -> None:
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(f"retry Telegram delivery after {retry_after_seconds}s")
+
+
 class TelegramOutgoingStorePort(Protocol):
     def prepare(
         self,
@@ -44,6 +51,8 @@ class TelegramOutgoingStorePort(Protocol):
     def begin(self, operation_key: str) -> TelegramDispatchDecision: ...
 
     def finish(self, operation_key: str, state: TelegramOutgoingState) -> None: ...
+
+    def make_retryable(self, operation_key: str) -> None: ...
 
 
 class TelegramOutgoingStore:
@@ -106,6 +115,13 @@ class TelegramOutgoingStore:
                 {"operation_key": operation_key, "state": state.value},
             )
 
+    def make_retryable(self, operation_key: str) -> None:
+        with self._session_factory() as session, session.begin():
+            session.execute(
+                text("SELECT retry_telegram_outgoing(:operation_key)"),
+                {"operation_key": operation_key},
+            )
+
 
 class TelegramMessenger:
     def __init__(self, store: TelegramOutgoingStorePort, gateway: TelegramGateway) -> None:
@@ -133,6 +149,9 @@ class TelegramMessenger:
 
         try:
             await self._gateway.send_message(chat_id, message)
+        except TelegramGatewayRateLimited as error:
+            self._store.make_retryable(operation_key)
+            raise TelegramMessageRetryAfter(error.retry_after_seconds) from None
         except TelegramGatewayRejected:
             self._store.finish(operation_key, TelegramOutgoingState.FAILED_SAFE)
             return TelegramOutgoingState.FAILED_SAFE
