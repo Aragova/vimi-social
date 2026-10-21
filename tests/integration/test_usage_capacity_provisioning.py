@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from vimi_social.db.tenant import tenant_transaction
 from vimi_social.domain.identity import TenantId
 
-
 DEFAULT_SCOUT_RUN_QUOTA = 10
 
 
