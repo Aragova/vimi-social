@@ -235,7 +235,7 @@ class SourceTaskRepository:
         *,
         failure_code: str | None = None,
     ) -> None:
-        updated = session.execute(
+        updated_id = session.execute(
             text(
                 """
                 UPDATE source_task
@@ -243,6 +243,7 @@ class SourceTaskRepository:
                     failure_code = :failure_code,
                     updated_at = clock_timestamp()
                 WHERE operation_key = :operation_key
+                RETURNING id::text
                 """
             ),
             {
@@ -250,8 +251,8 @@ class SourceTaskRepository:
                 "failure_code": failure_code,
                 "operation_key": operation_key.value,
             },
-        ).rowcount
-        if updated != 1:
+        ).scalar_one_or_none()
+        if updated_id is None:
             raise RuntimeError("source task was not found in tenant context")
 
     def replace_candidates(
@@ -412,7 +413,7 @@ class SourceTaskRepository:
         candidate_id: UUID,
         actor_user_id: UUID,
     ) -> bool:
-        updated = session.execute(
+        selected_id = session.execute(
             text(
                 """
                 UPDATE source_task_candidate AS candidate
@@ -422,14 +423,15 @@ class SourceTaskRepository:
                 WHERE candidate.id = :candidate_id
                   AND candidate.source_task_id = task.id
                   AND task.actor_user_id = :actor_user_id
+                RETURNING candidate.id::text
                 """
             ),
             {
                 "candidate_id": str(candidate_id),
                 "actor_user_id": str(actor_user_id),
             },
-        ).rowcount
-        return updated == 1
+        ).scalar_one_or_none()
+        return selected_id is not None
 
     def resolve_tenant(
         self,
@@ -530,12 +532,6 @@ def _require_str(value: object, name: str) -> str:
     return value
 
 
-def _require_int(value: object, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise RuntimeError(f"{name} must be an integer")
-    return value
-
-
 def _optional_int(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
@@ -555,8 +551,9 @@ def _optional_float(value: object) -> float | None:
 def _require_text_tuple(value: object, name: str) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
         raise RuntimeError(f"{name} must be a text array")
+    items = cast(list[object] | tuple[object, ...], value)
     result: list[str] = []
-    for item in value:
+    for item in items:
         if not isinstance(item, str):
             raise RuntimeError(f"{name} must contain only text values")
         result.append(item)
