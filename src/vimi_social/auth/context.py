@@ -7,20 +7,25 @@ from vimi_social.domain.identity import TenantId
 
 @dataclass(frozen=True, slots=True)
 class ExecutionContext:
-    """Trusted identity envelope produced only by the managed-IdP adapter."""
+    """Trusted application identity envelope produced by a verified identity adapter.
+
+    Telegram is the first customer identity path. A managed IdP may produce the same
+    envelope for secondary web/admin flows. No adapter may derive tenant authority from
+    a caller-controlled tenant ID.
+    """
 
     tenant_id: TenantId
     actor_subject: str
 
 
 def require_execution_context() -> ExecutionContext:
-    """Fail closed until the managed IdP verifier + tenant membership resolver is wired.
+    """Fail closed until a trusted identity resolver is wired for this API surface.
 
-    Production code must never construct tenant context from a raw caller-controlled tenant ID.
-    The first auth slice will replace this stub with verified-token -> server-side membership
-    resolution while keeping the same dependency boundary.
+    The Telegram bot/ingress will resolve immutable Telegram identity server-side into
+    ViMi membership/workspace authority before constructing ExecutionContext. Web/admin
+    surfaces may use a managed-IdP adapter behind the same trusted boundary.
     """
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="managed IdP execution-context resolver is not configured",
+        detail="trusted execution-context resolver is not configured",
     )
