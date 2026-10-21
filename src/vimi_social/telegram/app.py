@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from secrets import compare_digest
 from typing import Annotated, Protocol
@@ -21,7 +21,7 @@ def build_telegram_app(service: TelegramUpdateHandler, webhook_secret: str) -> F
         raise ValueError("telegram webhook secret must not be empty")
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
         yield
         await service.aclose()
 
