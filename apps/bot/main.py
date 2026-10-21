@@ -1,3 +1,4 @@
+from fastapi import FastAPI
 from sqlalchemy.orm import Session, sessionmaker
 
 from vimi_social.core.config import get_settings
@@ -8,7 +9,7 @@ from vimi_social.telegram.identity import TelegramIdentityResolver, TelegramUpda
 from vimi_social.telegram.service import TelegramBotService
 
 
-def create_application():  # type: ignore[no-untyped-def]
+def create_application() -> FastAPI:
     settings = get_settings()
     if settings.telegram_bot_token is None:
         raise RuntimeError("VIMI_TELEGRAM_BOT_TOKEN is required for the bot process")
