@@ -58,7 +58,7 @@ def test_ai_search_intake_persists_one_task_for_one_telegram_update() -> None:
         with Session(engine) as session, session.begin():
             principal = _principal(session, 920000001)
 
-        repository.begin_ai_search(principal)
+        assert repository.begin_ai_search(820000000, principal) is True
         task = repository.consume_ai_search_text(820000001, principal, "find fresh videos")
         assert task is not None
         assert task.query_text == "find fresh videos"
@@ -75,6 +75,55 @@ def test_ai_search_intake_persists_one_task_for_one_telegram_update() -> None:
         engine.dispose()
 
 
+def test_replayed_ai_callback_cannot_reopen_consumed_intake() -> None:
+    engine = create_engine(_database_dsn())
+    factory = sessionmaker[Session](bind=engine, expire_on_commit=False, autoflush=False)
+    repository = SourceTaskRepository(factory)
+    try:
+        with Session(engine) as session, session.begin():
+            principal = _principal(session, 920000004)
+
+        assert repository.begin_ai_search(820000020, principal) is True
+        assert repository.begin_ai_search(820000020, principal) is True
+
+        task = repository.consume_ai_search_text(820000021, principal, "first query")
+        assert task is not None
+
+        assert repository.begin_ai_search(820000020, principal) is False
+        assert repository.consume_ai_search_text(
+            820000022,
+            principal,
+            "unrelated later text",
+        ) is None
+    finally:
+        engine.dispose()
+
+
+def test_selecting_other_source_closes_ai_intake_and_blocks_stale_replay() -> None:
+    engine = create_engine(_database_dsn())
+    factory = sessionmaker[Session](bind=engine, expire_on_commit=False, autoflush=False)
+    repository = SourceTaskRepository(factory)
+    try:
+        with Session(engine) as session, session.begin():
+            principal = _principal(session, 920000005)
+
+        assert repository.begin_ai_search(820000030, principal) is True
+        assert repository.clear_pending_intake(820000031, principal) is True
+        assert repository.begin_ai_search(820000030, principal) is False
+        assert repository.consume_ai_search_text(
+            820000032,
+            principal,
+            "must not become an AI task",
+        ) is None
+
+        assert repository.begin_ai_search(820000033, principal) is True
+        task = repository.consume_ai_search_text(820000034, principal, "new search")
+        assert task is not None
+        assert task.query_text == "new search"
+    finally:
+        engine.dispose()
+
+
 def test_oversized_active_query_is_recoverable_and_preserves_intake() -> None:
     engine = create_engine(_database_dsn())
     factory = sessionmaker[Session](bind=engine, expire_on_commit=False, autoflush=False)
@@ -83,11 +132,11 @@ def test_oversized_active_query_is_recoverable_and_preserves_intake() -> None:
         with Session(engine) as session, session.begin():
             principal = _principal(session, 920000002)
 
-        repository.begin_ai_search(principal)
+        assert repository.begin_ai_search(820000010, principal) is True
         with pytest.raises(SourceTaskQueryTooLong):
-            repository.consume_ai_search_text(820000002, principal, "x" * 2001)
+            repository.consume_ai_search_text(820000011, principal, "x" * 2001)
 
-        task = repository.consume_ai_search_text(820000003, principal, "short query")
+        task = repository.consume_ai_search_text(820000012, principal, "short query")
         assert task is not None
         assert task.query_text == "short query"
     finally:
