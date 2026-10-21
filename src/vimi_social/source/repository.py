@@ -74,8 +74,14 @@ class SourceTaskRepository:
             ).mappings().one_or_none()
 
             if existing is not None:
-                _validate_existing_binding(existing, tenant_id, principal.user_id, query)
-                return _source_task_from_row(cast(Mapping[str, object], existing))
+                existing_row = cast(Mapping[str, object], existing)
+                _validate_existing_binding(
+                    existing_row,
+                    tenant_id,
+                    principal.user_id,
+                    query,
+                )
+                return _source_task_from_row(existing_row)
 
             state = tx.execute(
                 text(
