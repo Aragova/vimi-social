@@ -62,6 +62,21 @@ class SourceTaskRepository:
         origin_key = f"telegram:update:{update_id}:source-task"
         with self._session_factory() as session:
             with tenant_transaction(session, tenant_id) as tx:
+                existing = tx.execute(
+                    text(
+                        """
+                        SELECT *
+                        FROM source_task
+                        WHERE origin_key = :origin_key
+                        """
+                    ),
+                    {"origin_key": origin_key},
+                ).mappings().one_or_none()
+
+                if existing is not None:
+                    _validate_existing_binding(existing, tenant_id, principal.user_id, query)
+                    return _source_task_from_row(cast(Mapping[str, object], existing))
+
                 state = tx.execute(
                     text(
                         """
@@ -79,59 +94,37 @@ class SourceTaskRepository:
                 if state != "AWAITING_AI_SEARCH_QUERY":
                     return None
 
-                existing = tx.execute(
+                row = tx.execute(
                     text(
                         """
-                        SELECT *
-                        FROM source_task
-                        WHERE origin_key = :origin_key
+                        INSERT INTO source_task (
+                            tenant_id,
+                            actor_user_id,
+                            origin_key,
+                            source_mode,
+                            query_text,
+                            requested_source,
+                            state
+                        )
+                        VALUES (
+                            :tenant_id,
+                            :actor_user_id,
+                            :origin_key,
+                            'AI_SEARCH',
+                            :query_text,
+                            NULL,
+                            'QUEUED'
+                        )
+                        RETURNING *
                         """
                     ),
-                    {"origin_key": origin_key},
-                ).mappings().one_or_none()
-
-                if existing is None:
-                    row = tx.execute(
-                        text(
-                            """
-                            INSERT INTO source_task (
-                                tenant_id,
-                                actor_user_id,
-                                origin_key,
-                                source_mode,
-                                query_text,
-                                requested_source,
-                                state
-                            )
-                            VALUES (
-                                :tenant_id,
-                                :actor_user_id,
-                                :origin_key,
-                                'AI_SEARCH',
-                                :query_text,
-                                NULL,
-                                'QUEUED'
-                            )
-                            RETURNING *
-                            """
-                        ),
-                        {
-                            "tenant_id": str(tenant_id.value),
-                            "actor_user_id": str(principal.user_id),
-                            "origin_key": origin_key,
-                            "query_text": query,
-                        },
-                    ).mappings().one()
-                else:
-                    row = existing
-                    if (
-                        row["tenant_id"] != tenant_id.value
-                        or row["actor_user_id"] != principal.user_id
-                        or row["query_text"] != query
-                    ):
-                        raise SourceTaskBindingConflict(
-                            "source task operation key is already bound differently"
-                        )
+                    {
+                        "tenant_id": str(tenant_id.value),
+                        "actor_user_id": str(principal.user_id),
+                        "origin_key": origin_key,
+                        "query_text": query,
+                    },
+                ).mappings().one()
 
                 tx.execute(
                     text(
@@ -204,6 +197,22 @@ class SourceCandidateRepository:
                             "media_refs": list(candidate.media_refs),
                         },
                     )
+
+
+def _validate_existing_binding(
+    row: Mapping[str, object],
+    tenant_id: TenantId,
+    actor_user_id: UUID,
+    query: str,
+) -> None:
+    if (
+        row["tenant_id"] != tenant_id.value
+        or row["actor_user_id"] != actor_user_id
+        or row["query_text"] != query
+    ):
+        raise SourceTaskBindingConflict(
+            "source task operation key is already bound differently"
+        )
 
 
 def _source_task_from_row(row: Mapping[str, object]) -> SourceTask:
