@@ -180,7 +180,7 @@ class UsageRepository:
             },
         )
 
-        updated = session.execute(
+        updated_id = session.execute(
             text(
                 """
                 UPDATE usage_reservation
@@ -188,11 +188,12 @@ class UsageRepository:
                     updated_at = clock_timestamp()
                 WHERE id::text = :reservation_id
                   AND state = 'RESERVED'
+                RETURNING id::text
                 """
             ),
             {"reservation_id": reservation["id"]},
-        ).rowcount
-        if updated != 1:
+        ).scalar_one_or_none()
+        if updated_id is None:
             raise ReservationStateConflict("usage reservation changed during commit")
         return True
 
@@ -242,7 +243,7 @@ class UsageRepository:
         if capacity is None:
             raise ReservationStateConflict("usage capacity counters are inconsistent")
 
-        updated = session.execute(
+        updated_id = session.execute(
             text(
                 """
                 UPDATE usage_reservation
@@ -250,10 +251,11 @@ class UsageRepository:
                     updated_at = clock_timestamp()
                 WHERE id::text = :reservation_id
                   AND state = 'RESERVED'
+                RETURNING id::text
                 """
             ),
             {"reservation_id": reservation["id"]},
-        ).rowcount
-        if updated != 1:
+        ).scalar_one_or_none()
+        if updated_id is None:
             raise ReservationStateConflict("usage reservation changed during release")
         return True
