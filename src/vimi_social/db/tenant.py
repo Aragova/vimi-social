@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 from sqlalchemy import text
@@ -12,7 +12,7 @@ class TenantTransactionRequired(RuntimeError):
 
 
 @contextmanager
-def tenant_transaction(session: Session, tenant_id: TenantId) -> Iterator[Session]:
+def tenant_transaction(session: Session, tenant_id: TenantId) -> Generator[Session, None, None]:
     """Own the top-level transaction and install transaction-local tenant context."""
     if session.in_transaction():
         raise TenantTransactionRequired(
