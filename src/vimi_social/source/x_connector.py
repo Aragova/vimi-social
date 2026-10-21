@@ -127,9 +127,11 @@ def _candidate_from_post(
     media_keys: tuple[str, ...] = ()
     attachments_obj = item.get("attachments")
     if isinstance(attachments_obj, dict):
-        raw_keys = attachments_obj.get("media_keys")
+        attachments = cast(dict[object, object], attachments_obj)
+        raw_keys = attachments.get("media_keys")
         if isinstance(raw_keys, list):
-            media_keys = tuple(key for key in raw_keys if isinstance(key, str))
+            keys = cast(list[object], raw_keys)
+            media_keys = tuple(key for key in keys if isinstance(key, str))
 
     selected_media = next((media[key] for key in media_keys if key in media), None)
     if selected_media is None:
@@ -179,7 +181,8 @@ def _candidate_from_post(
 def _object_list(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
-    return [cast(dict[str, object], item) for item in value if isinstance(item, dict)]
+    items = cast(list[object], value)
+    return [cast(dict[str, object], item) for item in items if isinstance(item, dict)]
 
 
 def _media_by_key(items: list[dict[str, object]]) -> dict[str, dict[str, object]]:
@@ -194,6 +197,7 @@ def _media_by_key(items: list[dict[str, object]]) -> dict[str, dict[str, object]
 def _public_metrics(value: object) -> dict[str, int]:
     if not isinstance(value, dict):
         return {}
+    metrics = cast(dict[object, object], value)
     result: dict[str, int] = {}
     for key in (
         "like_count",
@@ -203,7 +207,7 @@ def _public_metrics(value: object) -> dict[str, int]:
         "bookmark_count",
         "impression_count",
     ):
-        raw = value.get(key)
+        raw = metrics.get(key)
         if isinstance(raw, int) and not isinstance(raw, bool):
             result[key] = raw
     return result
