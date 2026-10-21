@@ -1,4 +1,4 @@
-import os
+from os import environ
 from uuid import UUID
 
 import pytest
@@ -13,7 +13,7 @@ DEFAULT_SCOUT_RUN_QUOTA = 10
 
 
 def _database_dsn() -> str:
-    dsn = os.environ.get("VIMI_TEST_DATABASE_DSN")
+    dsn = environ.get("VIMI_TEST_DATABASE_DSN")
     if dsn is None:
         pytest.skip("PostgreSQL integration DSN is not configured")
     return dsn
