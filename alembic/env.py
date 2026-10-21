@@ -27,8 +27,11 @@ def run_migrations_online() -> None:
     )
     with connectable.connect() as connection:
         # The login role can deploy migrations but does not own runtime tables.
-        # The NOLOGIN owner role remains separate from application credentials.
+        # Commit the session-level SET ROLE before Alembic inspects transaction
+        # state, otherwise SQLAlchemy 2 autobegin would look like an externally
+        # owned transaction and migration DDL could be rolled back on close.
         connection.exec_driver_sql("SET ROLE vimi_migration_owner")
+        connection.commit()
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()
