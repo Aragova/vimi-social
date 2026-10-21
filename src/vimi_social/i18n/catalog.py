@@ -19,6 +19,7 @@ class MessageKey(StrEnum):
     SOURCE_FEED = "source_feed"
     AI_SEARCH_PROMPT = "ai_search_prompt"
     AI_SEARCH_QUEUED = "ai_search_queued"
+    AI_SEARCH_TOO_LONG = "ai_search_too_long"
     UPLOAD_PROMPT = "upload_prompt"
     FEED_PROMPT = "feed_prompt"
 
@@ -48,6 +49,10 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         MessageKey.AI_SEARCH_QUEUED: (
             "✅ Задача сохранена.\n\n"
             "Scout подготовит поиск и вернёт подходящие варианты."
+        ),
+        MessageKey.AI_SEARCH_TOO_LONG: (
+            "⚠️ Запрос слишком длинный.\n\n"
+            "Сократите описание до 2000 символов и отправьте ещё раз."
         ),
         MessageKey.UPLOAD_PROMPT: (
             "📤 Ручной источник выбран.\n\n"
@@ -82,6 +87,10 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         MessageKey.AI_SEARCH_QUEUED: (
             "✅ Task saved.\n\n"
             "Scout will prepare the search and return suitable candidates."
+        ),
+        MessageKey.AI_SEARCH_TOO_LONG: (
+            "⚠️ The request is too long.\n\n"
+            "Shorten it to 2000 characters and send it again."
         ),
         MessageKey.UPLOAD_PROMPT: (
             "📤 Manual source selected.\n\n"

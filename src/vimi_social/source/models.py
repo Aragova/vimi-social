@@ -6,6 +6,10 @@ from uuid import UUID
 from vimi_social.domain.source import SourceMode
 
 
+class SourceTaskQueryTooLong(ValueError):
+    pass
+
+
 class SourcePlatform(StrEnum):
     X = "X"
     TELEGRAM = "TELEGRAM"

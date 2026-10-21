@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from vimi_social.auth.context import ExecutionContext
 from vimi_social.domain.identity import TenantId
 from vimi_social.domain.international import AgeEligibility, IanaTimezone, UiLocale
+from vimi_social.source.models import SourceTaskQueryTooLong
 from vimi_social.source.repository import SourceTaskRepository
 from vimi_social.telegram.identity import TelegramPrincipal
 
@@ -70,6 +71,38 @@ def test_ai_search_intake_persists_one_task_for_one_telegram_update() -> None:
         )
         assert duplicate is not None
         assert duplicate.id == task.id
+    finally:
+        engine.dispose()
+
+
+def test_oversized_active_query_is_recoverable_and_preserves_intake() -> None:
+    engine = create_engine(_database_dsn())
+    factory = sessionmaker[Session](bind=engine, expire_on_commit=False, autoflush=False)
+    repository = SourceTaskRepository(factory)
+    try:
+        with Session(engine) as session, session.begin():
+            principal = _principal(session, 920000002)
+
+        repository.begin_ai_search(principal)
+        with pytest.raises(SourceTaskQueryTooLong):
+            repository.consume_ai_search_text(820000002, principal, "x" * 2001)
+
+        task = repository.consume_ai_search_text(820000003, principal, "short query")
+        assert task is not None
+        assert task.query_text == "short query"
+    finally:
+        engine.dispose()
+
+
+def test_oversized_text_outside_ai_search_is_ignored() -> None:
+    engine = create_engine(_database_dsn())
+    factory = sessionmaker[Session](bind=engine, expire_on_commit=False, autoflush=False)
+    repository = SourceTaskRepository(factory)
+    try:
+        with Session(engine) as session, session.begin():
+            principal = _principal(session, 920000003)
+
+        assert repository.consume_ai_search_text(820000004, principal, "x" * 2001) is None
     finally:
         engine.dispose()
 

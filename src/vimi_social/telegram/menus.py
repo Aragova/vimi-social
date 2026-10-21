@@ -57,6 +57,10 @@ def build_ai_search_queued(locale: UiLocale) -> OutgoingMessage:
     return OutgoingMessage(text=translate(MessageKey.AI_SEARCH_QUEUED, locale))
 
 
+def build_ai_search_too_long(locale: UiLocale) -> OutgoingMessage:
+    return OutgoingMessage(text=translate(MessageKey.AI_SEARCH_TOO_LONG, locale))
+
+
 def build_upload_prompt(locale: UiLocale) -> OutgoingMessage:
     return OutgoingMessage(text=translate(MessageKey.UPLOAD_PROMPT, locale))
 

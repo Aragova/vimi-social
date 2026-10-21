@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from vimi_social.source.models import SourceTask
+from vimi_social.source.models import SourceTask, SourceTaskQueryTooLong
 from vimi_social.telegram.identity import (
     TelegramIdentityResolver,
     TelegramPrincipal,
@@ -10,6 +10,7 @@ from vimi_social.telegram.identity import (
 from vimi_social.telegram.menus import (
     build_ai_search_prompt,
     build_ai_search_queued,
+    build_ai_search_too_long,
     build_feed_prompt,
     build_main_menu,
     build_source_menu,
@@ -96,11 +97,21 @@ class TelegramBotService:
         if self._source_intake is None:
             return
         principal = self._identity_resolver.resolve(message.from_user)
-        task = self._source_intake.consume_ai_search_text(
-            update.update_id,
-            principal,
-            message.text,
-        )
+        try:
+            task = self._source_intake.consume_ai_search_text(
+                update.update_id,
+                principal,
+                message.text,
+            )
+        except SourceTaskQueryTooLong:
+            await self._messenger.send_message(
+                update.update_id,
+                "ai-search-query-too-long",
+                message.chat.id,
+                build_ai_search_too_long(principal.locale),
+            )
+            return
+
         if task is None:
             return
         await self._messenger.send_message(

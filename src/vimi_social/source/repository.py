@@ -13,6 +13,7 @@ from vimi_social.source.models import (
     CandidateContent,
     SourcePlatform,
     SourceTask,
+    SourceTaskQueryTooLong,
     SourceTaskState,
 )
 from vimi_social.telegram.identity import TelegramPrincipal
@@ -53,11 +54,6 @@ class SourceTaskRepository:
         query_text: str,
     ) -> SourceTask | None:
         query = query_text.strip()
-        if not query:
-            return None
-        if len(query) > 2000:
-            raise ValueError("AI search task must be at most 2000 characters")
-
         tenant_id = principal.context.tenant_id
         origin_key = f"telegram:update:{update_id}:source-task"
         with self._session_factory() as session:
@@ -93,6 +89,12 @@ class SourceTaskRepository:
                 ).scalar_one_or_none()
                 if state != "AWAITING_AI_SEARCH_QUERY":
                     return None
+                if not query:
+                    return None
+                if len(query) > 2000:
+                    raise SourceTaskQueryTooLong(
+                        "AI search task must be at most 2000 characters"
+                    )
 
                 row = tx.execute(
                     text(
