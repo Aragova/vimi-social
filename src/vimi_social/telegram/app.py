@@ -7,7 +7,7 @@ from fastapi import FastAPI, Header, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 
 from vimi_social.telegram.models import TelegramUpdate
-from vimi_social.telegram.service import TelegramUpdateBusy
+from vimi_social.telegram.service import TelegramUpdateBusy, TelegramUpdateRetryAfter
 
 
 class TelegramUpdateHandler(Protocol):
@@ -48,6 +48,11 @@ def build_telegram_app(service: TelegramUpdateHandler, webhook_secret: str) -> F
 
         try:
             await service.handle_update(update)
+        except TelegramUpdateRetryAfter as error:
+            return Response(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                headers={"Retry-After": str(error.retry_after_seconds)},
+            )
         except TelegramUpdateBusy:
             return Response(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
