@@ -115,3 +115,13 @@ class TelegramUpdateGuard:
                 text("SELECT complete_telegram_update(:update_id)"),
                 {"update_id": update_id},
             )
+
+    def defer(self, update_id: int, retry_after_seconds: int) -> None:
+        with self._session_factory() as session, session.begin():
+            session.execute(
+                text("SELECT defer_telegram_update(:update_id, :retry_after_seconds)"),
+                {
+                    "update_id": update_id,
+                    "retry_after_seconds": retry_after_seconds,
+                },
+            )
