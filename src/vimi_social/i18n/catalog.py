@@ -57,8 +57,8 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         MessageKey.AI_SEARCH_STARTED: (
             "🔎 Задача сохранена. Scout начал поиск по подключённым источникам."
         ),
-        MessageKey.SCOUT_RESULTS: (  # noqa: RUF001 - intentional Russian localization
-            "🔎 Найдено: {discovered}\nПосле нормализации: {candidates}"
+        MessageKey.SCOUT_RESULTS: (
+            "🔎 Найдено: {discovered}\nПосле нормализации: {candidates}"  # noqa: RUF001
         ),
         MessageKey.SCOUT_EMPTY: (
             "🔎 По этому запросу подходящих видео пока не найдено. "
