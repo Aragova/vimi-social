@@ -4,6 +4,7 @@ from secrets import compare_digest
 from typing import Annotated, Protocol
 
 from fastapi import FastAPI, Header, HTTPException, Response, status
+from fastapi.responses import JSONResponse
 
 from vimi_social.telegram.models import TelegramUpdate
 from vimi_social.telegram.service import TelegramUpdateBusy
@@ -31,14 +32,14 @@ def build_telegram_app(service: TelegramUpdateHandler, webhook_secret: str) -> F
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.post("/telegram/webhook")
+    @app.post("/telegram/webhook", response_model=None)
     async def telegram_webhook(
         update: TelegramUpdate,
         webhook_header: Annotated[
             str | None,
             Header(alias="X-Telegram-Bot-Api-Secret-Token"),
         ] = None,
-    ) -> dict[str, bool] | Response:
+    ) -> Response:
         if webhook_header is None or not compare_digest(webhook_header, secret):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -52,6 +53,6 @@ def build_telegram_app(service: TelegramUpdateHandler, webhook_secret: str) -> F
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 headers={"Retry-After": "2"},
             )
-        return {"ok": True}
+        return JSONResponse({"ok": True})
 
     return app
