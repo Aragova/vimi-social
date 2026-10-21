@@ -1,5 +1,5 @@
-from collections.abc import Callable
 import re
+from collections.abc import Callable
 from uuid import UUID
 
 from sqlalchemy.orm import Session
