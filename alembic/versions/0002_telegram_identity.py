@@ -1,4 +1,4 @@
-"""Add Telegram-first identity, preferences, and webhook idempotency."""
+"""Add Telegram-first identity and durable ingress/outgoing state."""
 
 from collections.abc import Sequence
 
@@ -67,10 +67,28 @@ def upgrade() -> None:
             CHECK (state IN ('PROCESSING', 'PROCESSED'))
         );
 
+        CREATE TABLE telegram_outgoing_operation (
+            operation_key text PRIMARY KEY,
+            update_id bigint NOT NULL REFERENCES telegram_update_receipt(update_id),
+            chat_id bigint NOT NULL,
+            action text NOT NULL,
+            payload_sha256 text NOT NULL,
+            state text NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            CHECK (length(operation_key) BETWEEN 1 AND 200),
+            CHECK (payload_sha256 ~ '^[0-9a-f]{64}$'),
+            CHECK (state IN (
+                'READY', 'DISPATCHING', 'CONFIRMED', 'UNKNOWN', 'FAILED_SAFE'
+            ))
+        );
+
         REVOKE ALL ON app_user, telegram_identity, workspace_membership,
-            user_preferences, telegram_update_receipt FROM PUBLIC;
+            user_preferences, telegram_update_receipt, telegram_outgoing_operation
+            FROM PUBLIC;
         REVOKE ALL ON app_user, telegram_identity, workspace_membership,
-            user_preferences, telegram_update_receipt FROM vimi_app;
+            user_preferences, telegram_update_receipt, telegram_outgoing_operation
+            FROM vimi_app;
 
         CREATE FUNCTION resolve_or_create_telegram_context(
             p_telegram_user_id bigint,
@@ -259,15 +277,165 @@ def upgrade() -> None:
         END;
         $$;
 
+        CREATE FUNCTION prepare_telegram_outgoing(
+            p_operation_key text,
+            p_update_id bigint,
+            p_chat_id bigint,
+            p_action text,
+            p_payload_sha256 text
+        )
+        RETURNS text
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $$
+        DECLARE
+            v_update_id bigint;
+            v_chat_id bigint;
+            v_action text;
+            v_payload_sha256 text;
+            v_state text;
+        BEGIN
+            IF length(p_operation_key) NOT BETWEEN 1 AND 200 THEN
+                RAISE EXCEPTION 'invalid telegram outgoing operation key'
+                    USING ERRCODE = '22023';
+            END IF;
+
+            SELECT too.update_id, too.chat_id, too.action, too.payload_sha256, too.state
+            INTO v_update_id, v_chat_id, v_action, v_payload_sha256, v_state
+            FROM public.telegram_outgoing_operation AS too
+            WHERE too.operation_key = p_operation_key
+            FOR UPDATE;
+
+            IF FOUND THEN
+                IF v_update_id <> p_update_id
+                    OR v_chat_id <> p_chat_id
+                    OR v_action <> p_action
+                    OR v_payload_sha256 <> p_payload_sha256 THEN
+                    RAISE EXCEPTION 'telegram outgoing operation binding conflict'
+                        USING ERRCODE = '23514';
+                END IF;
+                RETURN v_state;
+            END IF;
+
+            INSERT INTO public.telegram_outgoing_operation (
+                operation_key,
+                update_id,
+                chat_id,
+                action,
+                payload_sha256,
+                state
+            )
+            VALUES (
+                p_operation_key,
+                p_update_id,
+                p_chat_id,
+                p_action,
+                p_payload_sha256,
+                'READY'
+            );
+            RETURN 'READY';
+        END;
+        $$;
+
+        CREATE FUNCTION begin_telegram_outgoing(p_operation_key text)
+        RETURNS text
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $$
+        DECLARE
+            v_state text;
+        BEGIN
+            SELECT too.state
+            INTO v_state
+            FROM public.telegram_outgoing_operation AS too
+            WHERE too.operation_key = p_operation_key
+            FOR UPDATE;
+
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'telegram outgoing operation not prepared'
+                    USING ERRCODE = '55000';
+            END IF;
+
+            IF v_state = 'READY' THEN
+                UPDATE public.telegram_outgoing_operation
+                SET state = 'DISPATCHING', updated_at = clock_timestamp()
+                WHERE operation_key = p_operation_key;
+                RETURN 'DISPATCH';
+            END IF;
+
+            IF v_state = 'DISPATCHING' THEN
+                UPDATE public.telegram_outgoing_operation
+                SET state = 'UNKNOWN', updated_at = clock_timestamp()
+                WHERE operation_key = p_operation_key;
+                RETURN 'UNKNOWN';
+            END IF;
+
+            RETURN v_state;
+        END;
+        $$;
+
+        CREATE FUNCTION finish_telegram_outgoing(
+            p_operation_key text,
+            p_state text
+        )
+        RETURNS void
+        LANGUAGE plpgsql
+        SECURITY DEFINER
+        SET search_path = pg_catalog, public
+        AS $$
+        DECLARE
+            v_state text;
+        BEGIN
+            IF p_state NOT IN ('CONFIRMED', 'UNKNOWN', 'FAILED_SAFE') THEN
+                RAISE EXCEPTION 'invalid telegram outgoing final state'
+                    USING ERRCODE = '22023';
+            END IF;
+
+            SELECT too.state
+            INTO v_state
+            FROM public.telegram_outgoing_operation AS too
+            WHERE too.operation_key = p_operation_key
+            FOR UPDATE;
+
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'telegram outgoing operation not prepared'
+                    USING ERRCODE = '55000';
+            END IF;
+
+            IF v_state = p_state THEN
+                RETURN;
+            END IF;
+
+            IF v_state <> 'DISPATCHING' THEN
+                RAISE EXCEPTION 'telegram outgoing operation cannot transition from %', v_state
+                    USING ERRCODE = '55000';
+            END IF;
+
+            UPDATE public.telegram_outgoing_operation
+            SET state = p_state, updated_at = clock_timestamp()
+            WHERE operation_key = p_operation_key;
+        END;
+        $$;
+
         REVOKE ALL ON FUNCTION resolve_or_create_telegram_context(bigint, text, text)
             FROM PUBLIC;
         REVOKE ALL ON FUNCTION claim_telegram_update(bigint, bigint) FROM PUBLIC;
         REVOKE ALL ON FUNCTION complete_telegram_update(bigint) FROM PUBLIC;
+        REVOKE ALL ON FUNCTION prepare_telegram_outgoing(text, bigint, bigint, text, text)
+            FROM PUBLIC;
+        REVOKE ALL ON FUNCTION begin_telegram_outgoing(text) FROM PUBLIC;
+        REVOKE ALL ON FUNCTION finish_telegram_outgoing(text, text) FROM PUBLIC;
 
         GRANT EXECUTE ON FUNCTION resolve_or_create_telegram_context(bigint, text, text)
             TO vimi_app;
         GRANT EXECUTE ON FUNCTION claim_telegram_update(bigint, bigint) TO vimi_app;
         GRANT EXECUTE ON FUNCTION complete_telegram_update(bigint) TO vimi_app;
+        GRANT EXECUTE ON FUNCTION prepare_telegram_outgoing(text, bigint, bigint, text, text)
+            TO vimi_app;
+        GRANT EXECUTE ON FUNCTION begin_telegram_outgoing(text) TO vimi_app;
+        GRANT EXECUTE ON FUNCTION finish_telegram_outgoing(text, text) TO vimi_app;
         """
     )
 
@@ -275,9 +443,13 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.execute(
         """
+        DROP FUNCTION IF EXISTS finish_telegram_outgoing(text, text);
+        DROP FUNCTION IF EXISTS begin_telegram_outgoing(text);
+        DROP FUNCTION IF EXISTS prepare_telegram_outgoing(text, bigint, bigint, text, text);
         DROP FUNCTION IF EXISTS complete_telegram_update(bigint);
         DROP FUNCTION IF EXISTS claim_telegram_update(bigint, bigint);
         DROP FUNCTION IF EXISTS resolve_or_create_telegram_context(bigint, text, text);
+        DROP TABLE IF EXISTS telegram_outgoing_operation;
         DROP TABLE IF EXISTS telegram_update_receipt;
         DROP TABLE IF EXISTS user_preferences;
         DROP TABLE IF EXISTS workspace_membership;

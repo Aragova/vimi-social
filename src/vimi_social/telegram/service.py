@@ -1,4 +1,3 @@
-from vimi_social.telegram.client import TelegramGateway
 from vimi_social.telegram.identity import (
     TelegramIdentityResolver,
     TelegramUpdateClaim,
@@ -12,6 +11,7 @@ from vimi_social.telegram.menus import (
     build_upload_prompt,
 )
 from vimi_social.telegram.models import TelegramCallbackQuery, TelegramUpdate, TelegramUser
+from vimi_social.telegram.outgoing import TelegramMessenger
 
 
 class TelegramUpdateBusy(RuntimeError):
@@ -23,11 +23,11 @@ class TelegramBotService:
         self,
         identity_resolver: TelegramIdentityResolver,
         update_guard: TelegramUpdateGuard,
-        gateway: TelegramGateway,
+        messenger: TelegramMessenger,
     ) -> None:
         self._identity_resolver = identity_resolver
         self._update_guard = update_guard
-        self._gateway = gateway
+        self._messenger = messenger
 
     async def handle_update(self, update: TelegramUpdate) -> None:
         actor = _extract_actor(update)
@@ -40,12 +40,12 @@ class TelegramBotService:
         if update.message is not None:
             await self._handle_message(update)
         elif update.callback_query is not None:
-            await self._handle_callback(update.callback_query)
+            await self._handle_callback(update.update_id, update.callback_query)
 
         self._update_guard.complete(update.update_id)
 
     async def aclose(self) -> None:
-        await self._gateway.aclose()
+        await self._messenger.aclose()
 
     async def _handle_message(self, update: TelegramUpdate) -> None:
         message = update.message
@@ -59,29 +59,47 @@ class TelegramBotService:
             return
 
         principal = self._identity_resolver.resolve(message.from_user)
-        await self._gateway.send_message(message.chat.id, build_main_menu(principal.locale))
+        await self._messenger.send_message(
+            update.update_id,
+            "start-main-menu",
+            message.chat.id,
+            build_main_menu(principal.locale),
+        )
 
-    async def _handle_callback(self, callback: TelegramCallbackQuery) -> None:
+    async def _handle_callback(
+        self,
+        update_id: int,
+        callback: TelegramCallbackQuery,
+    ) -> None:
         if callback.from_user.is_bot or callback.message is None or callback.data is None:
             return
         if callback.message.chat.type != "private":
             return
 
         principal = self._identity_resolver.resolve(callback.from_user)
-        await self._gateway.answer_callback_query(callback.id)
+        await self._messenger.answer_callback_query(callback.id)
 
         if callback.data == "task:new":
+            action = "task-new-source-menu"
             outgoing = build_source_menu(principal.locale)
         elif callback.data == "source:ai_search":
+            action = "source-ai-search-prompt"
             outgoing = build_ai_search_prompt(principal.locale)
         elif callback.data == "source:manual_upload":
+            action = "source-manual-upload-prompt"
             outgoing = build_upload_prompt(principal.locale)
         elif callback.data == "source:feed":
+            action = "source-feed-prompt"
             outgoing = build_feed_prompt(principal.locale)
         else:
             return
 
-        await self._gateway.send_message(callback.message.chat.id, outgoing)
+        await self._messenger.send_message(
+            update_id,
+            action,
+            callback.message.chat.id,
+            outgoing,
+        )
 
 
 def _extract_actor(update: TelegramUpdate) -> TelegramUser | None:

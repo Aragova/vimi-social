@@ -35,6 +35,15 @@ def _resolve(session: Session, telegram_user_id: int, language_code: str) -> dic
     return dict(row)
 
 
+def _claim_update(session: Session, update_id: int, user_id: int) -> str:
+    raw = session.execute(
+        text("SELECT claim_telegram_update(:update_id, :user_id)"),
+        {"update_id": update_id, "user_id": user_id},
+    ).scalar_one()
+    assert isinstance(raw, str)
+    return raw
+
+
 def test_telegram_resolver_provisions_stable_workspace_and_preserves_locale_override() -> None:
     engine = create_engine(_database_dsn())
     try:
@@ -58,16 +67,17 @@ def test_telegram_resolver_provisions_stable_workspace_and_preserves_locale_over
         engine.dispose()
 
 
-def test_application_role_cannot_bypass_identity_resolver_with_direct_table_reads() -> None:
+def test_application_role_cannot_read_identity_or_outgoing_tables_directly() -> None:
     engine = create_engine(_database_dsn())
     try:
-        with (
-            pytest.raises(DBAPIError) as error,
-            Session(engine) as session,
-            session.begin(),
-        ):
-            session.execute(text("SELECT * FROM telegram_identity")).all()
-        assert getattr(error.value.orig, "sqlstate", None) == "42501"
+        for table_name in ("telegram_identity", "telegram_outgoing_operation"):
+            with (
+                pytest.raises(DBAPIError) as error,
+                Session(engine) as session,
+                session.begin(),
+            ):
+                session.execute(text(f"SELECT * FROM {table_name}"))
+            assert getattr(error.value.orig, "sqlstate", None) == "42501"
     finally:
         engine.dispose()
 
@@ -76,17 +86,11 @@ def test_telegram_update_claim_is_leased_and_idempotent() -> None:
     engine = create_engine(_database_dsn())
     try:
         with Session(engine) as session, session.begin():
-            first = session.execute(
-                text("SELECT claim_telegram_update(:update_id, :user_id)"),
-                {"update_id": 810000001, "user_id": 910000002},
-            ).scalar_one()
+            first = _claim_update(session, 810000001, 910000002)
         assert first == "CLAIMED"
 
         with Session(engine) as session, session.begin():
-            duplicate = session.execute(
-                text("SELECT claim_telegram_update(:update_id, :user_id)"),
-                {"update_id": 810000001, "user_id": 910000002},
-            ).scalar_one()
+            duplicate = _claim_update(session, 810000001, 910000002)
         assert duplicate == "BUSY"
 
         with Session(engine) as session, session.begin():
@@ -96,10 +100,59 @@ def test_telegram_update_claim_is_leased_and_idempotent() -> None:
             )
 
         with Session(engine) as session, session.begin():
-            completed = session.execute(
-                text("SELECT claim_telegram_update(:update_id, :user_id)"),
-                {"update_id": 810000001, "user_id": 910000002},
-            ).scalar_one()
+            completed = _claim_update(session, 810000001, 910000002)
         assert completed == "PROCESSED"
+    finally:
+        engine.dispose()
+
+
+def test_inflight_outgoing_operation_becomes_unknown_instead_of_redispatching() -> None:
+    engine = create_engine(_database_dsn())
+    update_id = 810000010
+    operation_key = "telegram:update:810000010:start-main-menu"
+    payload_hash = "a" * 64
+    try:
+        with Session(engine) as session, session.begin():
+            assert _claim_update(session, update_id, 910000010) == "CLAIMED"
+            prepared = session.execute(
+                text(
+                    """
+                    SELECT prepare_telegram_outgoing(
+                        :operation_key,
+                        :update_id,
+                        :chat_id,
+                        :action,
+                        :payload_hash
+                    )
+                    """
+                ),
+                {
+                    "operation_key": operation_key,
+                    "update_id": update_id,
+                    "chat_id": 910000010,
+                    "action": "start-main-menu",
+                    "payload_hash": payload_hash,
+                },
+            ).scalar_one()
+            assert prepared == "READY"
+            dispatch = session.execute(
+                text("SELECT begin_telegram_outgoing(:operation_key)"),
+                {"operation_key": operation_key},
+            ).scalar_one()
+            assert dispatch == "DISPATCH"
+
+        with Session(engine) as session, session.begin():
+            recovered = session.execute(
+                text("SELECT begin_telegram_outgoing(:operation_key)"),
+                {"operation_key": operation_key},
+            ).scalar_one()
+            assert recovered == "UNKNOWN"
+
+        with Session(engine) as session, session.begin():
+            still_unknown = session.execute(
+                text("SELECT begin_telegram_outgoing(:operation_key)"),
+                {"operation_key": operation_key},
+            ).scalar_one()
+            assert still_unknown == "UNKNOWN"
     finally:
         engine.dispose()
