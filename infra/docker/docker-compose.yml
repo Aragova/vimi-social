@@ -3,11 +3,13 @@ services:
     image: postgres:17
     environment:
       POSTGRES_DB: vimi
-      POSTGRES_USER: vimi_migrator
-      POSTGRES_PASSWORD: vimi_migrator
+      POSTGRES_USER: vimi_bootstrap
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - ../postgres/bootstrap_roles.sql:/docker-entrypoint-initdb.d/001-bootstrap-roles.sql:ro
     ports: ["5432:5432"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U vimi_migrator -d vimi"]
+      test: ["CMD-SHELL", "pg_isready -U vimi_bootstrap -d vimi"]
       interval: 2s
       timeout: 2s
       retries: 20
@@ -17,8 +19,8 @@ services:
     environment:
       DB: postgresql
       DB_PORT: 5432
-      POSTGRES_USER: vimi_migrator
-      POSTGRES_PWD: vimi_migrator
+      POSTGRES_USER: vimi_bootstrap
+      POSTGRES_PWD: ""
       POSTGRES_SEEDS: postgres
     depends_on:
       postgres:

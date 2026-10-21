@@ -26,6 +26,9 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        # The login role can deploy migrations but does not own runtime tables.
+        # The NOLOGIN owner role remains separate from application credentials.
+        connection.exec_driver_sql("SET ROLE vimi_migration_owner")
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()

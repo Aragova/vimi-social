@@ -82,17 +82,31 @@ def upgrade() -> None:
         ALTER TABLE usage_ledger FORCE ROW LEVEL SECURITY;
 
         CREATE POLICY publication_tenant_isolation ON publication_operation
-            USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-            WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+            USING (tenant_id::text = NULLIF(current_setting('app.tenant_id', true), ''))
+            WITH CHECK (
+                tenant_id::text = NULLIF(current_setting('app.tenant_id', true), '')
+            );
         CREATE POLICY usage_capacity_tenant_isolation ON usage_capacity
-            USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-            WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+            USING (tenant_id::text = NULLIF(current_setting('app.tenant_id', true), ''))
+            WITH CHECK (
+                tenant_id::text = NULLIF(current_setting('app.tenant_id', true), '')
+            );
         CREATE POLICY usage_reservation_tenant_isolation ON usage_reservation
-            USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-            WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+            USING (tenant_id::text = NULLIF(current_setting('app.tenant_id', true), ''))
+            WITH CHECK (
+                tenant_id::text = NULLIF(current_setting('app.tenant_id', true), '')
+            );
         CREATE POLICY usage_ledger_tenant_isolation ON usage_ledger
-            USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
-            WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+            USING (tenant_id::text = NULLIF(current_setting('app.tenant_id', true), ''))
+            WITH CHECK (
+                tenant_id::text = NULLIF(current_setting('app.tenant_id', true), '')
+            );
+
+        REVOKE ALL ON publication_operation, usage_capacity, usage_reservation, usage_ledger
+            FROM PUBLIC;
+        GRANT SELECT, INSERT, UPDATE, DELETE
+            ON publication_operation, usage_capacity, usage_reservation, usage_ledger
+            TO vimi_app;
         """
     )
 

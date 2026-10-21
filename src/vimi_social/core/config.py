@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="VIMI_", env_file=".env", extra="ignore")
 
     env: str = "development"
-    database_dsn: str = "postgresql+psycopg://vimi_app:vimi_app@localhost:5432/vimi"
+    database_dsn: str = "postgresql+psycopg://vimi_app@localhost:5432/vimi"
     temporal_target: str = "localhost:7233"
     temporal_namespace: str = "default"
     temporal_task_queue: str = "vimi-social"
