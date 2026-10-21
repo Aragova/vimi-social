@@ -156,3 +156,56 @@ def test_inflight_outgoing_operation_becomes_unknown_instead_of_redispatching() 
             assert still_unknown == "UNKNOWN"
     finally:
         engine.dispose()
+
+
+def test_rate_limited_outgoing_is_deferred_without_losing_operation_identity() -> None:
+    engine = create_engine(_database_dsn())
+    update_id = 810000020
+    operation_key = "telegram:update:810000020:start-main-menu"
+    payload_hash = "b" * 64
+    try:
+        with Session(engine) as session, session.begin():
+            assert _claim_update(session, update_id, 910000020) == "CLAIMED"
+            session.execute(
+                text(
+                    """
+                    SELECT prepare_telegram_outgoing(
+                        :operation_key,
+                        :update_id,
+                        :chat_id,
+                        :action,
+                        :payload_hash
+                    )
+                    """
+                ),
+                {
+                    "operation_key": operation_key,
+                    "update_id": update_id,
+                    "chat_id": 910000020,
+                    "action": "start-main-menu",
+                    "payload_hash": payload_hash,
+                },
+            )
+            assert session.execute(
+                text("SELECT begin_telegram_outgoing(:operation_key)"),
+                {"operation_key": operation_key},
+            ).scalar_one() == "DISPATCH"
+            session.execute(
+                text(
+                    "SELECT defer_telegram_outgoing(:operation_key, :retry_after_seconds)"
+                ),
+                {"operation_key": operation_key, "retry_after_seconds": 30},
+            )
+            session.execute(
+                text("SELECT defer_telegram_update(:update_id, :retry_after_seconds)"),
+                {"update_id": update_id, "retry_after_seconds": 30},
+            )
+
+        with Session(engine) as session, session.begin():
+            assert session.execute(
+                text("SELECT begin_telegram_outgoing(:operation_key)"),
+                {"operation_key": operation_key},
+            ).scalar_one() == "RETRY_WAIT"
+            assert _claim_update(session, update_id, 910000020) == "BUSY"
+    finally:
+        engine.dispose()
