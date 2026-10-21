@@ -3,7 +3,7 @@ from typing import Protocol, cast
 
 import httpx
 
-from vimi_social.telegram.menus import OutgoingMessage
+from vimi_social.telegram.menus import InlineButton, OutgoingMessage
 
 
 class TelegramGatewayError(RuntimeError):
@@ -58,11 +58,7 @@ class TelegramBotApiClient:
         if message.keyboard:
             payload["reply_markup"] = {
                 "inline_keyboard": [
-                    [
-                        {"text": button.text, "callback_data": button.callback_data}
-                        for button in row
-                    ]
-                    for row in message.keyboard
+                    [_button_payload(button) for button in row] for row in message.keyboard
                 ]
             }
         await self._post("sendMessage", payload)
@@ -93,6 +89,14 @@ class TelegramBotApiClient:
             raise TelegramGatewayAmbiguous(
                 f"Telegram Bot API outcome is unknown after HTTP {status_code}"
             ) from None
+
+
+def _button_payload(button: InlineButton) -> dict[str, str]:
+    if button.callback_data is not None:
+        return {"text": button.text, "callback_data": button.callback_data}
+    if button.url is not None:
+        return {"text": button.text, "url": button.url}
+    raise ValueError("inline button has no action")
 
 
 def _retry_after_seconds(response: httpx.Response) -> int:

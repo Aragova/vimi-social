@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from vimi_social.core.config import get_settings
 from vimi_social.db.base import build_engine
+from vimi_social.source.service import SourceTaskService
+from vimi_social.source.temporal import TemporalScoutWorkflowStarter
 from vimi_social.telegram.app import build_telegram_app
 from vimi_social.telegram.client import TelegramBotApiClient
 from vimi_social.telegram.identity import TelegramIdentityResolver, TelegramUpdateGuard
@@ -31,7 +33,19 @@ def create_application() -> FastAPI:
     outgoing_store = TelegramOutgoingStore(session_factory)
     gateway = TelegramBotApiClient(settings.telegram_bot_token)
     messenger = TelegramMessenger(outgoing_store, gateway)
-    service = TelegramBotService(identity_resolver, update_guard, messenger)
+    source_tasks = SourceTaskService(session_factory)
+    scout_starter = TemporalScoutWorkflowStarter(
+        settings.temporal_target,
+        settings.temporal_namespace,
+        settings.temporal_task_queue,
+    )
+    service = TelegramBotService(
+        identity_resolver,
+        update_guard,
+        messenger,
+        source_tasks,
+        scout_starter,
+    )
     return build_telegram_app(service, settings.telegram_webhook_secret)
 
 

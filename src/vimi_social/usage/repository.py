@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from vimi_social.domain.identity import OperationKey
 from vimi_social.usage.models import ReservationRequest
 
 
@@ -11,6 +12,10 @@ class CapacityExceeded(RuntimeError):
 
 
 class OperationBindingConflict(RuntimeError):
+    pass
+
+
+class ReservationStateConflict(RuntimeError):
     pass
 
 
@@ -28,8 +33,7 @@ class UsageRepository:
     A concurrent duplicate blocks on the unique constraint and joins the winner
     instead of incrementing tenant capacity a second time.
 
-    The caller must execute this method inside the tenant-owned transaction so a
-    CapacityExceeded exception rolls back the newly inserted reservation row.
+    The caller must execute methods inside the tenant-owned transaction.
     """
 
     def reserve(self, session: Session, request: ReservationRequest) -> ReservationResult:
@@ -69,8 +73,6 @@ class UsageRepository:
             ).mappings().one_or_none()
 
             if existing is None:
-                # Fail closed without revealing whether an RLS-hidden row caused the
-                # global operation-key conflict.
                 raise OperationBindingConflict(
                     "operation_key is unavailable in the current tenant context"
                 )
@@ -102,3 +104,156 @@ class UsageRepository:
             raise CapacityExceeded("insufficient tenant usage capacity")
 
         return ReservationResult(reservation_id=reservation_id, joined_existing=False)
+
+    def commit(self, session: Session, operation_key: OperationKey) -> bool:
+        """Commit one reserved logical operation exactly once.
+
+        Returns True when this call performs the RESERVED -> COMMITTED transition,
+        or False when the same operation had already been committed.
+        """
+        reservation = session.execute(
+            text(
+                """
+                SELECT id::text, tenant_id::text, metric, quantity, state
+                FROM usage_reservation
+                WHERE operation_key = :operation_key
+                FOR UPDATE
+                """
+            ),
+            {"operation_key": operation_key.value},
+        ).mappings().one_or_none()
+        if reservation is None:
+            raise OperationBindingConflict(
+                "usage reservation is unavailable in the current tenant context"
+            )
+
+        state = reservation["state"]
+        if state == "COMMITTED":
+            return False
+        if state != "RESERVED":
+            raise ReservationStateConflict(
+                f"cannot commit usage reservation from state {state}"
+            )
+
+        capacity = session.execute(
+            text(
+                """
+                UPDATE usage_capacity
+                SET reserved = reserved - :quantity,
+                    committed = committed + :quantity
+                WHERE tenant_id::text = :tenant_id
+                  AND metric = :metric
+                  AND reserved >= :quantity
+                RETURNING tenant_id
+                """
+            ),
+            {
+                "tenant_id": reservation["tenant_id"],
+                "metric": reservation["metric"],
+                "quantity": reservation["quantity"],
+            },
+        ).first()
+        if capacity is None:
+            raise ReservationStateConflict("usage capacity counters are inconsistent")
+
+        session.execute(
+            text(
+                """
+                INSERT INTO usage_ledger (
+                    tenant_id, operation_key, entry_kind, metric, quantity
+                )
+                VALUES (
+                    CAST(:tenant_id AS uuid),
+                    :operation_key,
+                    'CHARGE',
+                    :metric,
+                    :quantity
+                )
+                ON CONFLICT DO NOTHING
+                """
+            ),
+            {
+                "tenant_id": reservation["tenant_id"],
+                "operation_key": operation_key.value,
+                "metric": reservation["metric"],
+                "quantity": reservation["quantity"],
+            },
+        )
+
+        updated = session.execute(
+            text(
+                """
+                UPDATE usage_reservation
+                SET state = 'COMMITTED',
+                    updated_at = clock_timestamp()
+                WHERE id::text = :reservation_id
+                  AND state = 'RESERVED'
+                """
+            ),
+            {"reservation_id": reservation["id"]},
+        ).rowcount
+        if updated != 1:
+            raise ReservationStateConflict("usage reservation changed during commit")
+        return True
+
+    def release(self, session: Session, operation_key: OperationKey) -> bool:
+        """Release reserved capacity for work proven not to have started."""
+        reservation = session.execute(
+            text(
+                """
+                SELECT id::text, tenant_id::text, metric, quantity, state
+                FROM usage_reservation
+                WHERE operation_key = :operation_key
+                FOR UPDATE
+                """
+            ),
+            {"operation_key": operation_key.value},
+        ).mappings().one_or_none()
+        if reservation is None:
+            raise OperationBindingConflict(
+                "usage reservation is unavailable in the current tenant context"
+            )
+
+        state = reservation["state"]
+        if state in {"RELEASED", "EXPIRED"}:
+            return False
+        if state != "RESERVED":
+            raise ReservationStateConflict(
+                f"cannot release usage reservation from state {state}"
+            )
+
+        capacity = session.execute(
+            text(
+                """
+                UPDATE usage_capacity
+                SET reserved = reserved - :quantity
+                WHERE tenant_id::text = :tenant_id
+                  AND metric = :metric
+                  AND reserved >= :quantity
+                RETURNING tenant_id
+                """
+            ),
+            {
+                "tenant_id": reservation["tenant_id"],
+                "metric": reservation["metric"],
+                "quantity": reservation["quantity"],
+            },
+        ).first()
+        if capacity is None:
+            raise ReservationStateConflict("usage capacity counters are inconsistent")
+
+        updated = session.execute(
+            text(
+                """
+                UPDATE usage_reservation
+                SET state = 'RELEASED',
+                    updated_at = clock_timestamp()
+                WHERE id::text = :reservation_id
+                  AND state = 'RESERVED'
+                """
+            ),
+            {"reservation_id": reservation["id"]},
+        ).rowcount
+        if updated != 1:
+            raise ReservationStateConflict("usage reservation changed during release")
+        return True

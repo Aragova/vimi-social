@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     otel_service_name: str = "vimi-social"
     telegram_bot_token: str | None = None
     telegram_webhook_secret: str | None = None
+    x_bearer_token: str | None = None
 
 
 @lru_cache(maxsize=1)
