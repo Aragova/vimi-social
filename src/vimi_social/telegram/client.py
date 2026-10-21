@@ -1,3 +1,4 @@
+import json
 from typing import Protocol
 
 import httpx
@@ -13,6 +14,12 @@ class TelegramGatewayRejected(TelegramGatewayError):
     def __init__(self, status_code: int) -> None:
         self.status_code = status_code
         super().__init__(f"Telegram Bot API rejected request with HTTP {status_code}")
+
+
+class TelegramGatewayRateLimited(TelegramGatewayError):
+    def __init__(self, retry_after_seconds: int) -> None:
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(f"Telegram Bot API rate limited request; retry after {retry_after_seconds}s")
 
 
 class TelegramGatewayAmbiguous(TelegramGatewayError):
@@ -76,9 +83,27 @@ class TelegramBotApiClient:
             ) from None
 
         status_code = response.status_code
+        if status_code == 429:
+            raise TelegramGatewayRateLimited(_retry_after_seconds(response)) from None
         if 400 <= status_code < 500:
             raise TelegramGatewayRejected(status_code) from None
         if status_code >= 300:
             raise TelegramGatewayAmbiguous(
                 f"Telegram Bot API outcome is unknown after HTTP {status_code}"
             ) from None
+
+
+def _retry_after_seconds(response: httpx.Response) -> int:
+    try:
+        payload: object = json.loads(response.text)
+    except json.JSONDecodeError:
+        return 1
+    if not isinstance(payload, dict):
+        return 1
+    parameters = payload.get("parameters")
+    if not isinstance(parameters, dict):
+        return 1
+    raw_retry_after = parameters.get("retry_after")
+    if not isinstance(raw_retry_after, int):
+        return 1
+    return max(1, min(raw_retry_after, 86_400))
