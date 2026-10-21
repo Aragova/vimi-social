@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vimi-social"
+version = "0.1.0"
+description = "ViMi Social production modular monolith"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "uvicorn[standard]>=0.32,<1",
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.6,<3",
+  "sqlalchemy>=2.0.36,<3",
+  "psycopg[binary]>=3.2,<4",
+  "alembic>=1.14,<2",
+  "temporalio>=1.9,<2",
+  "httpx>=0.28,<1",
+  "structlog>=24.4,<26",
+  "opentelemetry-api>=1.28,<2",
+  "opentelemetry-sdk>=1.28,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-asyncio>=0.24,<1",
+  "ruff>=0.8,<1",
+  "pyright>=1.1.390,<2",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "apps", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pyright]
+include = ["src", "apps", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+reportMissingTypeStubs = false
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["src"]
+asyncio_mode = "auto"
