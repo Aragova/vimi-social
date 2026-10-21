@@ -43,9 +43,10 @@ def upgrade() -> None:
             tenant_id uuid NOT NULL REFERENCES tenant(id) ON DELETE CASCADE,
             user_id uuid NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
             state text NOT NULL,
+            last_update_id bigint NOT NULL CHECK (last_update_id >= 0),
             updated_at timestamptz NOT NULL DEFAULT now(),
             PRIMARY KEY (tenant_id, user_id),
-            CHECK (state IN ('AWAITING_AI_SEARCH_QUERY'))
+            CHECK (state IN ('IDLE', 'AWAITING_AI_SEARCH_QUERY'))
         );
 
         CREATE TABLE source_candidate (
@@ -95,7 +96,7 @@ def upgrade() -> None:
         REVOKE ALL ON source_task, telegram_intake_state, source_candidate FROM vimi_app;
 
         GRANT SELECT, INSERT, UPDATE ON source_task TO vimi_app;
-        GRANT SELECT, INSERT, UPDATE, DELETE ON telegram_intake_state TO vimi_app;
+        GRANT SELECT, INSERT, UPDATE ON telegram_intake_state TO vimi_app;
         GRANT SELECT, INSERT ON source_candidate TO vimi_app;
         """
     )
