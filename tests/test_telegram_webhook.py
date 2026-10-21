@@ -18,7 +18,7 @@ class FakeTelegramService:
 
 def test_webhook_rejects_requests_without_telegram_secret() -> None:
     service = FakeTelegramService()
-    app = build_telegram_app(service, "test-secret")  # type: ignore[arg-type]
+    app = build_telegram_app(service, "test-secret")
 
     with TestClient(app) as client:
         response = client.post("/telegram/webhook", json={"update_id": 1})
@@ -29,7 +29,7 @@ def test_webhook_rejects_requests_without_telegram_secret() -> None:
 
 def test_webhook_accepts_verified_telegram_update() -> None:
     service = FakeTelegramService()
-    app = build_telegram_app(service, "test-secret")  # type: ignore[arg-type]
+    app = build_telegram_app(service, "test-secret")
 
     with TestClient(app) as client:
         response = client.post(
