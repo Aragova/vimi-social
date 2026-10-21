@@ -97,19 +97,19 @@ class TelegramBotApiClient:
 
 def _retry_after_seconds(response: httpx.Response) -> int:
     try:
-        payload = cast(object, json.loads(response.text))
+        decoded: object = json.loads(response.text)
     except json.JSONDecodeError:
         return 1
-    if not isinstance(payload, dict):
+    if type(decoded) is not dict:
         return 1
 
-    root = cast(dict[str, object], payload)
-    parameters_raw = root.get("parameters")
-    if not isinstance(parameters_raw, dict):
+    root = cast(dict[str, object], decoded)
+    parameters_raw: object = root.get("parameters")
+    if type(parameters_raw) is not dict:
         return 1
 
     parameters = cast(dict[str, object], parameters_raw)
-    raw_retry_after = parameters.get("retry_after")
+    raw_retry_after: object = parameters.get("retry_after")
     if isinstance(raw_retry_after, bool) or not isinstance(raw_retry_after, int):
         return 1
     return max(1, min(raw_retry_after, 86_400))
