@@ -27,27 +27,81 @@ class SourceTaskRepository:
     def __init__(self, session_factory: Callable[[], Session]) -> None:
         self._session_factory = session_factory
 
-    def begin_ai_search(self, principal: TelegramPrincipal) -> None:
+    def begin_ai_search(self, update_id: int, principal: TelegramPrincipal) -> bool:
+        return self._transition_intake(
+            update_id,
+            principal,
+            state="AWAITING_AI_SEARCH_QUERY",
+        )
+
+    def clear_pending_intake(self, update_id: int, principal: TelegramPrincipal) -> bool:
+        return self._transition_intake(update_id, principal, state="IDLE")
+
+    def _transition_intake(
+        self,
+        update_id: int,
+        principal: TelegramPrincipal,
+        *,
+        state: str,
+    ) -> bool:
+        if update_id < 0:
+            raise ValueError("Telegram update id must be non-negative")
+        if state not in {"IDLE", "AWAITING_AI_SEARCH_QUERY"}:
+            raise ValueError("unsupported Telegram intake state")
+
+        tenant_id = principal.context.tenant_id
         with (
             self._session_factory() as session,
-            tenant_transaction(session, principal.context.tenant_id) as tx,
+            tenant_transaction(session, tenant_id) as tx,
         ):
-            tx.execute(
+            row = tx.execute(
                 text(
                     """
-                    INSERT INTO telegram_intake_state (tenant_id, user_id, state)
-                    VALUES (:tenant_id, :user_id, 'AWAITING_AI_SEARCH_QUERY')
+                    INSERT INTO telegram_intake_state (
+                        tenant_id,
+                        user_id,
+                        state,
+                        last_update_id
+                    )
+                    VALUES (
+                        :tenant_id,
+                        :user_id,
+                        :state,
+                        :update_id
+                    )
                     ON CONFLICT (tenant_id, user_id)
                     DO UPDATE SET
                         state = EXCLUDED.state,
+                        last_update_id = EXCLUDED.last_update_id,
                         updated_at = clock_timestamp()
+                    WHERE telegram_intake_state.last_update_id < EXCLUDED.last_update_id
+                    RETURNING state, last_update_id
                     """
                 ),
                 {
-                    "tenant_id": str(principal.context.tenant_id.value),
+                    "tenant_id": str(tenant_id.value),
                     "user_id": str(principal.user_id),
+                    "state": state,
+                    "update_id": update_id,
                 },
-            )
+            ).mappings().one_or_none()
+
+            if row is None:
+                row = tx.execute(
+                    text(
+                        """
+                        SELECT state, last_update_id
+                        FROM telegram_intake_state
+                        WHERE tenant_id = :tenant_id AND user_id = :user_id
+                        """
+                    ),
+                    {
+                        "tenant_id": str(tenant_id.value),
+                        "user_id": str(principal.user_id),
+                    },
+                ).mappings().one()
+
+            return row["state"] == state and row["last_update_id"] == update_id
 
     def consume_ai_search_text(
         self,
@@ -58,6 +112,9 @@ class SourceTaskRepository:
         query = query_text.strip()
         tenant_id = principal.context.tenant_id
         origin_key = f"telegram:update:{update_id}:source-task"
+        query_too_long = False
+        task: SourceTask | None = None
+
         with (
             self._session_factory() as session,
             tenant_transaction(session, tenant_id) as tx,
@@ -83,10 +140,10 @@ class SourceTaskRepository:
                 )
                 return _source_task_from_row(existing_row)
 
-            state = tx.execute(
+            intake = tx.execute(
                 text(
                     """
-                    SELECT state
+                    SELECT state, last_update_id
                     FROM telegram_intake_state
                     WHERE tenant_id = :tenant_id AND user_id = :user_id
                     FOR UPDATE
@@ -96,62 +153,91 @@ class SourceTaskRepository:
                     "tenant_id": str(tenant_id.value),
                     "user_id": str(principal.user_id),
                 },
-            ).scalar_one_or_none()
-            if state != "AWAITING_AI_SEARCH_QUERY":
+            ).mappings().one_or_none()
+            if intake is None or intake["state"] != "AWAITING_AI_SEARCH_QUERY":
+                return None
+
+            last_update_id = intake["last_update_id"]
+            if not isinstance(last_update_id, int):
+                raise RuntimeError("Telegram intake last_update_id was not an integer")
+            if update_id <= last_update_id:
                 return None
             if not query:
                 return None
+
             if len(query) > 2000:
-                raise SourceTaskQueryTooLong(
-                    "AI search task must be at most 2000 characters"
+                tx.execute(
+                    text(
+                        """
+                        UPDATE telegram_intake_state
+                        SET last_update_id = :update_id,
+                            updated_at = clock_timestamp()
+                        WHERE tenant_id = :tenant_id AND user_id = :user_id
+                        """
+                    ),
+                    {
+                        "tenant_id": str(tenant_id.value),
+                        "user_id": str(principal.user_id),
+                        "update_id": update_id,
+                    },
                 )
+                query_too_long = True
+            else:
+                row = tx.execute(
+                    text(
+                        """
+                        INSERT INTO source_task (
+                            tenant_id,
+                            actor_user_id,
+                            origin_key,
+                            source_mode,
+                            query_text,
+                            requested_source,
+                            state
+                        )
+                        VALUES (
+                            :tenant_id,
+                            :actor_user_id,
+                            :origin_key,
+                            'AI_SEARCH',
+                            :query_text,
+                            NULL,
+                            'QUEUED'
+                        )
+                        RETURNING *
+                        """
+                    ),
+                    {
+                        "tenant_id": str(tenant_id.value),
+                        "actor_user_id": str(principal.user_id),
+                        "origin_key": origin_key,
+                        "query_text": query,
+                    },
+                ).mappings().one()
 
-            row = tx.execute(
-                text(
-                    """
-                    INSERT INTO source_task (
-                        tenant_id,
-                        actor_user_id,
-                        origin_key,
-                        source_mode,
-                        query_text,
-                        requested_source,
-                        state
-                    )
-                    VALUES (
-                        :tenant_id,
-                        :actor_user_id,
-                        :origin_key,
-                        'AI_SEARCH',
-                        :query_text,
-                        NULL,
-                        'QUEUED'
-                    )
-                    RETURNING *
-                    """
-                ),
-                {
-                    "tenant_id": str(tenant_id.value),
-                    "actor_user_id": str(principal.user_id),
-                    "origin_key": origin_key,
-                    "query_text": query,
-                },
-            ).mappings().one()
+                tx.execute(
+                    text(
+                        """
+                        UPDATE telegram_intake_state
+                        SET state = 'IDLE',
+                            last_update_id = :update_id,
+                            updated_at = clock_timestamp()
+                        WHERE tenant_id = :tenant_id AND user_id = :user_id
+                        """
+                    ),
+                    {
+                        "tenant_id": str(tenant_id.value),
+                        "user_id": str(principal.user_id),
+                        "update_id": update_id,
+                    },
+                )
+                task = _source_task_from_row(cast(Mapping[str, object], row))
 
-            tx.execute(
-                text(
-                    """
-                    DELETE FROM telegram_intake_state
-                    WHERE tenant_id = :tenant_id AND user_id = :user_id
-                    """
-                ),
-                {
-                    "tenant_id": str(tenant_id.value),
-                    "user_id": str(principal.user_id),
-                },
+        if query_too_long:
+            raise SourceTaskQueryTooLong(
+                "AI search task must be at most 2000 characters"
             )
-
-        return _source_task_from_row(cast(Mapping[str, object], row))
+        return task
 
 
 class SourceCandidateRepository:
