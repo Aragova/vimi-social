@@ -1,10 +1,15 @@
+from typing import Protocol
+
+from vimi_social.source.models import SourceTask
 from vimi_social.telegram.identity import (
     TelegramIdentityResolver,
+    TelegramPrincipal,
     TelegramUpdateClaim,
     TelegramUpdateGuard,
 )
 from vimi_social.telegram.menus import (
     build_ai_search_prompt,
+    build_ai_search_queued,
     build_feed_prompt,
     build_main_menu,
     build_source_menu,
@@ -12,6 +17,17 @@ from vimi_social.telegram.menus import (
 )
 from vimi_social.telegram.models import TelegramCallbackQuery, TelegramUpdate, TelegramUser
 from vimi_social.telegram.outgoing import TelegramMessageRetryAfter, TelegramMessenger
+
+
+class SourceIntakePort(Protocol):
+    def begin_ai_search(self, principal: TelegramPrincipal) -> None: ...
+
+    def consume_ai_search_text(
+        self,
+        update_id: int,
+        principal: TelegramPrincipal,
+        query_text: str,
+    ) -> SourceTask | None: ...
 
 
 class TelegramUpdateBusy(RuntimeError):
@@ -30,10 +46,12 @@ class TelegramBotService:
         identity_resolver: TelegramIdentityResolver,
         update_guard: TelegramUpdateGuard,
         messenger: TelegramMessenger,
+        source_intake: SourceIntakePort | None = None,
     ) -> None:
         self._identity_resolver = identity_resolver
         self._update_guard = update_guard
         self._messenger = messenger
+        self._source_intake = source_intake
 
     async def handle_update(self, update: TelegramUpdate) -> None:
         actor = _extract_actor(update)
@@ -65,15 +83,31 @@ class TelegramBotService:
             return
 
         tokens = message.text.strip().split(maxsplit=1)
-        if not tokens or tokens[0].split("@", maxsplit=1)[0] != "/start":
+        if tokens and tokens[0].split("@", maxsplit=1)[0] == "/start":
+            principal = self._identity_resolver.resolve(message.from_user)
+            await self._messenger.send_message(
+                update.update_id,
+                "start-main-menu",
+                message.chat.id,
+                build_main_menu(principal.locale),
+            )
             return
 
+        if self._source_intake is None:
+            return
         principal = self._identity_resolver.resolve(message.from_user)
+        task = self._source_intake.consume_ai_search_text(
+            update.update_id,
+            principal,
+            message.text,
+        )
+        if task is None:
+            return
         await self._messenger.send_message(
             update.update_id,
-            "start-main-menu",
+            "ai-search-task-queued",
             message.chat.id,
-            build_main_menu(principal.locale),
+            build_ai_search_queued(principal.locale),
         )
 
     async def _handle_callback(
@@ -93,6 +127,8 @@ class TelegramBotService:
             action = "task-new-source-menu"
             outgoing = build_source_menu(principal.locale)
         elif callback.data == "source:ai_search":
+            if self._source_intake is not None:
+                self._source_intake.begin_ai_search(principal)
             action = "source-ai-search-prompt"
             outgoing = build_ai_search_prompt(principal.locale)
         elif callback.data == "source:manual_upload":

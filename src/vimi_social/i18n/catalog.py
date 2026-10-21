@@ -18,6 +18,7 @@ class MessageKey(StrEnum):
     SOURCE_UPLOAD = "source_upload"
     SOURCE_FEED = "source_feed"
     AI_SEARCH_PROMPT = "ai_search_prompt"
+    AI_SEARCH_QUEUED = "ai_search_queued"
     UPLOAD_PROMPT = "upload_prompt"
     FEED_PROMPT = "feed_prompt"
 
@@ -43,6 +44,10 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         MessageKey.AI_SEARCH_PROMPT: (
             "🤖 AI-поиск выбран.\n\n"
             "Опишите, какой контент нужно найти, тему и при желании источник."
+        ),
+        MessageKey.AI_SEARCH_QUEUED: (
+            "✅ Задача сохранена.\n\n"
+            "Scout подготовит поиск и вернёт подходящие варианты."
         ),
         MessageKey.UPLOAD_PROMPT: (
             "📤 Ручной источник выбран.\n\n"
@@ -73,6 +78,10 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         MessageKey.AI_SEARCH_PROMPT: (
             "🤖 AI Search selected.\n\n"
             "Describe what content to find, the topic, and an optional source."
+        ),
+        MessageKey.AI_SEARCH_QUEUED: (
+            "✅ Task saved.\n\n"
+            "Scout will prepare the search and return suitable candidates."
         ),
         MessageKey.UPLOAD_PROMPT: (
             "📤 Manual source selected.\n\n"
