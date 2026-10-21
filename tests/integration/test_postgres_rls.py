@@ -66,66 +66,62 @@ def test_rls_fails_closed_isolates_tenants_and_does_not_leak_pool_context() -> N
     operation_b = f"rls-b-{uuid4()}"
 
     try:
-        with Session(engine) as session:
-            with tenant_transaction(session, TenantId(tenant_a)):
-                session.execute(
-                    text(
-                        """
-                        INSERT INTO publication_operation
-                            (tenant_id, operation_key, target_id, state)
-                        VALUES (:tenant_id, :operation_key, 'target-a', 'REQUESTED')
-                        """
-                    ),
-                    {"tenant_id": str(tenant_a), "operation_key": operation_a},
-                )
+        with Session(engine) as session, tenant_transaction(session, TenantId(tenant_a)):
+            session.execute(
+                text(
+                    """
+                    INSERT INTO publication_operation
+                        (tenant_id, operation_key, target_id, state)
+                    VALUES (:tenant_id, :operation_key, 'target-a', 'REQUESTED')
+                    """
+                ),
+                {"tenant_id": str(tenant_a), "operation_key": operation_a},
+            )
 
-        with Session(engine) as session:
-            with tenant_transaction(session, TenantId(tenant_b)):
-                session.execute(
-                    text(
-                        """
-                        INSERT INTO publication_operation
-                            (tenant_id, operation_key, target_id, state)
-                        VALUES (:tenant_id, :operation_key, 'target-b', 'REQUESTED')
-                        """
-                    ),
-                    {"tenant_id": str(tenant_b), "operation_key": operation_b},
-                )
+        with Session(engine) as session, tenant_transaction(session, TenantId(tenant_b)):
+            session.execute(
+                text(
+                    """
+                    INSERT INTO publication_operation
+                        (tenant_id, operation_key, target_id, state)
+                    VALUES (:tenant_id, :operation_key, 'target-b', 'REQUESTED')
+                    """
+                ),
+                {"tenant_id": str(tenant_b), "operation_key": operation_b},
+            )
 
-        with Session(engine) as session:
-            with session.begin():
-                visible_without_context = session.execute(
-                    text("SELECT operation_key FROM publication_operation")
-                ).scalars().all()
-                assert visible_without_context == []
+        with Session(engine) as session, session.begin():
+            visible_without_context = session.execute(
+                text("SELECT operation_key FROM publication_operation")
+            ).scalars().all()
+            assert visible_without_context == []
 
-        with Session(engine) as session:
-            with tenant_transaction(session, TenantId(tenant_a)):
-                visible_a = session.execute(
-                    text("SELECT operation_key FROM publication_operation")
-                ).scalars().all()
-                assert visible_a == [operation_a]
+        with Session(engine) as session, tenant_transaction(session, TenantId(tenant_a)):
+            visible_a = session.execute(
+                text("SELECT operation_key FROM publication_operation")
+            ).scalars().all()
+            assert visible_a == [operation_a]
 
         # pool_size=1 forces this transaction to reuse the same pooled connection.
         # The transaction-local GUC from tenant A must have disappeared at commit.
-        with Session(engine) as session:
-            with session.begin():
-                visible_after_reuse = session.execute(
-                    text("SELECT operation_key FROM publication_operation")
-                ).scalars().all()
-                assert visible_after_reuse == []
+        with Session(engine) as session, session.begin():
+            visible_after_reuse = session.execute(
+                text("SELECT operation_key FROM publication_operation")
+            ).scalars().all()
+            assert visible_after_reuse == []
 
-        with Session(engine) as session:
-            with tenant_transaction(session, TenantId(tenant_b)):
-                visible_b = session.execute(
-                    text("SELECT operation_key FROM publication_operation")
-                ).scalars().all()
-                assert visible_b == [operation_b]
+        with Session(engine) as session, tenant_transaction(session, TenantId(tenant_b)):
+            visible_b = session.execute(
+                text("SELECT operation_key FROM publication_operation")
+            ).scalars().all()
+            assert visible_b == [operation_b]
 
-        with Session(engine) as session:
-            with session.begin():
-                with pytest.raises(TenantTransactionRequired):
-                    with tenant_transaction(session, TenantId(tenant_a)):
-                        pass
+        with (
+            Session(engine) as session,
+            session.begin(),
+            pytest.raises(TenantTransactionRequired),
+            tenant_transaction(session, TenantId(tenant_a)),
+        ):
+            pass
     finally:
         engine.dispose()
