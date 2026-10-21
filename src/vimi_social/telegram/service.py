@@ -11,11 +11,17 @@ from vimi_social.telegram.menus import (
     build_upload_prompt,
 )
 from vimi_social.telegram.models import TelegramCallbackQuery, TelegramUpdate, TelegramUser
-from vimi_social.telegram.outgoing import TelegramMessenger
+from vimi_social.telegram.outgoing import TelegramMessageRetryAfter, TelegramMessenger
 
 
 class TelegramUpdateBusy(RuntimeError):
     pass
+
+
+class TelegramUpdateRetryAfter(RuntimeError):
+    def __init__(self, retry_after_seconds: int) -> None:
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(f"retry Telegram update after {retry_after_seconds}s")
 
 
 class TelegramBotService:
@@ -37,10 +43,14 @@ class TelegramBotService:
         if claim is TelegramUpdateClaim.BUSY:
             raise TelegramUpdateBusy(f"telegram update {update.update_id} is already processing")
 
-        if update.message is not None:
-            await self._handle_message(update)
-        elif update.callback_query is not None:
-            await self._handle_callback(update.update_id, update.callback_query)
+        try:
+            if update.message is not None:
+                await self._handle_message(update)
+            elif update.callback_query is not None:
+                await self._handle_callback(update.update_id, update.callback_query)
+        except TelegramMessageRetryAfter as error:
+            self._update_guard.defer(update.update_id, error.retry_after_seconds)
+            raise TelegramUpdateRetryAfter(error.retry_after_seconds) from None
 
         self._update_guard.complete(update.update_id)
 
