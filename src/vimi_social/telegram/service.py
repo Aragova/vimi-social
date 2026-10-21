@@ -21,7 +21,9 @@ from vimi_social.telegram.outgoing import TelegramMessageRetryAfter, TelegramMes
 
 
 class SourceIntakePort(Protocol):
-    def begin_ai_search(self, principal: TelegramPrincipal) -> None: ...
+    def begin_ai_search(self, update_id: int, principal: TelegramPrincipal) -> bool: ...
+
+    def clear_pending_intake(self, update_id: int, principal: TelegramPrincipal) -> bool: ...
 
     def consume_ai_search_text(
         self,
@@ -138,14 +140,27 @@ class TelegramBotService:
             action = "task-new-source-menu"
             outgoing = build_source_menu(principal.locale)
         elif callback.data == "source:ai_search":
-            if self._source_intake is not None:
-                self._source_intake.begin_ai_search(principal)
+            if (
+                self._source_intake is not None
+                and not self._source_intake.begin_ai_search(update_id, principal)
+            ):
+                return
             action = "source-ai-search-prompt"
             outgoing = build_ai_search_prompt(principal.locale)
         elif callback.data == "source:manual_upload":
+            if (
+                self._source_intake is not None
+                and not self._source_intake.clear_pending_intake(update_id, principal)
+            ):
+                return
             action = "source-manual-upload-prompt"
             outgoing = build_upload_prompt(principal.locale)
         elif callback.data == "source:feed":
+            if (
+                self._source_intake is not None
+                and not self._source_intake.clear_pending_intake(update_id, principal)
+            ):
+                return
             action = "source-feed-prompt"
             outgoing = build_feed_prompt(principal.locale)
         else:
