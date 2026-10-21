@@ -1,3 +1,1 @@
-from vimi_social.telegram.service import TelegramBotService
-
-__all__ = ["TelegramBotService"]
+"""Telegram ingress, identity, menus, and delivery adapters."""
