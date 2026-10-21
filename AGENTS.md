@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This is the production ViMi Social SaaS repository. It is not an architecture laboratory. New work must deliver product capability while preserving the validated Architecture 1.0 contracts.
+This is the production ViMi Social SaaS repository. It is not an architecture laboratory. New work must deliver product capability while preserving the validated Architecture 1.0 contracts and the finalized product concept.
 
 ## Mandatory reading order
 
@@ -10,56 +10,95 @@ Before changing code, read:
 
 1. `docs/PRODUCT_VISION.md`
 2. `docs/PROJECT_STATUS.md`
-3. `docs/CONTEXT_FOR_AI.md`
-4. `docs/history/architecture-poc/architecture/POST_POC_DECISIONS.md`
-5. `docs/history/architecture-poc/architecture/RED_TEAM_AUDIT_V2.md`
-6. Relevant detailed baseline/audit parts under `docs/history/architecture-poc/architecture/`
+3. `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md`
+4. `docs/CONTEXT_FOR_AI.md`
+5. `docs/history/architecture-poc/architecture/POST_POC_DECISIONS.md`
+6. `docs/history/architecture-poc/architecture/RED_TEAM_AUDIT_V2.md`
+7. Relevant detailed historical parts when implementing their contract.
 
-## Product interface and automation contract
+## Product contract
 
-- ViMi Social is **Telegram-first and AI-first**.
-- The Telegram bot is the primary customer product surface: onboarding, storefront, tariffs/subscriptions, AI task intake, candidate previews, approvals, publication setup, status, history, usage and day-to-day control.
-- The primary content-entry path is **user intent/task -> AI discovery/curation/preparation**. Manual upload is secondary.
-- Do not design the MVP around "upload file -> choose destination" as the normal workflow.
-- Specialized AI components such as `Scout`, `Curator`, `SceneRanker`, `VariantPlanner` and `CaptionGenerator` should remain behind typed application/service contracts rather than becoming an unrestricted MegaAgent.
-- Adult/18+ content is a first-class expected workload. Explicitness classification, platform eligibility and compliant variant generation must be normal pipeline stages.
-- If a destination allows the original adult content, publish a valid technical variant directly.
-- If the original is not allowed but a genuinely compliant derivative can be produced, select/cut/crop/censor/adapt as required, then run policy preflight again before publication.
-- If no compliant derivative exists, block the destination and explain/suggest eligible alternatives.
-- Never adapt prohibited content merely to disguise it or bypass moderation.
-- A user must not be forced into a web dashboard for the normal MVP workflow.
-- Web/Next.js is secondary: marketing landing, optional linked account/dashboard, richer analytics/admin views, and browser-required integration flows.
-- Bot handlers are an interface layer only. Business rules belong in application/domain services and durable workflows.
-- Telegram identity/update data must be resolved server-side into ViMi user/workspace/tenant authority. Never accept an arbitrary tenant ID from the client.
-- Historical documents describing Next.js or manual upload as the main customer path are superseded on product priority by `docs/PRODUCT_VISION.md`; their validated security/reliability contracts remain in force.
+- ViMi Social is **Telegram-first, AI-first and automation-first**.
+- Telegram bot is the primary customer surface; web is secondary.
+- Three source modes are fundamental: **AI Search**, **Manual Upload**, **Source Feed**.
+- AI Search is the primary automated source path.
+- Manual Upload is secondary and reuses the same downstream pipeline.
+- Source Feed turns an authorized Telegram channel/group/topic into a persistent content queue consumed according to automation policy.
+- Scout uses a typed Source Connector Registry; generic web search is fallback/supplement, not the universal source implementation.
+- Source and Destination are separate concepts. A platform may be one, the other, or both.
+- Do not design the MVP around `upload file -> choose destination` as the normal workflow.
+- Specialized AI components remain behind typed application contracts; no unrestricted MegaAgent.
+- Legal adult/18+ content, including explicit gay adult material, is a first-class frequent workload.
+- Platform adaptation must produce genuinely compliant derivatives; never disguise prohibited content or bypass moderation/access controls.
+- Bot/source/provider handlers are interface/adapter code only. Core business policy belongs in application/domain services and durable workflows.
 
-## Non-negotiable architecture contracts
+## Internationalization / regionalization contract
 
-- Never trust caller-controlled tenant IDs. Tenant/execution context must come from verified server-side identity or immutable trusted envelopes.
-- PostgreSQL RLS is a defense-in-depth tenant boundary; application roles are non-owner, non-superuser and NOBYPASSRLS.
+- Persist event timestamps as UTC instants.
+- Customer recurring schedules and quiet hours use IANA timezone IDs, not VM timezone or fixed offsets as authority.
+- Initial customer UI locales: `ru` and `en`.
+- Use localization resources/keys; do not scatter hard-coded customer-facing strings through business code.
+- UI locale, content language, Scout/search languages and destination/account content language are separate concepts.
+- Telegram `language_code` is only an initial hint; user preference is server-side and overrideable.
+- Region/country is separate from language and may affect platform/adult/payment policy.
+- Money is modeled with amount + ISO 4217 currency.
+- Do not block MVP on many languages/taxes/full KYC, but do not create models that assume one language, timezone or currency.
+
+## Workspace / multi-account contract
+
+Do not assume one tenant equals one brand or one social account.
+
+Architecture must remain compatible with:
+
+```text
+User -> Membership -> Workspace/Tenant -> Brand/Project
+                                      -> Sources/SourceFeeds
+                                      -> Destination accounts
+                                      -> Automation policies
+```
+
+User UI/notification preferences and workspace/brand publishing defaults are distinct.
+
+## Identity contract
+
+- `ExecutionContext` is a trusted, source-neutral application envelope.
+- Telegram identity resolver is the first customer identity adapter.
+- Managed IdP may be another adapter for web/admin flows; it is not a prerequisite for Telegram MVP use.
+- Never trust caller-controlled tenant IDs.
+- Telegram/provider/webhook claims never authorize arbitrary tenant selection; resolve ownership server-side.
+
+## Non-negotiable Architecture 1.0 contracts
+
+- PostgreSQL RLS is defense-in-depth tenant isolation; app roles are non-owner, non-superuser and NOBYPASSRLS.
 - External side effects use stable `operation_key` identity and explicit idempotency/unknown-outcome handling.
-- Ambiguous provider outcomes become `UNKNOWN`; UNKNOWN never authorizes blind retry. Reconcile first.
-- Expensive tenant work reserves quota atomically before execution. PostgreSQL is the commercial-usage correctness authority.
+- Ambiguous provider outcomes become `UNKNOWN`; UNKNOWN never authorizes blind retry.
+- Expensive tenant work reserves quota atomically before execution; PostgreSQL is commercial-usage correctness authority.
 - Usage ledger is append-only; corrections/refunds are compensating adjustments.
-- Webhook tenant claims are untrusted; resolve ownership server-side.
-- Remote media is untrusted; preserve SSRF/DNS pinning, redirect revalidation, bounded streaming and isolated processing contracts.
-- Candidate/source media discovered by AI is untrusted input and must pass the same secure-ingest/provenance boundaries as user-supplied media.
-- Privileged support access requires non-rollbackable external audit evidence before data leaves the trusted boundary.
-- Raw external I/O must not bypass the durable authority/fencing contracts validated by Red-Team v2.
+- Remote and AI-discovered media is untrusted; preserve SSRF/DNS pinning, redirect revalidation, bounded streaming and isolated processing.
+- Privileged cross-tenant access requires non-rollbackable external audit evidence before data leaves the trusted boundary.
+- Raw external I/O must not bypass durable authority/fencing contracts.
 - No plaintext secrets or production credentials in source, fixtures, logs or docs.
 
 ## Engineering workflow
 
-- Work in small vertical slices that end in executable behavior and tests.
+- Work in small vertical slices ending in executable behavior and tests.
 - Prefer deterministic tests and explicit failure injection for durability/concurrency behavior.
-- Ruff and strict Pyright must remain green for Python production code.
-- Do not weaken a test to make CI pass.
-- Do not add test-only runtime paths, PYTHONPATH hacks, or security bypasses.
+- Ruff and strict Pyright must remain green.
+- Do not weaken tests to make CI pass.
+- Do not add test-only runtime/security bypasses.
 - Keep domain types explicit; avoid unstructured dictionaries for important state.
 - Avoid broad `except Exception` as normal control flow.
-- Every irreversible external mutation must define retry, idempotency and reconciliation semantics before implementation.
-- Platform policy/compliance checks must be versioned/testable data or typed policy logic, not scattered hard-coded assumptions in bot handlers.
+- Every irreversible external mutation must define retry/idempotency/reconciliation semantics before implementation.
+- Platform/source capability and compliance rules must be versioned/testable, not scattered conditionals in handlers.
+- Source Feed item claiming must be idempotent/concurrency-safe.
+- Do not implement generic unrestricted scraping when a source-specific permitted connector contract is required.
 
-## Source of truth
+## Current foundation warning
 
-`docs/PRODUCT_VISION.md` is the product/interface/automation source of truth. `docs/PROJECT_STATUS.md` is the current-stage source of truth. Historical PoC documents explain why contracts exist but do not mean the production project is still in PoC phase.
+PR #1 predates the finalized product concept. Preserve its valid backend foundations, but apply the remediation in `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md` before treating it as production-complete.
+
+Known blockers include source-neutral/Telegram-first identity correction, production-like DB roles/RLS integration tests and usage-reservation concurrency hardening.
+
+## Sources of truth
+
+`docs/PRODUCT_VISION.md` is the canonical product source of truth. `docs/PROJECT_STATUS.md` is the live phase/status source. `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md` records how the current foundation must be aligned. Historical PoC documents explain validated contracts and rationale.
