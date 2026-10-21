@@ -71,7 +71,9 @@ class TelegramBotApiClient:
         try:
             response = await self._client.post(f"{self._base_url}/{method}", json=payload)
         except httpx.HTTPError:
-            raise TelegramGatewayAmbiguous("Telegram Bot API transport outcome is unknown") from None
+            raise TelegramGatewayAmbiguous(
+                "Telegram Bot API transport outcome is unknown"
+            ) from None
 
         status_code = response.status_code
         if 400 <= status_code < 500:
