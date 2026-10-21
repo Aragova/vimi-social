@@ -1,0 +1,10 @@
+{
+  "name": "vimi-social",
+  "private": true,
+  "workspaces": ["apps/web"],
+  "scripts": {
+    "web:dev": "npm --workspace @vimi/web run dev",
+    "web:build": "npm --workspace @vimi/web run build",
+    "web:typecheck": "npm --workspace @vimi/web run typecheck"
+  }
+}
