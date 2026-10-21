@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 import psycopg
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from vimi_social.db.tenant import TenantTransactionRequired, tenant_transaction
@@ -53,6 +54,17 @@ def test_application_role_is_production_like_and_not_owner() -> None:
             """
         ).fetchone()
         assert owner == ("vimi_migration_owner",)
+
+        ledger_privileges = conn.execute(
+            """
+            SELECT
+                has_table_privilege('vimi_app', 'usage_ledger', 'SELECT'),
+                has_table_privilege('vimi_app', 'usage_ledger', 'INSERT'),
+                has_table_privilege('vimi_app', 'usage_ledger', 'UPDATE'),
+                has_table_privilege('vimi_app', 'usage_ledger', 'DELETE')
+            """
+        ).fetchone()
+        assert ledger_privileges == (True, True, False, False)
 
 
 def test_rls_fails_closed_isolates_tenants_and_does_not_leak_pool_context() -> None:
@@ -123,5 +135,63 @@ def test_rls_fails_closed_isolates_tenants_and_does_not_leak_pool_context() -> N
             tenant_transaction(session, TenantId(tenant_a)),
         ):
             pass
+    finally:
+        engine.dispose()
+
+
+def test_usage_ledger_is_append_only_for_application_role() -> None:
+    app_dsn, admin_dsn = _database_dsns()
+    tenant_id = uuid4()
+    _seed_tenants(admin_dsn, (tenant_id, uuid4()))
+    operation_key = f"ledger-{uuid4()}"
+    engine = create_engine(app_dsn)
+
+    try:
+        with Session(engine) as session, tenant_transaction(session, TenantId(tenant_id)):
+            session.execute(
+                text(
+                    """
+                    INSERT INTO usage_ledger
+                        (tenant_id, operation_key, entry_kind, metric, quantity)
+                    VALUES (:tenant_id, :operation_key, 'CHARGE', 'publication', 1)
+                    """
+                ),
+                {"tenant_id": str(tenant_id), "operation_key": operation_key},
+            )
+
+        with pytest.raises(DBAPIError) as update_error:
+            with Session(engine) as session, tenant_transaction(session, TenantId(tenant_id)):
+                session.execute(
+                    text(
+                        """
+                        UPDATE usage_ledger
+                        SET quantity = 99
+                        WHERE operation_key = :operation_key
+                        """
+                    ),
+                    {"operation_key": operation_key},
+                )
+        assert getattr(update_error.value.orig, "sqlstate", None) == "42501"
+
+        with pytest.raises(DBAPIError) as delete_error:
+            with Session(engine) as session, tenant_transaction(session, TenantId(tenant_id)):
+                session.execute(
+                    text("DELETE FROM usage_ledger WHERE operation_key = :operation_key"),
+                    {"operation_key": operation_key},
+                )
+        assert getattr(delete_error.value.orig, "sqlstate", None) == "42501"
+
+        with Session(engine) as session, tenant_transaction(session, TenantId(tenant_id)):
+            persisted = session.execute(
+                text(
+                    """
+                    SELECT entry_kind, metric, quantity
+                    FROM usage_ledger
+                    WHERE operation_key = :operation_key
+                    """
+                ),
+                {"operation_key": operation_key},
+            ).one()
+            assert persisted == ("CHARGE", "publication", 1)
     finally:
         engine.dispose()
