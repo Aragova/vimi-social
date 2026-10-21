@@ -52,8 +52,8 @@ jobs:
         run: psql -h localhost -U postgres -d vimi -v ON_ERROR_STOP=1 -f infra/postgres/bootstrap_roles.sql
       - name: Apply migrations
         run: alembic upgrade head
-      - name: PostgreSQL RLS integration tests
-        run: pytest tests/integration/test_postgres_rls.py
+      - name: PostgreSQL integration tests
+        run: pytest tests/integration
 
   web:
     runs-on: ubuntu-latest
