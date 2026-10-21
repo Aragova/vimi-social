@@ -20,6 +20,7 @@ from vimi_social.telegram.menus import OutgoingMessage
 class TelegramOutgoingState(StrEnum):
     READY = "READY"
     DISPATCHING = "DISPATCHING"
+    RETRY_WAIT = "RETRY_WAIT"
     CONFIRMED = "CONFIRMED"
     UNKNOWN = "UNKNOWN"
     FAILED_SAFE = "FAILED_SAFE"
@@ -27,6 +28,7 @@ class TelegramOutgoingState(StrEnum):
 
 class TelegramDispatchDecision(StrEnum):
     DISPATCH = "DISPATCH"
+    RETRY_WAIT = "RETRY_WAIT"
     CONFIRMED = "CONFIRMED"
     UNKNOWN = "UNKNOWN"
     FAILED_SAFE = "FAILED_SAFE"
@@ -52,7 +54,7 @@ class TelegramOutgoingStorePort(Protocol):
 
     def finish(self, operation_key: str, state: TelegramOutgoingState) -> None: ...
 
-    def make_retryable(self, operation_key: str) -> None: ...
+    def defer(self, operation_key: str, retry_after_seconds: int) -> None: ...
 
 
 class TelegramOutgoingStore:
@@ -115,11 +117,16 @@ class TelegramOutgoingStore:
                 {"operation_key": operation_key, "state": state.value},
             )
 
-    def make_retryable(self, operation_key: str) -> None:
+    def defer(self, operation_key: str, retry_after_seconds: int) -> None:
         with self._session_factory() as session, session.begin():
             session.execute(
-                text("SELECT retry_telegram_outgoing(:operation_key)"),
-                {"operation_key": operation_key},
+                text(
+                    "SELECT defer_telegram_outgoing(:operation_key, :retry_after_seconds)"
+                ),
+                {
+                    "operation_key": operation_key,
+                    "retry_after_seconds": retry_after_seconds,
+                },
             )
 
 
@@ -140,6 +147,8 @@ class TelegramMessenger:
         self._store.prepare(operation_key, update_id, chat_id, action, payload_sha256)
         decision = self._store.begin(operation_key)
 
+        if decision is TelegramDispatchDecision.RETRY_WAIT:
+            raise TelegramMessageRetryAfter(1)
         if decision is TelegramDispatchDecision.CONFIRMED:
             return TelegramOutgoingState.CONFIRMED
         if decision is TelegramDispatchDecision.UNKNOWN:
@@ -150,7 +159,7 @@ class TelegramMessenger:
         try:
             await self._gateway.send_message(chat_id, message)
         except TelegramGatewayRateLimited as error:
-            self._store.make_retryable(operation_key)
+            self._store.defer(operation_key, error.retry_after_seconds)
             raise TelegramMessageRetryAfter(error.retry_after_seconds) from None
         except TelegramGatewayRejected:
             self._store.finish(operation_key, TelegramOutgoingState.FAILED_SAFE)
