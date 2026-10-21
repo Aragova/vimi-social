@@ -30,6 +30,7 @@ GRANT vimi_migration_owner TO vimi_migrator;
 REVOKE vimi_migration_owner FROM vimi_app;
 
 GRANT CONNECT ON DATABASE vimi TO vimi_migrator, vimi_app;
+GRANT CREATE ON DATABASE vimi TO vimi_migration_owner;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE, CREATE ON SCHEMA public TO vimi_migration_owner;
 GRANT USAGE ON SCHEMA public TO vimi_app;
