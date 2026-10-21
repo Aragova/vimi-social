@@ -63,7 +63,6 @@ def test_ai_search_intake_persists_one_task_for_one_telegram_update() -> None:
         assert task.query_text == "find fresh videos"
         assert task.origin_key == "telegram:update:820000001:source-task"
 
-        repository.begin_ai_search(principal)
         duplicate = repository.consume_ai_search_text(
             820000001,
             principal,
