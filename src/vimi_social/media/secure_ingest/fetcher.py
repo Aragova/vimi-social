@@ -3,6 +3,7 @@ import hashlib
 import os
 import stat
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
@@ -125,7 +126,9 @@ class SecureMediaFetcher:
             os.close(file_descriptor)
             open_descriptor = None
             if expected_length is not None and total != expected_length:
-                raise ContentValidationError("received body length does not match Content-Length")
+                raise ContentValidationError(
+                    "received body length does not match Content-Length"
+                )
             if total == 0:
                 raise ContentValidationError("empty response is not accepted as media")
             media = sniff_media_format(bytes(prefix))
@@ -215,16 +218,24 @@ def _promote_artifact(
     _unlink_if_exists(temp_path)
 
 
-def _validate_existing_artifact(final_path: Path, expected_digest: str, expected_size: int) -> None:
+def _validate_existing_artifact(
+    final_path: Path,
+    expected_digest: str,
+    expected_size: int,
+) -> None:
     existing_stat = os.stat(final_path, follow_symlinks=False)
     if not stat.S_ISREG(existing_stat.st_mode) or existing_stat.st_size != expected_size:
-        raise ContentValidationError("existing digest-named artifact does not match downloaded media")
+        raise ContentValidationError(
+            "existing digest-named artifact does not match downloaded media"
+        )
     digest = hashlib.sha256()
     with final_path.open("rb") as existing_file:
         while chunk := existing_file.read(_FILE_HASH_CHUNK_BYTES):
             digest.update(chunk)
     if digest.hexdigest() != expected_digest:
-        raise ContentValidationError("existing digest-named artifact does not match downloaded media")
+        raise ContentValidationError(
+            "existing digest-named artifact does not match downloaded media"
+        )
 
 
 def _write_all(file_descriptor: int, data: bytes) -> None:
@@ -237,10 +248,8 @@ def _write_all(file_descriptor: int, data: bytes) -> None:
 
 
 def _unlink_if_exists(path: Path) -> None:
-    try:
+    with suppress(FileNotFoundError):
         path.unlink()
-    except FileNotFoundError:
-        pass
 
 
 def _header_value(response: ResponseStream, name: str) -> str | None:
