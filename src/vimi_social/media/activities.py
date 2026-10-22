@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from temporalio import activity
 
 from vimi_social.db.tenant import tenant_transaction
-from vimi_social.domain.identity import OperationKey
+from vimi_social.domain.identity import OperationKey, TenantId
 from vimi_social.domain.media import (
     CuratorDecision,
     MediaAsset,
@@ -65,8 +65,9 @@ class MediaPreparationActivities:
         workflow_input: MediaPreparationWorkflowInput,
     ) -> MediaPreparationResult:
         preparation = self._authorized_preparation(workflow_input)
+        preparation_tenant = TenantId(preparation.tenant_id)
 
-        with self._session_factory() as session, tenant_transaction(session, preparation.tenant_id):
+        with self._session_factory() as session, tenant_transaction(session, preparation_tenant):
             existing_asset = self._repository.get_asset(session, preparation.id)
             if existing_asset is not None:
                 return _result_from_asset(existing_asset)
@@ -141,7 +142,7 @@ class MediaPreparationActivities:
         except ValueError:
             return self._mark_failed(preparation, "MEDIA_STORAGE_PATH_INVALID")
 
-        with self._session_factory() as session, tenant_transaction(session, preparation.tenant_id):
+        with self._session_factory() as session, tenant_transaction(session, preparation_tenant):
             current = self._repository.get_by_id(session, preparation.id)
             if current is None:
                 raise RuntimeError("media preparation disappeared before asset persistence")
@@ -201,7 +202,10 @@ class MediaPreparationActivities:
         preparation: MediaPreparation,
         failure_code: str,
     ) -> MediaPreparationResult:
-        with self._session_factory() as session, tenant_transaction(session, preparation.tenant_id):
+        with self._session_factory() as session, tenant_transaction(
+            session,
+            TenantId(preparation.tenant_id),
+        ):
             state = self._repository.fail_safe(
                 session,
                 preparation_id=preparation.id,
