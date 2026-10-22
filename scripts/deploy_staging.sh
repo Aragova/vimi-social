@@ -19,16 +19,28 @@ compose() {
   docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
 }
 
+run_one_shot() {
+  service="$1"
+  compose up \
+    --no-deps \
+    --force-recreate \
+    --abort-on-container-exit \
+    --exit-code-from "$service" \
+    "$service"
+}
+
 compose config --quiet
 compose build
 
 # Database authority first. PostgreSQL stays private on the internal network.
 compose up -d --wait postgres
-compose run --rm --no-deps db-provision
-compose run --rm --no-deps migrate
+run_one_shot db-provision
+run_one_shot migrate
 
-# Ensure the persistent media volume belongs to the non-root runtime UID.
-compose run --rm --no-deps media-init
+# Ensure the persistent media volume belongs to the non-root runtime UID. Keep the
+# named completed service container so depends_on: service_completed_successfully
+# joins the exact deployment step instead of launching an implicit second run.
+run_one_shot media-init
 
 # Temporal may take a short period to become ready; durable workers are configured
 # with restart policies and will reconnect rather than requiring external mutation retries.
