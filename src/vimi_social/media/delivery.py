@@ -7,6 +7,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from vimi_social.db.tenant import tenant_transaction
+from vimi_social.domain.analysis import MediaAnalysisResult
 from vimi_social.domain.identity import OperationKey
 from vimi_social.domain.international import UiLocale
 from vimi_social.domain.media import MediaPreparationResult, MediaPreparationWorkflowInput
@@ -36,6 +37,7 @@ class MediaPreparationDeliveryActivities:
         self,
         workflow_input: MediaPreparationWorkflowInput,
         result: MediaPreparationResult,
+        analysis_result: MediaAnalysisResult | None = None,
     ) -> str:
         if self._messenger is None:
             raise ApplicationError(
@@ -77,7 +79,11 @@ class MediaPreparationDeliveryActivities:
                 type="MediaDeliveryMetadataMissing",
             )
 
-        message = build_media_preparation_result(UiLocale(task.locale), result)
+        message = build_media_preparation_result(
+            UiLocale(task.locale),
+            result,
+            analysis_result,
+        )
         try:
             state = await self._messenger.send_message(
                 task.telegram_update_id,

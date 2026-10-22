@@ -1,6 +1,12 @@
 from dataclasses import dataclass
 from uuid import UUID
 
+from vimi_social.domain.analysis import (
+    MediaAnalysisResult,
+    PolicyDecision,
+    RenderStrategy,
+    SceneAnalysisState,
+)
 from vimi_social.domain.international import UiLocale
 from vimi_social.domain.media import (
     BaseAdultClassification,
@@ -117,6 +123,7 @@ def build_media_preparation_quota_exceeded(locale: UiLocale) -> OutgoingMessage:
 def build_media_preparation_result(
     locale: UiLocale,
     result: MediaPreparationResult,
+    analysis: MediaAnalysisResult | None = None,
 ) -> OutgoingMessage:
     if result.state is MediaPreparationState.BLOCKED:
         return OutgoingMessage(text=translate(MessageKey.MEDIA_PREPARATION_BLOCKED, locale))
@@ -133,6 +140,37 @@ def build_media_preparation_result(
     lines.append(f"🔞 {_adult_label(locale, result.adult_classification)}")
     if result.sha256 is not None:
         lines.append(f"🔐 SHA-256: {result.sha256[:12]}…")
+
+    if analysis is not None:
+        if analysis.state is SceneAnalysisState.FAILED_SAFE:
+            lines.append(translate(MessageKey.MEDIA_ANALYSIS_FAILED, locale))
+        elif analysis.state is SceneAnalysisState.READY:
+            lines.append(
+                translate(MessageKey.MEDIA_SCENES_FOUND, locale).format(
+                    count=analysis.scene_count
+                )
+            )
+            if analysis.top_scene_start_ms is not None and analysis.top_scene_end_ms is not None:
+                lines.append(
+                    translate(MessageKey.MEDIA_TOP_SCENE, locale).format(
+                        start=_duration_label(analysis.top_scene_start_ms),
+                        end=_duration_label(analysis.top_scene_end_ms),
+                    )
+                )
+            if analysis.destination is not None and analysis.policy_decision is not None:
+                lines.append(
+                    translate(MessageKey.MEDIA_POLICY_SUMMARY, locale).format(
+                        destination=analysis.destination.upper(),
+                        decision=_policy_label(locale, analysis.policy_decision),
+                    )
+                )
+            if analysis.render_strategy is not None and analysis.planned_duration_ms is not None:
+                lines.append(
+                    translate(MessageKey.MEDIA_RENDER_SUMMARY, locale).format(
+                        strategy=_render_label(locale, analysis.render_strategy),
+                        duration=_duration_label(analysis.planned_duration_ms),
+                    )
+                )
     return OutgoingMessage(text="\n".join(lines))
 
 
@@ -234,3 +272,21 @@ def _adult_label(locale: UiLocale, classification: BaseAdultClassification) -> s
         BaseAdultClassification.ADULT_EXPLICIT: MessageKey.MEDIA_ADULT_EXPLICIT,
     }
     return translate(keys[classification], locale)
+
+
+def _policy_label(locale: UiLocale, decision: PolicyDecision) -> str:
+    keys = {
+        PolicyDecision.DIRECT_ALLOWED: MessageKey.POLICY_DIRECT_ALLOWED,
+        PolicyDecision.ADAPTATION_REQUIRED: MessageKey.POLICY_ADAPTATION_REQUIRED,
+        PolicyDecision.MANUAL_REVIEW_REQUIRED: MessageKey.POLICY_MANUAL_REVIEW_REQUIRED,
+        PolicyDecision.BLOCKED: MessageKey.POLICY_BLOCKED,
+    }
+    return translate(keys[decision], locale)
+
+
+def _render_label(locale: UiLocale, strategy: RenderStrategy) -> str:
+    keys = {
+        RenderStrategy.PASSTHROUGH: MessageKey.RENDER_PASSTHROUGH,
+        RenderStrategy.CLIP_SEQUENCE: MessageKey.RENDER_CLIP_SEQUENCE,
+    }
+    return translate(keys[strategy], locale)

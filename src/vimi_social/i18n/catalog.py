@@ -44,6 +44,17 @@ class MessageKey(StrEnum):
     MEDIA_ADULT_NO_SIGNAL = "media_adult_no_signal"
     MEDIA_ADULT_POSSIBLY_SENSITIVE = "media_adult_possibly_sensitive"
     MEDIA_ADULT_EXPLICIT = "media_adult_explicit"
+    MEDIA_ANALYSIS_FAILED = "media_analysis_failed"
+    MEDIA_SCENES_FOUND = "media_scenes_found"
+    MEDIA_TOP_SCENE = "media_top_scene"
+    MEDIA_POLICY_SUMMARY = "media_policy_summary"
+    MEDIA_RENDER_SUMMARY = "media_render_summary"
+    POLICY_DIRECT_ALLOWED = "policy_direct_allowed"
+    POLICY_ADAPTATION_REQUIRED = "policy_adaptation_required"
+    POLICY_MANUAL_REVIEW_REQUIRED = "policy_manual_review_required"
+    POLICY_BLOCKED = "policy_blocked"
+    RENDER_PASSTHROUGH = "render_passthrough"
+    RENDER_CLIP_SEQUENCE = "render_clip_sequence"
     UPLOAD_PROMPT = "upload_prompt"
     FEED_PROMPT = "feed_prompt"
 
@@ -128,6 +139,17 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         MessageKey.MEDIA_ADULT_NO_SIGNAL: "базовые сигналы 18+ не обнаружены",
         MessageKey.MEDIA_ADULT_POSSIBLY_SENSITIVE: "возможно чувствительный контент",
         MessageKey.MEDIA_ADULT_EXPLICIT: "18+ / explicit",
+        MessageKey.MEDIA_ANALYSIS_FAILED: "⚠️ Анализ сцен остановлен безопасным образом.",
+        MessageKey.MEDIA_SCENES_FOUND: "🎬 Найдено сцен: {count}",
+        MessageKey.MEDIA_TOP_SCENE: "🏆 Лучший фрагмент: {start}–{end}",
+        MessageKey.MEDIA_POLICY_SUMMARY: "🧭 {destination}: {decision}",
+        MessageKey.MEDIA_RENDER_SUMMARY: "🛠 План: {strategy}, {duration}",
+        MessageKey.POLICY_DIRECT_ALLOWED: "можно напрямую",
+        MessageKey.POLICY_ADAPTATION_REQUIRED: "нужна адаптация",
+        MessageKey.POLICY_MANUAL_REVIEW_REQUIRED: "нужна ручная проверка",
+        MessageKey.POLICY_BLOCKED: "заблокировано",
+        MessageKey.RENDER_PASSTHROUGH: "без изменения видео",
+        MessageKey.RENDER_CLIP_SEQUENCE: "монтаж выбранных сцен",
         MessageKey.UPLOAD_PROMPT: (
             "📤 Ручной источник выбран.\n\n"
             "Отправьте или перешлите материал в этот чат."
@@ -216,6 +238,17 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         MessageKey.MEDIA_ADULT_NO_SIGNAL: "no adult signal in base checks",
         MessageKey.MEDIA_ADULT_POSSIBLY_SENSITIVE: "possibly sensitive",
         MessageKey.MEDIA_ADULT_EXPLICIT: "adult / explicit",
+        MessageKey.MEDIA_ANALYSIS_FAILED: "⚠️ Scene analysis stopped safely.",
+        MessageKey.MEDIA_SCENES_FOUND: "🎬 Scenes found: {count}",
+        MessageKey.MEDIA_TOP_SCENE: "🏆 Top segment: {start}–{end}",
+        MessageKey.MEDIA_POLICY_SUMMARY: "🧭 {destination}: {decision}",
+        MessageKey.MEDIA_RENDER_SUMMARY: "🛠 Plan: {strategy}, {duration}",
+        MessageKey.POLICY_DIRECT_ALLOWED: "directly allowed",
+        MessageKey.POLICY_ADAPTATION_REQUIRED: "adaptation required",
+        MessageKey.POLICY_MANUAL_REVIEW_REQUIRED: "manual review required",
+        MessageKey.POLICY_BLOCKED: "blocked",
+        MessageKey.RENDER_PASSTHROUGH: "keep original video",
+        MessageKey.RENDER_CLIP_SEQUENCE: "assemble selected scenes",
         MessageKey.UPLOAD_PROMPT: (
             "📤 Manual source selected.\n\n"
             "Send or forward the material to this chat."
