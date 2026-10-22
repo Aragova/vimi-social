@@ -159,9 +159,8 @@ jobs:
           if not expected:
               raise SystemExit(f"co-host bot port is not loopback-only: {ports}")
 
-          profiles = set(services["caddy"].get("profiles", []))
-          if "standalone-ingress" not in profiles:
-              raise SystemExit(f"co-host Caddy is not profile-gated: {profiles}")
+          if "caddy" in services:
+              raise SystemExit("co-host Caddy must be omitted unless its standalone profile is enabled")
           PY
       - name: Verify least-privilege secret scoping
         run: |
