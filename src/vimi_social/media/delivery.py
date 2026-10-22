@@ -23,7 +23,7 @@ class MediaPreparationDeliveryActivities:
     def __init__(
         self,
         session_factory: Callable[[], Session],
-        messenger: TelegramMessenger,
+        messenger: TelegramMessenger | None,
         *,
         source_repository: SourceTaskRepository | None = None,
     ) -> None:
@@ -37,6 +37,13 @@ class MediaPreparationDeliveryActivities:
         workflow_input: MediaPreparationWorkflowInput,
         result: MediaPreparationResult,
     ) -> str:
+        if self._messenger is None:
+            raise ApplicationError(
+                "Telegram delivery is not configured in the worker",
+                non_retryable=True,
+                type="TelegramMediaDeliveryNotConfigured",
+            )
+
         operation_key = OperationKey(workflow_input.source_task_operation_key)
         try:
             execution_token = UUID(workflow_input.source_task_execution_token)
