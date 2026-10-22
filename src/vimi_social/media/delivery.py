@@ -26,6 +26,8 @@ from vimi_social.telegram.outgoing import (
     TelegramOutgoingState,
 )
 
+_TELEGRAM_VIDEO_PREVIEW_MAX_BYTES = 49 * 1024 * 1024
+
 
 class MediaPreparationDeliveryActivities:
     def __init__(
@@ -78,6 +80,7 @@ class MediaPreparationDeliveryActivities:
 
         video_path: Path | None = None
         video_sha256: str | None = None
+        oversized_video_preview = False
         with self._session_factory() as session, tenant_transaction(session, tenant_id):
             task = self._source_repository.get_by_operation_key(session, operation_key)
             if task is None or task.execution_token != execution_token:
@@ -105,8 +108,16 @@ class MediaPreparationDeliveryActivities:
                     ):
                         candidate = (self._media_root / artifact.storage_path).resolve()
                         if candidate.is_relative_to(self._media_root) and candidate.is_file():
-                            video_path = candidate
-                            video_sha256 = artifact.sha256
+                            actual_size = candidate.stat().st_size
+                            persisted_size = artifact.size_bytes or actual_size
+                            if (
+                                actual_size <= _TELEGRAM_VIDEO_PREVIEW_MAX_BYTES
+                                and persisted_size <= _TELEGRAM_VIDEO_PREVIEW_MAX_BYTES
+                            ):
+                                video_path = candidate
+                                video_sha256 = artifact.sha256
+                            else:
+                                oversized_video_preview = True
 
         if task.telegram_update_id is None or task.telegram_chat_id is None:
             raise ApplicationError(
@@ -121,6 +132,7 @@ class MediaPreparationDeliveryActivities:
             analysis_result,
             render_result,
             preview_result,
+            video_preview_available=not oversized_video_preview,
         )
         try:
             if video_path is not None and video_sha256 is not None:
