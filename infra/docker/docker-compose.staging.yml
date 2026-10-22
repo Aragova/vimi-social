@@ -4,8 +4,6 @@ x-python-service: &python-service
   build:
     context: ../..
     dockerfile: infra/docker/Dockerfile
-  env_file:
-    - ../../.env.staging
   restart: unless-stopped
   networks:
     - backend
@@ -28,6 +26,7 @@ x-runtime-environment: &runtime-environment
   VIMI_MEDIA_TASK_QUEUE: vimi-social-media
   VIMI_DESTINATION_TASK_QUEUE: vimi-social-destination
   VIMI_MEDIA_ROOT: /var/lib/vimi/media
+  VIMI_MEDIA_MAX_BYTES: ${VIMI_MEDIA_MAX_BYTES:-67108864}
 
 services:
   postgres:
@@ -49,14 +48,14 @@ services:
 
   db-provision:
     image: postgres:17
-    env_file:
-      - ../../.env.staging
     environment:
       PGHOST: postgres
       PGPORT: "5432"
       PGPASSWORD: ${VIMI_POSTGRES_BOOTSTRAP_PASSWORD:?VIMI_POSTGRES_BOOTSTRAP_PASSWORD is required}
       POSTGRES_DB: vimi
       POSTGRES_USER: vimi_bootstrap
+      VIMI_APP_DB_PASSWORD: ${VIMI_APP_DB_PASSWORD:?VIMI_APP_DB_PASSWORD is required}
+      VIMI_MIGRATOR_DB_PASSWORD: ${VIMI_MIGRATOR_DB_PASSWORD:?VIMI_MIGRATOR_DB_PASSWORD is required}
     volumes:
       - ../postgres/bootstrap_staging.sh:/opt/vimi/bootstrap_staging.sh:ro
     command: ["sh", "/opt/vimi/bootstrap_staging.sh"]
@@ -95,6 +94,8 @@ services:
       db-provision:
         condition: service_completed_successfully
     restart: "no"
+    networks:
+      - backend
 
   media-init:
     build:
@@ -116,6 +117,8 @@ services:
     environment:
       <<: *runtime-environment
       VIMI_PUBLIC_HOST: ${VIMI_PUBLIC_HOST:?VIMI_PUBLIC_HOST is required}
+      VIMI_TELEGRAM_BOT_TOKEN: ${VIMI_TELEGRAM_BOT_TOKEN:?VIMI_TELEGRAM_BOT_TOKEN is required}
+      VIMI_TELEGRAM_WEBHOOK_SECRET: ${VIMI_TELEGRAM_WEBHOOK_SECRET:?VIMI_TELEGRAM_WEBHOOK_SECRET is required}
     command:
       - python
       - -m
@@ -148,6 +151,8 @@ services:
     <<: *python-service
     environment:
       <<: *runtime-environment
+      VIMI_TELEGRAM_BOT_TOKEN: ${VIMI_TELEGRAM_BOT_TOKEN:?VIMI_TELEGRAM_BOT_TOKEN is required}
+      VIMI_X_BEARER_TOKEN: ${VIMI_X_BEARER_TOKEN:?VIMI_X_BEARER_TOKEN is required}
     command: ["python", "apps/worker/main.py"]
     volumes:
       - media-data:/var/lib/vimi/media:ro
@@ -163,6 +168,8 @@ services:
     <<: *python-service
     environment:
       <<: *runtime-environment
+      VIMI_OPENAI_API_KEY: ${VIMI_OPENAI_API_KEY:?VIMI_OPENAI_API_KEY is required}
+      VIMI_VISUAL_MODERATION_MODEL: ${VIMI_VISUAL_MODERATION_MODEL:-omni-moderation-latest}
     command: ["python", "apps/media-worker/main.py"]
     volumes:
       - media-data:/var/lib/vimi/media
@@ -178,6 +185,7 @@ services:
     <<: *python-service
     environment:
       <<: *runtime-environment
+      VIMI_DEST_X_PRIMARY_TOKEN: ${VIMI_DEST_X_PRIMARY_TOKEN:?VIMI_DEST_X_PRIMARY_TOKEN is required}
     command: ["python", "apps/destination-worker/main.py"]
     volumes:
       - media-data:/var/lib/vimi/media:ro
@@ -216,11 +224,13 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    networks:
+      - backend
 
   caddy:
     image: caddy:2.10-alpine
-    env_file:
-      - ../../.env.staging
+    environment:
+      VIMI_PUBLIC_HOST: ${VIMI_PUBLIC_HOST:?VIMI_PUBLIC_HOST is required}
     ports:
       - "80:80"
       - "443:443"
