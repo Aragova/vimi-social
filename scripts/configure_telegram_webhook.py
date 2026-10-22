@@ -40,7 +40,8 @@ def main() -> int:
     configured_url = str(info_payload.get("result", {}).get("url", ""))
     if configured_url != webhook_url:
         raise RuntimeError(
-            f"Telegram webhook verification failed: expected {webhook_url!r}, got {configured_url!r}"
+            "Telegram webhook verification failed: "
+            f"expected {webhook_url!r}, got {configured_url!r}"
         )
 
     print(f"Telegram webhook configured: {webhook_url}")
