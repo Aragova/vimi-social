@@ -5,6 +5,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 import secrets
 import selectors
 import subprocess
@@ -117,16 +118,16 @@ def _wait_for_code(
     process = subprocess.Popen(
         ["sudo", "-n", "tail", "-n", "0", "-F", str(log_path)],
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
+        stderr=subprocess.DEVNULL,
     )
     if process.stdout is None:
         process.terminate()
         raise RuntimeError("failed to capture nginx access log")
 
+    stdout_fd = process.stdout.fileno()
     selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ)
+    selector.register(stdout_fd, selectors.EVENT_READ)
+    buffered = bytearray()
     deadline = time.monotonic() + timeout_seconds
     try:
         while True:
@@ -136,17 +137,24 @@ def _wait_for_code(
             events = selector.select(timeout=remaining)
             if not events:
                 raise RuntimeError("timed out waiting for X OAuth callback")
-            line = process.stdout.readline()
-            if not line:
+
+            chunk = os.read(stdout_fd, 65536)
+            if not chunk:
                 if process.poll() is not None:
                     raise RuntimeError("nginx access-log watcher stopped unexpectedly")
                 continue
-            target = request_target(line)
-            if target is None:
-                continue
-            code = callback_code(target, expected_state)
-            if code is not None:
-                return code
+            buffered.extend(chunk)
+
+            while b"\n" in buffered:
+                raw_line, _, remainder = buffered.partition(b"\n")
+                buffered = bytearray(remainder)
+                line = raw_line.decode(errors="replace")
+                target = request_target(line)
+                if target is None:
+                    continue
+                code = callback_code(target, expected_state)
+                if code is not None:
+                    return code
     finally:
         selector.close()
         process.terminate()
