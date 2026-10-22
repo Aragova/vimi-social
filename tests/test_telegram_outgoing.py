@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from vimi_social.telegram.client import (
@@ -52,10 +54,24 @@ class FakeGateway:
     def __init__(self, failure: Exception | None = None) -> None:
         self.failure = failure
         self.send_count = 0
+        self.video_count = 0
 
     async def send_message(self, chat_id: int, message: OutgoingMessage) -> None:
         self.send_count += 1
         assert chat_id
+        assert message.text
+        if self.failure is not None:
+            raise self.failure
+
+    async def send_video(
+        self,
+        chat_id: int,
+        video_path: Path,
+        message: OutgoingMessage,
+    ) -> None:
+        self.video_count += 1
+        assert chat_id
+        assert video_path.name
         assert message.text
         if self.failure is not None:
             raise self.failure
@@ -76,6 +92,27 @@ async def test_unknown_existing_operation_is_never_sent_again() -> None:
 
     assert state is TelegramOutgoingState.UNKNOWN
     assert gateway.send_count == 0
+    assert store.finished == []
+
+
+async def test_unknown_video_preview_is_never_sent_again(tmp_path: Path) -> None:
+    store = FakeStore(TelegramDispatchDecision.UNKNOWN)
+    gateway = FakeGateway()
+    messenger = TelegramMessenger(store, gateway)
+    video = tmp_path / "preview.mp4"
+    video.write_bytes(b"video")
+
+    state = await messenger.send_video(
+        8,
+        "preview",
+        10,
+        video,
+        "a" * 64,
+        OutgoingMessage("ready"),
+    )
+
+    assert state is TelegramOutgoingState.UNKNOWN
+    assert gateway.video_count == 0
     assert store.finished == []
 
 

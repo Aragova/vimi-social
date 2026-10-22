@@ -5,6 +5,8 @@ from vimi_social.core.config import get_settings
 from vimi_social.db.base import build_engine
 from vimi_social.media.service import MediaPreparationService
 from vimi_social.media.temporal import TemporalMediaPreparationStarter
+from vimi_social.publication.service import PublicationService
+from vimi_social.publication.temporal import TemporalPublicationWorkflowStarter
 from vimi_social.source.service import SourceTaskService
 from vimi_social.source.temporal import TemporalScoutWorkflowStarter
 from vimi_social.telegram.app import build_telegram_app
@@ -37,6 +39,10 @@ def create_application() -> FastAPI:
     messenger = TelegramMessenger(outgoing_store, gateway)
     source_tasks = SourceTaskService(session_factory)
     media_preparations = MediaPreparationService(session_factory)
+    publications = PublicationService(
+        session_factory,
+        destination_task_queue=settings.destination_task_queue,
+    )
     scout_starter = TemporalScoutWorkflowStarter(
         settings.temporal_target,
         settings.temporal_namespace,
@@ -48,6 +54,12 @@ def create_application() -> FastAPI:
         settings.temporal_task_queue,
         settings.media_task_queue,
     )
+    publication_starter = TemporalPublicationWorkflowStarter(
+        settings.temporal_target,
+        settings.temporal_namespace,
+        settings.temporal_task_queue,
+        settings.destination_task_queue,
+    )
     service = TelegramBotService(
         identity_resolver,
         update_guard,
@@ -56,6 +68,8 @@ def create_application() -> FastAPI:
         scout_starter,
         media_preparations,
         media_starter,
+        publications,
+        publication_starter,
     )
     return build_telegram_app(service, settings.telegram_webhook_secret)
 

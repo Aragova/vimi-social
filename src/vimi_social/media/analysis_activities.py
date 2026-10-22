@@ -24,6 +24,7 @@ from vimi_social.media.repository import MediaPreparationRepository
 from vimi_social.media.scenes import SceneDetector, SceneRanker
 from vimi_social.media.secure_ingest.errors import MediaIngestError
 from vimi_social.media.variant_planner import VariantPlanner
+from vimi_social.media.visual_classifier import VisualSceneClassifier
 from vimi_social.source.repository import SourceTaskRepository
 
 
@@ -39,6 +40,7 @@ class MediaSceneAnalysisActivities:
         source_repository: SourceTaskRepository | None = None,
         detector: SceneDetector | None = None,
         ranker: SceneRanker | None = None,
+        visual_classifier: VisualSceneClassifier | None = None,
         profiles: DestinationProfileRegistry | None = None,
         preflight: PlatformPreflight | None = None,
         planner: VariantPlanner | None = None,
@@ -51,6 +53,7 @@ class MediaSceneAnalysisActivities:
         self._source_repository = source_repository or SourceTaskRepository()
         self._detector = detector or SceneDetector()
         self._ranker = ranker or SceneRanker()
+        self._visual_classifier = visual_classifier
         self._profiles = profiles or DestinationProfileRegistry()
         self._preflight = preflight or PlatformPreflight()
         self._planner = planner or VariantPlanner()
@@ -102,15 +105,21 @@ class MediaSceneAnalysisActivities:
                 asset_duration_ms=asset.probe.duration_ms,
                 classification=asset.classification,
             )
+            if self._visual_classifier is not None:
+                ranked = await self._visual_classifier.classify(
+                    media_path,
+                    ranked,
+                    scratch_dir=scratch_dir,
+                )
             profile = self._profiles.require(self._destination)
-            preflight = self._preflight.evaluate(asset, profile)
+            preflight = self._preflight.evaluate(asset, profile, ranked)
             plan = self._planner.plan(asset, ranked, preflight)
         except MediaIngestError:
             return self._mark_failed(
                 tenant_id,
                 analysis.id,
                 attempt_token,
-                "SCENE_ANALYSIS_MEDIA_TOOL_FAILED",
+                "SCENE_OR_VISUAL_ANALYSIS_FAILED",
             )
         except OSError:
             return self._mark_failed(

@@ -1,7 +1,8 @@
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
+from pathlib import Path
 from typing import Protocol
 
 from sqlalchemy import text
@@ -142,8 +143,41 @@ class TelegramMessenger:
         chat_id: int,
         message: OutgoingMessage,
     ) -> TelegramOutgoingState:
+        return await self._dispatch(
+            update_id=update_id,
+            action=action,
+            chat_id=chat_id,
+            payload_sha256=_message_fingerprint(chat_id, message),
+            dispatch=lambda: self._gateway.send_message(chat_id, message),
+        )
+
+    async def send_video(
+        self,
+        update_id: int,
+        action: str,
+        chat_id: int,
+        video_path: Path,
+        video_sha256: str,
+        message: OutgoingMessage,
+    ) -> TelegramOutgoingState:
+        return await self._dispatch(
+            update_id=update_id,
+            action=action,
+            chat_id=chat_id,
+            payload_sha256=_video_fingerprint(chat_id, video_sha256, message),
+            dispatch=lambda: self._gateway.send_video(chat_id, video_path, message),
+        )
+
+    async def _dispatch(
+        self,
+        *,
+        update_id: int,
+        action: str,
+        chat_id: int,
+        payload_sha256: str,
+        dispatch: Callable[[], Awaitable[None]],
+    ) -> TelegramOutgoingState:
         operation_key = f"telegram:update:{update_id}:{action}"
-        payload_sha256 = _message_fingerprint(chat_id, message)
         self._store.prepare(operation_key, update_id, chat_id, action, payload_sha256)
         decision = self._store.begin(operation_key)
 
@@ -157,7 +191,7 @@ class TelegramMessenger:
             return TelegramOutgoingState.FAILED_SAFE
 
         try:
-            await self._gateway.send_message(chat_id, message)
+            await dispatch()
         except TelegramGatewayRateLimited as error:
             self._store.defer(operation_key, error.retry_after_seconds)
             raise TelegramMessageRetryAfter(error.retry_after_seconds) from None
@@ -182,13 +216,31 @@ class TelegramMessenger:
 
 
 def _message_fingerprint(chat_id: int, message: OutgoingMessage) -> str:
-    payload = {
+    payload = _message_payload(chat_id, message)
+    return _fingerprint(payload)
+
+
+def _video_fingerprint(
+    chat_id: int,
+    video_sha256: str,
+    message: OutgoingMessage,
+) -> str:
+    payload = _message_payload(chat_id, message)
+    payload["video_sha256"] = video_sha256
+    return _fingerprint(payload)
+
+
+def _message_payload(chat_id: int, message: OutgoingMessage) -> dict[str, object]:
+    return {
         "chat_id": chat_id,
         "text": message.text,
         "keyboard": [
             [_button_fingerprint(button) for button in row] for row in message.keyboard
         ],
     }
+
+
+def _fingerprint(payload: dict[str, object]) -> str:
     canonical = json.dumps(
         payload,
         ensure_ascii=False,

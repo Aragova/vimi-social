@@ -2,7 +2,9 @@ from typing import Protocol
 from uuid import UUID
 
 from vimi_social.domain.media import MediaPreparationWorkflowInput
+from vimi_social.domain.publication import PublicationWorkflowInput
 from vimi_social.media.service import MediaPreparationService
+from vimi_social.publication.service import PublicationService
 from vimi_social.source.service import SourceTaskIntentTooLong, SourceTaskService
 from vimi_social.telegram.identity import (
     TelegramIdentityResolver,
@@ -19,6 +21,9 @@ from vimi_social.telegram.menus import (
     build_media_preparation_started,
     build_media_rights_declined,
     build_media_rights_prompt,
+    build_publication_not_available,
+    build_publication_quota_exceeded,
+    build_publication_started,
     build_scout_quota_exceeded,
     build_source_menu,
     build_upload_prompt,
@@ -34,6 +39,10 @@ class ScoutWorkflowStarter(Protocol):
 
 class MediaWorkflowStarter(Protocol):
     async def start(self, workflow_input: MediaPreparationWorkflowInput) -> None: ...
+
+
+class PublicationWorkflowStarter(Protocol):
+    async def start(self, workflow_input: PublicationWorkflowInput) -> None: ...
 
 
 class TelegramUpdateBusy(RuntimeError):
@@ -56,6 +65,8 @@ class TelegramBotService:
         scout_starter: ScoutWorkflowStarter,
         media_preparations: MediaPreparationService,
         media_starter: MediaWorkflowStarter,
+        publications: PublicationService | None = None,
+        publication_starter: PublicationWorkflowStarter | None = None,
     ) -> None:
         self._identity_resolver = identity_resolver
         self._update_guard = update_guard
@@ -64,6 +75,8 @@ class TelegramBotService:
         self._scout_starter = scout_starter
         self._media_preparations = media_preparations
         self._media_starter = media_starter
+        self._publications = publications
+        self._publication_starter = publication_starter
 
     async def handle_update(self, update: TelegramUpdate) -> None:
         actor = _extract_actor(update)
@@ -216,6 +229,30 @@ class TelegramBotService:
                 return
             action = f"media-rights-declined:{preparation_id}"
             outgoing = build_media_rights_declined(principal.locale)
+        elif callback.data.startswith("publication:approve:"):
+            publication_id = _parse_uuid_suffix(callback.data, "publication:approve:")
+            if publication_id is None:
+                return
+            if self._publications is None or self._publication_starter is None:
+                action = f"publication-not-configured:{publication_id}"
+                outgoing = build_publication_not_available(principal.locale)
+            else:
+                try:
+                    publication_input = self._publications.approve(
+                        principal,
+                        publication_id,
+                    )
+                except CapacityExceeded:
+                    action = f"publication-quota:{publication_id}"
+                    outgoing = build_publication_quota_exceeded(principal.locale)
+                else:
+                    if publication_input is None:
+                        action = f"publication-not-available:{publication_id}"
+                        outgoing = build_publication_not_available(principal.locale)
+                    else:
+                        await self._publication_starter.start(publication_input)
+                        action = f"publication-started:{publication_id}"
+                        outgoing = build_publication_started(principal.locale)
         else:
             return
 

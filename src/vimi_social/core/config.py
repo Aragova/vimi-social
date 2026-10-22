@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     temporal_namespace: str = "default"
     temporal_task_queue: str = "vimi-social"
     media_task_queue: str = "vimi-social-media"
+    destination_task_queue: str = "vimi-social-destination"
     media_root: str = ".vimi-media"
     media_max_bytes: int = 64 * 1024 * 1024
     object_storage_endpoint: str = "http://localhost:9000"
@@ -20,6 +21,8 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_webhook_secret: str | None = None
     x_bearer_token: str | None = None
+    openai_api_key: str | None = None
+    visual_moderation_model: str = "omni-moderation-latest"
 
 
 @lru_cache(maxsize=1)

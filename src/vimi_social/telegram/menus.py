@@ -13,8 +13,17 @@ from vimi_social.domain.media import (
     MediaPreparationResult,
     MediaPreparationState,
 )
+from vimi_social.domain.publication import (
+    PublicationPreviewResult,
+    PublicationPreviewState,
+    PublicationResult,
+    PublicationState,
+    RenderResult,
+    VariantArtifactState,
+)
 from vimi_social.domain.source import CandidateContent, ScoutRunResult, SourceTaskState
 from vimi_social.i18n.catalog import MessageKey, translate
+from vimi_social.i18n.publication import PublicationMessageKey, translate_publication
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +133,10 @@ def build_media_preparation_result(
     locale: UiLocale,
     result: MediaPreparationResult,
     analysis: MediaAnalysisResult | None = None,
+    render: RenderResult | None = None,
+    preview: PublicationPreviewResult | None = None,
+    *,
+    video_preview_available: bool = True,
 ) -> OutgoingMessage:
     if result.state is MediaPreparationState.BLOCKED:
         return OutgoingMessage(text=translate(MessageKey.MEDIA_PREPARATION_BLOCKED, locale))
@@ -171,7 +184,59 @@ def build_media_preparation_result(
                         duration=_duration_label(analysis.planned_duration_ms),
                     )
                 )
-    return OutgoingMessage(text="\n".join(lines))
+
+    keyboard: tuple[tuple[InlineButton, ...], ...] = ()
+    if render is not None and render.state is VariantArtifactState.FAILED_SAFE:
+        lines.append(translate_publication(PublicationMessageKey.RENDER_FAILED, locale))
+    if preview is not None:
+        preview_line = _publication_preview_line(locale, preview)
+        if preview_line is not None:
+            lines.append(preview_line)
+        if (
+            preview.state is PublicationPreviewState.AWAITING_APPROVAL
+            and preview.publication_id is not None
+        ):
+            if not video_preview_available:
+                lines.append(
+                    translate_publication(PublicationMessageKey.PREVIEW_TOO_LARGE, locale)
+                )
+            keyboard = (
+                (
+                    InlineButton(
+                        translate_publication(PublicationMessageKey.PUBLISH_X, locale),
+                        f"publication:approve:{preview.publication_id}",
+                    ),
+                ),
+            )
+    return OutgoingMessage(text="\n".join(lines), keyboard=keyboard)
+
+
+def build_publication_started(locale: UiLocale) -> OutgoingMessage:
+    return OutgoingMessage(
+        text=translate_publication(PublicationMessageKey.STARTED, locale)
+    )
+
+
+def build_publication_quota_exceeded(locale: UiLocale) -> OutgoingMessage:
+    return OutgoingMessage(
+        text=translate_publication(PublicationMessageKey.QUOTA_EXCEEDED, locale)
+    )
+
+
+def build_publication_not_available(locale: UiLocale) -> OutgoingMessage:
+    return OutgoingMessage(
+        text=translate_publication(PublicationMessageKey.NOT_AVAILABLE, locale)
+    )
+
+
+def build_publication_result(locale: UiLocale, result: PublicationResult) -> OutgoingMessage:
+    if result.state is PublicationState.CONFIRMED:
+        key = PublicationMessageKey.CONFIRMED
+    elif result.state is PublicationState.UNKNOWN:
+        key = PublicationMessageKey.UNKNOWN
+    else:
+        key = PublicationMessageKey.FAILED
+    return OutgoingMessage(text=translate_publication(key, locale))
 
 
 def build_scout_results(
@@ -215,9 +280,7 @@ def build_scout_results(
                 _engagement_line(candidate),
             )
         )
-        buttons = [
-            InlineButton(translate(MessageKey.VIEW, locale), url=candidate.source_url)
-        ]
+        buttons = [InlineButton(translate(MessageKey.VIEW, locale), url=candidate.source_url)]
         if candidate.id is not None:
             buttons.append(
                 InlineButton(
@@ -237,6 +300,24 @@ def build_upload_prompt(locale: UiLocale) -> OutgoingMessage:
 
 def build_feed_prompt(locale: UiLocale) -> OutgoingMessage:
     return OutgoingMessage(text=translate(MessageKey.FEED_PROMPT, locale))
+
+
+def _publication_preview_line(
+    locale: UiLocale,
+    preview: PublicationPreviewResult,
+) -> str | None:
+    keys = {
+        PublicationPreviewState.AWAITING_APPROVAL: PublicationMessageKey.PREVIEW_READY,
+        PublicationPreviewState.REVIEW_REQUIRED: PublicationMessageKey.REVIEW_REQUIRED,
+        PublicationPreviewState.BLOCKED: PublicationMessageKey.BLOCKED,
+        PublicationPreviewState.NO_DESTINATION: PublicationMessageKey.NO_DESTINATION,
+        PublicationPreviewState.ACCOUNT_SELECTION_REQUIRED: (
+            PublicationMessageKey.ACCOUNT_SELECTION_REQUIRED
+        ),
+        PublicationPreviewState.RENDER_FAILED: PublicationMessageKey.RENDER_FAILED,
+    }
+    key = keys.get(preview.state)
+    return translate_publication(key, locale) if key is not None else None
 
 
 def _engagement_line(candidate: CandidateContent) -> str:

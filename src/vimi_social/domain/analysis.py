@@ -14,6 +14,7 @@ class SceneAnalysisState(StrEnum):
 
 class SceneClassificationBasis(StrEnum):
     ASSET_LEVEL_INHERITED = "ASSET_LEVEL_INHERITED"
+    VISUAL_MODERATION = "VISUAL_MODERATION"
 
 
 class PolicyDecision(StrEnum):
@@ -50,6 +51,7 @@ class RankedScene:
     explicitness_score: float | None
     classification_basis: SceneClassificationBasis
     signals: tuple[str, ...]
+    classifier_version: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
