@@ -40,6 +40,10 @@ class MessageKey(StrEnum):
     MEDIA_PREPARATION_READY = "media_preparation_ready"
     MEDIA_PREPARATION_FAILED = "media_preparation_failed"
     MEDIA_PREPARATION_BLOCKED = "media_preparation_blocked"
+    MEDIA_ADULT_UNKNOWN = "media_adult_unknown"
+    MEDIA_ADULT_NO_SIGNAL = "media_adult_no_signal"
+    MEDIA_ADULT_POSSIBLY_SENSITIVE = "media_adult_possibly_sensitive"
+    MEDIA_ADULT_EXPLICIT = "media_adult_explicit"
     UPLOAD_PROMPT = "upload_prompt"
     FEED_PROMPT = "feed_prompt"
 
@@ -120,6 +124,10 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         MessageKey.MEDIA_PREPARATION_BLOCKED: (
             "🛡 Материал заблокирован на этапе Curator/rights gate и не был получен."
         ),
+        MessageKey.MEDIA_ADULT_UNKNOWN: "не определено",
+        MessageKey.MEDIA_ADULT_NO_SIGNAL: "базовые сигналы 18+ не обнаружены",
+        MessageKey.MEDIA_ADULT_POSSIBLY_SENSITIVE: "возможно чувствительный контент",
+        MessageKey.MEDIA_ADULT_EXPLICIT: "18+ / explicit",
         MessageKey.UPLOAD_PROMPT: (
             "📤 Ручной источник выбран.\n\n"
             "Отправьте или перешлите материал в этот чат."
@@ -204,6 +212,10 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         MessageKey.MEDIA_PREPARATION_BLOCKED: (
             "🛡 The media was blocked by the Curator/rights gate and was not acquired."
         ),
+        MessageKey.MEDIA_ADULT_UNKNOWN: "unknown",
+        MessageKey.MEDIA_ADULT_NO_SIGNAL: "no adult signal in base checks",
+        MessageKey.MEDIA_ADULT_POSSIBLY_SENSITIVE: "possibly sensitive",
+        MessageKey.MEDIA_ADULT_EXPLICIT: "adult / explicit",
         MessageKey.UPLOAD_PROMPT: (
             "📤 Manual source selected.\n\n"
             "Send or forward the material to this chat."
