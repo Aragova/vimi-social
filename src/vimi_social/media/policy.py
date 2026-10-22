@@ -79,6 +79,17 @@ class PlatformPreflight:
                 max_video_duration_ms=profile.max_video_duration_ms,
             )
 
+        if "metadata_text_only_no_adult_signal" in asset.classification.signals:
+            return PreflightDecision(
+                destination=profile.destination,
+                decision=PolicyDecision.MANUAL_REVIEW_REQUIRED,
+                capability_version=profile.capability_version,
+                policy_version=profile.policy_version,
+                requires_sensitive_label=False,
+                reason_codes=("VISUAL_CLASSIFICATION_EVIDENCE_REQUIRED",),
+                max_video_duration_ms=profile.max_video_duration_ms,
+            )
+
         duration = asset.probe.duration_ms
         if (
             duration is not None
