@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -20,8 +21,8 @@ class FakeToolRunner:
         self._payload = payload
         self.calls: list[tuple[tuple[str, ...], Path]] = []
 
-    async def run(self, argv: tuple[str, ...], *, cwd: Path) -> ProcessResult:
-        self.calls.append((argv, cwd))
+    async def run(self, argv: Sequence[str], *, cwd: Path) -> ProcessResult:
+        self.calls.append((tuple(argv), cwd))
         return ProcessResult(
             returncode=0,
             stdout=json.dumps(self._payload).encode(),
@@ -98,7 +99,7 @@ def test_base_classifier_is_conservative_and_preserves_sensitive_signal() -> Non
     assert sensitive.adult is BaseAdultClassification.POSSIBLY_SENSITIVE
     assert "source_possibly_sensitive" in sensitive.signals
     assert explicit.adult is BaseAdultClassification.ADULT_EXPLICIT
-    assert explicit.explicitness_score == pytest.approx(0.85)
+    assert explicit.explicitness_score == 0.85
 
 
 @pytest.mark.asyncio
@@ -132,6 +133,7 @@ async def test_media_probe_extracts_deterministic_technical_metadata(tmp_path: P
     assert result.video_codec == "h264"
     assert result.audio_codec == "aac"
     assert result.has_audio is True
-    assert result.frame_rate == pytest.approx(29.97003, rel=1e-5)
+    assert result.frame_rate is not None
+    assert abs(result.frame_rate - (30000 / 1001)) < 1e-8
     assert runner.calls[0][0][0] == "ffprobe"
     assert "--" in runner.calls[0][0]
