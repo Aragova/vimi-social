@@ -25,6 +25,7 @@ def upgrade() -> None:
             rights_confirmed_by_user_id uuid NULL,
             rights_confirmed_at timestamptz NULL,
             state text NOT NULL DEFAULT 'AWAITING_RIGHTS',
+            acquisition_attempt_token uuid NULL,
             failure_code text NULL,
             created_at timestamptz NOT NULL DEFAULT now(),
             updated_at timestamptz NOT NULL DEFAULT now(),
@@ -44,6 +45,10 @@ def upgrade() -> None:
                 'AWAITING_RIGHTS', 'QUEUED', 'ACQUIRING',
                 'READY', 'FAILED_SAFE', 'BLOCKED'
             )),
+            CHECK (
+                (state = 'ACQUIRING' AND acquisition_attempt_token IS NOT NULL)
+                OR (state <> 'ACQUIRING' AND acquisition_attempt_token IS NULL)
+            ),
             CHECK (
                 (rights_basis = 'UNKNOWN' AND rights_confirmed_at IS NULL)
                 OR rights_basis <> 'UNKNOWN'
