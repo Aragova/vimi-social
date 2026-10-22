@@ -8,6 +8,7 @@ from vimi_social.domain.source import (
     SourceTaskState,
 )
 from vimi_social.telegram.menus import (
+    build_ai_search_intent_too_long,
     build_main_menu,
     build_scout_results,
     build_source_menu,
@@ -66,3 +67,23 @@ def test_scout_results_expose_view_select_and_search_more_actions() -> None:
     assert message.keyboard[0][0].url == candidate.source_url
     assert message.keyboard[0][1].callback_data == f"candidate:select:{candidate_id}"
     assert message.keyboard[-1][0].callback_data == "source:ai_search"
+
+
+def test_unknown_scout_result_is_not_rendered_as_an_empty_search() -> None:
+    result = ScoutRunResult(
+        operation_key="source-task:unknown",
+        state=SourceTaskState.UNKNOWN,
+        discovered_count=0,
+        candidate_count=0,
+        failure_code="SCOUT_ATTEMPT_AMBIGUOUS",
+    )
+
+    message = build_scout_results(UiLocale.EN, result, ())
+
+    assert "ambiguous outcome" in message.text
+    assert message.keyboard[-1][0].callback_data == "source:ai_search"
+
+
+def test_oversized_intent_message_is_localized() -> None:
+    assert "4000" in build_ai_search_intent_too_long(UiLocale.EN).text
+    assert "4000" in build_ai_search_intent_too_long(UiLocale.RU).text
