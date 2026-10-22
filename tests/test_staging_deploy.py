@@ -2,7 +2,6 @@ import os
 import pathlib
 import subprocess
 
-
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
