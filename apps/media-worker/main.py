@@ -8,6 +8,7 @@ from temporalio.worker import Worker
 from vimi_social.core.config import get_settings
 from vimi_social.db.base import build_engine
 from vimi_social.media.activities import MediaPreparationActivities
+from vimi_social.media.analysis_activities import MediaSceneAnalysisActivities
 
 
 async def run() -> None:
@@ -22,15 +23,22 @@ async def run() -> None:
         expire_on_commit=False,
         autoflush=False,
     )
-    activities = MediaPreparationActivities(
+    preparation_activities = MediaPreparationActivities(
         session_factory,
         media_root=Path(settings.media_root),
         max_bytes=settings.media_max_bytes,
     )
+    analysis_activities = MediaSceneAnalysisActivities(
+        session_factory,
+        media_root=Path(settings.media_root),
+    )
     worker = Worker(
         client,
         task_queue=settings.media_task_queue,
-        activities=[activities.prepare_candidate_media],
+        activities=[
+            preparation_activities.prepare_candidate_media,
+            analysis_activities.analyze_prepared_media,
+        ],
     )
     try:
         await worker.run()
