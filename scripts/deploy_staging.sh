@@ -12,10 +12,32 @@ if [ ! -f "$ENV_FILE" ]; then
   exit 1
 fi
 
-if grep -Eq '^[A-Z0-9_]+=(|CHANGE_ME.*)$' "$ENV_FILE"; then
-  echo "Staging environment still contains empty or CHANGE_ME values." >&2
+if grep -Eq '^[A-Z0-9_]+=CHANGE_ME.*$' "$ENV_FILE"; then
+  echo "Staging environment still contains CHANGE_ME values." >&2
   exit 1
 fi
+
+require_env_value() {
+  key="$1"
+  value="$(sed -n "s/^${key}=//p" "$ENV_FILE" | head -n 1)"
+  if [ -z "$value" ]; then
+    echo "Missing required staging value: $key" >&2
+    exit 1
+  fi
+}
+
+for key in \
+  VIMI_PUBLIC_HOST \
+  VIMI_POSTGRES_BOOTSTRAP_PASSWORD \
+  VIMI_APP_DB_PASSWORD \
+  VIMI_MIGRATOR_DB_PASSWORD \
+  VIMI_TELEGRAM_BOT_TOKEN \
+  VIMI_TELEGRAM_WEBHOOK_SECRET \
+  VIMI_X_BEARER_TOKEN \
+  VIMI_DEST_X_PRIMARY_TOKEN
+do
+  require_env_value "$key"
+done
 
 case "$COHOST_MODE" in
   true|false) ;;

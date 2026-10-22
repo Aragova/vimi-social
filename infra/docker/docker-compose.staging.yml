@@ -175,7 +175,7 @@ services:
     <<: *python-service
     environment:
       <<: *runtime-environment
-      VIMI_OPENAI_API_KEY: ${VIMI_OPENAI_API_KEY:?VIMI_OPENAI_API_KEY is required}
+      VIMI_OPENAI_API_KEY: ${VIMI_OPENAI_API_KEY:-}
       VIMI_VISUAL_MODERATION_MODEL: ${VIMI_VISUAL_MODERATION_MODEL:-omni-moderation-latest}
     command: ["python", "apps/media-worker/main.py"]
     volumes:
