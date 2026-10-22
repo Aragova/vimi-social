@@ -1,13 +1,14 @@
 from typing import Protocol
 from uuid import UUID
 
-from vimi_social.source.service import SourceTaskService
+from vimi_social.source.service import SourceTaskIntentTooLong, SourceTaskService
 from vimi_social.telegram.identity import (
     TelegramIdentityResolver,
     TelegramUpdateClaim,
     TelegramUpdateGuard,
 )
 from vimi_social.telegram.menus import (
+    build_ai_search_intent_too_long,
     build_ai_search_prompt,
     build_ai_search_started,
     build_candidate_selected,
@@ -102,6 +103,14 @@ class TelegramBotService:
                 chat_id=message.chat.id,
                 intent=text,
             )
+        except SourceTaskIntentTooLong:
+            await self._messenger.send_message(
+                update.update_id,
+                "ai-search-intent-too-long",
+                message.chat.id,
+                build_ai_search_intent_too_long(principal.locale),
+            )
+            return
         except CapacityExceeded:
             await self._messenger.send_message(
                 update.update_id,
