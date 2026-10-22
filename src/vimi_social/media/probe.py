@@ -45,6 +45,8 @@ class MediaProbe:
             (stream for stream in streams if stream.get("codec_type") == "video"),
             None,
         )
+        if video is None:
+            raise ContentValidationError("ingested media does not contain a video stream")
         audio = next(
             (stream for stream in streams if stream.get("codec_type") == "audio"),
             None,
@@ -53,23 +55,19 @@ class MediaProbe:
         format_data = cast(dict[str, object], format_obj) if isinstance(format_obj, dict) else {}
 
         duration_ms = _seconds_to_ms(format_data.get("duration"))
-        if duration_ms is None and video is not None:
+        if duration_ms is None:
             duration_ms = _seconds_to_ms(video.get("duration"))
 
         return MediaProbeResult(
             duration_ms=duration_ms,
-            width=_positive_int(video.get("width")) if video is not None else None,
-            height=_positive_int(video.get("height")) if video is not None else None,
-            video_codec=(
-                _optional_str(video.get("codec_name")) if video is not None else None
-            ),
+            width=_positive_int(video.get("width")),
+            height=_positive_int(video.get("height")),
+            video_codec=_optional_str(video.get("codec_name")),
             audio_codec=(
                 _optional_str(audio.get("codec_name")) if audio is not None else None
             ),
             container=_optional_str(format_data.get("format_name")),
-            frame_rate=(
-                _parse_frame_rate(video.get("avg_frame_rate")) if video is not None else None
-            ),
+            frame_rate=_parse_frame_rate(video.get("avg_frame_rate")),
             has_audio=audio is not None,
         )
 
