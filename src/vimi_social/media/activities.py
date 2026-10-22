@@ -2,7 +2,7 @@ import asyncio
 import shutil
 from collections.abc import Callable
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
 from temporalio import activity
@@ -20,7 +20,10 @@ from vimi_social.domain.media import (
 from vimi_social.media.classifier import BasicContentClassifier
 from vimi_social.media.curator import CandidateCurator
 from vimi_social.media.probe import MediaProbe
-from vimi_social.media.repository import MediaPreparationRepository
+from vimi_social.media.repository import (
+    MediaAttemptOwnershipLost,
+    MediaPreparationRepository,
+)
 from vimi_social.media.secure_ingest.addressing import DestinationPolicy, SystemHostResolver
 from vimi_social.media.secure_ingest.errors import MediaIngestError
 from vimi_social.media.secure_ingest.fetcher import SecureMediaFetcher
@@ -66,6 +69,7 @@ class MediaPreparationActivities:
     ) -> MediaPreparationResult:
         preparation = self._authorized_preparation(workflow_input)
         preparation_tenant = TenantId(preparation.tenant_id)
+        attempt_token = uuid4()
 
         with self._session_factory() as session, tenant_transaction(session, preparation_tenant):
             existing_asset = self._repository.get_asset(session, preparation.id)
@@ -85,62 +89,96 @@ class MediaPreparationActivities:
                 raise RuntimeError("candidate disappeared from media preparation")
             assessment = self._curator.assess(candidate, current.rights_basis)
             if assessment.decision is not CuratorDecision.ACQUISITION_ALLOWED:
+                failure_code = (
+                    "RIGHTS_REVIEW_REQUIRED"
+                    if assessment.decision is CuratorDecision.RIGHTS_REVIEW_REQUIRED
+                    else "MEDIA_REFERENCE_UNAVAILABLE"
+                )
                 state = self._repository.fail_safe(
                     session,
                     preparation_id=current.id,
-                    failure_code=(
-                        "RIGHTS_REVIEW_REQUIRED"
-                        if assessment.decision is CuratorDecision.RIGHTS_REVIEW_REQUIRED
-                        else "MEDIA_REFERENCE_UNAVAILABLE"
-                    ),
+                    failure_code=failure_code,
                 )
                 if state is MediaPreparationState.FAILED_SAFE:
                     self._usage_repository.release(session, OperationKey(current.operation_key))
                 return MediaPreparationResult(
                     preparation_id=str(current.id),
                     state=state,
-                    failure_code=(
-                        "RIGHTS_REVIEW_REQUIRED"
-                        if assessment.decision is CuratorDecision.RIGHTS_REVIEW_REQUIRED
-                        else "MEDIA_REFERENCE_UNAVAILABLE"
-                    ),
+                    failure_code=failure_code,
                 )
             acquisition_url = assessment.acquisition_url
             if acquisition_url is None:
                 raise RuntimeError("Curator allowed acquisition without a media URL")
 
-            state = self._repository.claim_acquisition(session, current.id)
-            if state is MediaPreparationState.READY:
+            claim = self._repository.claim_acquisition(
+                session,
+                current.id,
+                attempt_token,
+            )
+            if claim.state is MediaPreparationState.READY:
                 asset = self._repository.get_asset(session, current.id)
                 if asset is None:
                     raise RuntimeError("ready media preparation has no asset")
                 return _result_from_asset(asset)
-            if state in {MediaPreparationState.FAILED_SAFE, MediaPreparationState.BLOCKED}:
+            if claim.state in {MediaPreparationState.FAILED_SAFE, MediaPreparationState.BLOCKED}:
+                refreshed = self._repository.get_by_id(session, current.id)
+                return MediaPreparationResult(
+                    preparation_id=str(current.id),
+                    state=claim.state,
+                    failure_code=refreshed.failure_code if refreshed is not None else None,
+                )
+            if claim.state is not MediaPreparationState.ACQUIRING:
+                raise RuntimeError("media preparation is not eligible for acquisition")
+            if not claim.owns_attempt:
+                observed_attempt = claim.attempt_token
+                if observed_attempt is None:
+                    raise RuntimeError("acquiring media preparation has no attempt token")
+                state = self._repository.fail_ambiguous_acquisition(
+                    session,
+                    preparation_id=current.id,
+                    observed_attempt_token=observed_attempt,
+                )
                 refreshed = self._repository.get_by_id(session, current.id)
                 return MediaPreparationResult(
                     preparation_id=str(current.id),
                     state=state,
-                    failure_code=refreshed.failure_code if refreshed is not None else None,
+                    failure_code=(
+                        refreshed.failure_code
+                        if refreshed is not None
+                        else "ACQUISITION_ATTEMPT_AMBIGUOUS"
+                    ),
                 )
             self._usage_repository.commit(session, OperationKey(current.operation_key))
 
         content_dir = self._media_root / "content"
-        scratch_dir = self._media_root / "scratch" / str(preparation.id)
+        scratch_dir = self._media_root / "scratch" / str(preparation.id) / str(attempt_token)
         try:
             fetched = await self._fetcher.fetch(acquisition_url, content_dir)
             probe = await self._probe.probe(fetched.path, scratch_dir=scratch_dir)
             classification = self._classifier.classify(candidate)
         except MediaIngestError:
-            return self._mark_failed(preparation, "MEDIA_INGEST_OR_PROBE_FAILED")
+            return self._mark_failed(
+                preparation,
+                attempt_token,
+                "MEDIA_INGEST_OR_PROBE_FAILED",
+            )
         except OSError:
-            return self._mark_failed(preparation, "MEDIA_STORAGE_FAILED")
+            return self._mark_failed(
+                preparation,
+                attempt_token,
+                "MEDIA_STORAGE_FAILED",
+            )
         finally:
             await asyncio.to_thread(shutil.rmtree, scratch_dir, True)
 
         try:
             storage_path = str(fetched.path.relative_to(self._media_root))
         except ValueError:
-            return self._mark_failed(preparation, "MEDIA_STORAGE_PATH_INVALID")
+            return self._mark_failed(
+                preparation,
+                attempt_token,
+                "MEDIA_STORAGE_PATH_INVALID",
+            )
 
         with self._session_factory() as session, tenant_transaction(session, preparation_tenant):
             current = self._repository.get_by_id(session, preparation.id)
@@ -157,14 +195,18 @@ class MediaPreparationActivities:
                     state=current.state,
                     failure_code=current.failure_code,
                 )
-            asset = self._repository.persist_asset(
-                session,
-                preparation=current,
-                fetch=fetched,
-                storage_path=storage_path,
-                probe=probe,
-                classification=classification,
-            )
+            try:
+                asset = self._repository.persist_asset(
+                    session,
+                    preparation=current,
+                    attempt_token=attempt_token,
+                    fetch=fetched,
+                    storage_path=storage_path,
+                    probe=probe,
+                    classification=classification,
+                )
+            except MediaAttemptOwnershipLost:
+                return self._current_result(session, preparation.id)
         return _result_from_asset(asset)
 
     def _authorized_preparation(
@@ -200,23 +242,37 @@ class MediaPreparationActivities:
     def _mark_failed(
         self,
         preparation: MediaPreparation,
+        attempt_token: UUID,
         failure_code: str,
     ) -> MediaPreparationResult:
         with self._session_factory() as session, tenant_transaction(
             session,
             TenantId(preparation.tenant_id),
         ):
-            state = self._repository.fail_safe(
+            self._repository.fail_safe(
                 session,
                 preparation_id=preparation.id,
                 failure_code=failure_code,
+                attempt_token=attempt_token,
             )
-            current = self._repository.get_by_id(session, preparation.id)
-            return MediaPreparationResult(
-                preparation_id=str(preparation.id),
-                state=state,
-                failure_code=current.failure_code if current is not None else failure_code,
-            )
+            return self._current_result(session, preparation.id)
+
+    def _current_result(
+        self,
+        session: Session,
+        preparation_id: UUID,
+    ) -> MediaPreparationResult:
+        asset = self._repository.get_asset(session, preparation_id)
+        if asset is not None:
+            return _result_from_asset(asset)
+        current = self._repository.get_by_id(session, preparation_id)
+        if current is None:
+            raise RuntimeError("media preparation disappeared while resolving current state")
+        return MediaPreparationResult(
+            preparation_id=str(current.id),
+            state=current.state,
+            failure_code=current.failure_code,
+        )
 
 
 def _result_from_asset(asset: MediaAsset) -> MediaPreparationResult:
