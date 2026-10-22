@@ -13,6 +13,7 @@ async def test_x_recent_search_normalizes_video_candidate_without_assuming_right
         assert request.headers["Authorization"] == "Bearer test-token"
         assert "has:videos" in request.url.params["query"]
         assert request.url.params["max_results"] == "10"
+        assert "variants" in request.url.params["media.fields"]
         return httpx.Response(
             200,
             json={
@@ -41,6 +42,22 @@ async def test_x_recent_search_normalizes_video_candidate_without_assuming_right
                             "width": 1080,
                             "height": 1920,
                             "preview_image_url": "https://pbs.twimg.com/preview.jpg",
+                            "variants": [
+                                {
+                                    "content_type": "application/x-mpegURL",
+                                    "url": "https://video.twimg.com/master.m3u8",
+                                },
+                                {
+                                    "content_type": "video/mp4",
+                                    "bit_rate": 256000,
+                                    "url": "https://video.twimg.com/low.mp4",
+                                },
+                                {
+                                    "content_type": "video/mp4",
+                                    "bit_rate": 2176000,
+                                    "url": "https://video.twimg.com/high.mp4",
+                                },
+                            ],
                         }
                     ]
                 },
@@ -68,6 +85,9 @@ async def test_x_recent_search_normalizes_video_candidate_without_assuming_right
     assert candidate.engagement["like_count"] == 100
     assert candidate.adult_classification is AdultClassification.POSSIBLY_SENSITIVE
     assert candidate.provenance_hint == "PUBLIC_X_POST_REUSE_RIGHTS_NOT_ESTABLISHED"
+    assert candidate.availability == "DISCOVERED_MEDIA_REFERENCE_AVAILABLE"
+    assert candidate.connector_metadata["acquisition_url"] == "https://video.twimg.com/high.mp4"
+    assert candidate.connector_metadata["acquisition_reference"] == "OFFICIAL_X_API_VIDEO_VARIANT"
     await http_client.aclose()
 
 
@@ -99,6 +119,13 @@ async def test_x_recent_search_selects_video_when_photo_is_first_attachment() ->
                             "width": 1080,
                             "height": 1920,
                             "preview_image_url": "https://pbs.twimg.com/video-preview.jpg",
+                            "variants": [
+                                {
+                                    "content_type": "video/mp4",
+                                    "bit_rate": 832000,
+                                    "url": "https://video.twimg.com/video.mp4",
+                                }
+                            ],
                         },
                     ]
                 },
@@ -121,6 +148,7 @@ async def test_x_recent_search_selects_video_when_photo_is_first_attachment() ->
     assert candidate.media_type == "video"
     assert candidate.duration_ms == 23000
     assert candidate.connector_metadata["media_key"] == "7_video"
+    assert candidate.connector_metadata["acquisition_url"] == "https://video.twimg.com/video.mp4"
     await http_client.aclose()
 
 
