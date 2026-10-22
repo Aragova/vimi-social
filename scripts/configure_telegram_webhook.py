@@ -24,14 +24,13 @@ def _telegram_request(
             data=data,
             timeout=20.0,
         )
-        response.raise_for_status()
-        return response
-    except httpx.HTTPStatusError as exc:
-        raise RuntimeError(
-            f"Telegram {endpoint} failed with HTTP {exc.response.status_code}"
-        ) from None
     except httpx.RequestError:
         raise RuntimeError(f"Telegram {endpoint} request failed") from None
+    if response.is_error:
+        raise RuntimeError(
+            f"Telegram {endpoint} failed with HTTP {response.status_code}"
+        )
+    return response
 
 
 def main() -> int:
