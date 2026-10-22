@@ -1,16 +1,24 @@
 import os
-from uuid import UUID
+from pathlib import Path
+from typing import cast
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from vimi_social.db.tenant import tenant_transaction
+from vimi_social.domain.identity import OperationKey
 from vimi_social.domain.media import MediaPreparationState, RightsBasis
+from vimi_social.media.activities import MediaPreparationActivities
+from vimi_social.media.repository import MediaPreparationRepository
+from vimi_social.media.secure_ingest.fetcher import SecureMediaFetcher
+from vimi_social.media.secure_ingest.models import FetchResult
 from vimi_social.media.service import MediaPreparationService
 from vimi_social.source.service import SourceTaskService
 from vimi_social.telegram.identity import TelegramIdentityResolver, TelegramUpdateGuard
 from vimi_social.telegram.models import TelegramUser
+from vimi_social.usage.repository import UsageRepository
 
 
 def _database_dsn() -> str:
@@ -20,7 +28,20 @@ def _database_dsn() -> str:
     return dsn
 
 
-def test_media_selection_requires_rights_and_reserves_processing_once() -> None:
+class NoCallFetcher:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def fetch(self, raw_url: str, destination_dir: Path) -> FetchResult:
+        del raw_url, destination_dir
+        self.calls += 1
+        raise AssertionError("retry must not perform remote media ingest")
+
+
+@pytest.mark.asyncio
+async def test_media_selection_requires_rights_and_reserves_processing_once(
+    tmp_path: Path,
+) -> None:
     engine = create_engine(_database_dsn())
     session_factory = sessionmaker[Session](
         bind=engine,
@@ -169,6 +190,57 @@ def test_media_selection_requires_rights_and_reserves_processing_once() -> None:
             ).one()
             assert capacity.reserved == 13
             assert capacity.committed == 0
+
+        repository = MediaPreparationRepository()
+        first_attempt = uuid4()
+        with session_factory() as session, tenant_transaction(session, first.context.tenant_id):
+            claim = repository.claim_acquisition(session, preparation.id, first_attempt)
+            assert claim.state is MediaPreparationState.ACQUIRING
+            assert claim.owns_attempt is True
+            assert claim.attempt_token == first_attempt
+            UsageRepository().commit(session, OperationKey(preparation.operation_key))
+
+        fetcher = NoCallFetcher()
+        activities = MediaPreparationActivities(
+            session_factory,
+            media_root=tmp_path,
+            max_bytes=64 * 1024 * 1024,
+            fetcher=cast(SecureMediaFetcher, fetcher),
+        )
+        retry_result = await activities.prepare_candidate_media(workflow_input)
+
+        assert retry_result.state is MediaPreparationState.FAILED_SAFE
+        assert retry_result.failure_code == "ACQUISITION_ATTEMPT_AMBIGUOUS"
+        assert fetcher.calls == 0
+
+        with session_factory() as session, tenant_transaction(session, first.context.tenant_id):
+            final_row = session.execute(
+                text(
+                    """
+                    SELECT state, acquisition_attempt_token, failure_code
+                    FROM media_preparation
+                    WHERE id = :preparation_id
+                    """
+                ),
+                {"preparation_id": str(preparation.id)},
+            ).one()
+            assert final_row.state == "FAILED_SAFE"
+            assert final_row.acquisition_attempt_token is None
+            assert final_row.failure_code == "ACQUISITION_ATTEMPT_AMBIGUOUS"
+
+            capacity = session.execute(
+                text(
+                    """
+                    SELECT reserved, committed
+                    FROM usage_capacity
+                    WHERE tenant_id = :tenant_id
+                      AND metric = 'video_second_processed'
+                    """
+                ),
+                {"tenant_id": str(first.context.tenant_id.value)},
+            ).one()
+            assert capacity.reserved == 0
+            assert capacity.committed == 13
 
         with session_factory() as session, tenant_transaction(session, second.context.tenant_id):
             invisible = session.execute(
