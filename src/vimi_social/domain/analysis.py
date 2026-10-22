@@ -112,3 +112,19 @@ class MediaAnalysis:
     detector_version: str | None
     ranker_version: str | None
     failure_code: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class MediaAnalysisResult:
+    state: SceneAnalysisState
+    failure_code: str | None = None
+    analysis_id: str | None = None
+    scene_count: int = 0
+    top_scene_start_ms: int | None = None
+    top_scene_end_ms: int | None = None
+    destination: str | None = None
+    policy_decision: PolicyDecision | None = None
+    policy_version: str | None = None
+    render_strategy: RenderStrategy | None = None
+    planned_duration_ms: int | None = None
+    requires_sensitive_label: bool = False
