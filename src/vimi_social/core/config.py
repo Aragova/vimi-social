@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     temporal_target: str = "localhost:7233"
     temporal_namespace: str = "default"
     temporal_task_queue: str = "vimi-social"
+    media_task_queue: str = "vimi-social-media"
+    media_root: str = ".vimi-media"
+    media_max_bytes: int = 64 * 1024 * 1024
     object_storage_endpoint: str = "http://localhost:9000"
     object_storage_bucket: str = "vimi-media"
     otel_service_name: str = "vimi-social"
