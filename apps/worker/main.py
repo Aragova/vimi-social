@@ -7,11 +7,13 @@ from temporalio.worker import Worker
 from vimi_social.core.config import get_settings
 from vimi_social.db.base import build_engine
 from vimi_social.media.delivery import MediaPreparationDeliveryActivities
+from vimi_social.publication.preview import PublicationPreviewActivities
 from vimi_social.source.activities import ScoutActivities
 from vimi_social.source.connectors import SourceConnectorRegistry
 from vimi_social.source.x_connector import XSourceConnector
 from vimi_social.telegram.client import TelegramBotApiClient
 from vimi_social.telegram.outgoing import TelegramMessenger, TelegramOutgoingStore
+from vimi_social.workflows.destination_publication import DestinationPublicationWorkflow
 from vimi_social.workflows.media_preparation import MediaPreparationWorkflow
 from vimi_social.workflows.publication import PublicationWorkflow
 from vimi_social.workflows.scout import ScoutWorkflow
@@ -45,14 +47,21 @@ async def run() -> None:
 
     scout_activities = ScoutActivities(session_factory, registry, messenger)
     media_delivery = MediaPreparationDeliveryActivities(session_factory, messenger)
+    publication_preview = PublicationPreviewActivities(session_factory)
     worker = Worker(
         client,
         task_queue=settings.temporal_task_queue,
-        workflows=[PublicationWorkflow, ScoutWorkflow, MediaPreparationWorkflow],
+        workflows=[
+            PublicationWorkflow,
+            ScoutWorkflow,
+            MediaPreparationWorkflow,
+            DestinationPublicationWorkflow,
+        ],
         activities=[
             scout_activities.execute_scout_task,
             scout_activities.deliver_scout_results,
             media_delivery.deliver_media_preparation_result,
+            publication_preview.prepare_publication_preview,
         ],
     )
     try:
