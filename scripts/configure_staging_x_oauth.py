@@ -111,18 +111,46 @@ def _exchange_code(
     return access_token, refresh_token
 
 
-def _wait_for_code(
-    *, log_path: Path, expected_state: str, timeout_seconds: int
-) -> str:
+def _start_log_watcher(log_path: Path) -> subprocess.Popen[bytes]:
     subprocess.run(["sudo", "-v"], check=True)
-    process = subprocess.Popen(
-        ["sudo", "-n", "tail", "-n", "0", "-F", str(log_path)],
+    size_result = subprocess.run(
+        ["sudo", "-n", "stat", "-c", "%s", str(log_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    try:
+        start_byte = int(size_result.stdout.strip()) + 1
+    except ValueError as exc:
+        raise RuntimeError("failed to determine nginx access-log position") from exc
+
+    process: subprocess.Popen[bytes] = subprocess.Popen(
+        [
+            "sudo",
+            "-n",
+            "tail",
+            "-c",
+            f"+{start_byte}",
+            "-F",
+            str(log_path),
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
     )
     if process.stdout is None:
         process.terminate()
         raise RuntimeError("failed to capture nginx access log")
+    return process
+
+
+def _wait_for_code(
+    *,
+    process: subprocess.Popen[bytes],
+    expected_state: str,
+    timeout_seconds: int,
+) -> str:
+    if process.stdout is None:
+        raise RuntimeError("nginx access-log watcher has no stdout")
 
     stdout_fd = process.stdout.fileno()
     selector = selectors.DefaultSelector()
@@ -237,13 +265,14 @@ def main() -> int:
         code_challenge=code_challenge,
     )
 
+    watcher = _start_log_watcher(args.nginx_access_log)
     print("Open this X authorization URL now:")
     print(oauth_url)
     print()
     print("Waiting for the X callback in nginx...")
 
     code = _wait_for_code(
-        log_path=args.nginx_access_log,
+        process=watcher,
         expected_state=state,
         timeout_seconds=args.timeout_seconds,
     )
