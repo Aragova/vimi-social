@@ -125,11 +125,19 @@ class VariantRenderActivities:
                 )
                 current = self._repository.get_by_id(session, artifact.id)
                 if current is None:
-                    raise RuntimeError("quota-failed variant artifact disappeared")
+                    raise RuntimeError(
+                        "quota-failed variant artifact disappeared"
+                    ) from None
                 return _result_from_artifact(current)
             self._usage_repository.commit(session, OperationKey(artifact.operation_key))
 
-        scratch_dir = self._media_root / "scratch" / "render" / str(artifact.id) / str(attempt_token)
+        scratch_dir = (
+            self._media_root
+            / "scratch"
+            / "render"
+            / str(artifact.id)
+            / str(attempt_token)
+        )
         try:
             media_path = self._resolve_media_path(render_input.asset_storage_path)
             rendered = await self._renderer.render(
@@ -163,7 +171,9 @@ class VariantRenderActivities:
             except RenderOwnershipLost:
                 current = self._repository.get_by_id(session, artifact.id)
                 if current is None:
-                    raise RuntimeError("variant artifact disappeared after ownership loss")
+                    raise RuntimeError(
+                        "variant artifact disappeared after ownership loss"
+                    ) from None
                 return _result_from_artifact(current)
             return _result_from_artifact(ready)
 
