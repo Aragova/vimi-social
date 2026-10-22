@@ -1,1 +1,0 @@
-This file exists only to make the media-preparation slice boundaries explicit during review. The canonical product vision remains `docs/PRODUCT_VISION.md`; architecture history remains under `docs/history/`.
