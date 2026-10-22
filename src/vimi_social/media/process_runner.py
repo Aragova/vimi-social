@@ -3,6 +3,7 @@ import math
 import os
 import signal
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -93,10 +94,8 @@ class MediaToolRunner:
 
 
 async def _terminate_group(process: asyncio.subprocess.Process) -> None:
-    try:
+    with suppress(ProcessLookupError):
         os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
     try:
         await asyncio.wait_for(process.wait(), timeout=5)
     except TimeoutError as exc:
