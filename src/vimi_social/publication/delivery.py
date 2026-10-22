@@ -15,7 +15,6 @@ from vimi_social.telegram.menus import build_publication_result
 from vimi_social.telegram.outgoing import (
     TelegramMessageRetryAfter,
     TelegramMessenger,
-    TelegramOutgoingState,
 )
 
 
@@ -85,4 +84,4 @@ class PublicationDeliveryActivities:
                 next_retry_delay=timedelta(seconds=error.retry_after_seconds),
                 type="TelegramPublicationResultRateLimited",
             ) from None
-        return state.value if isinstance(state, TelegramOutgoingState) else str(state)
+        return state.value
