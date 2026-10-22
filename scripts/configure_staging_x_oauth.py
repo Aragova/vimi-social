@@ -12,12 +12,17 @@ import time
 from pathlib import Path
 from typing import cast
 from urllib.error import HTTPError
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-AUTHORIZATION_ENDPOINT = "https://x.com/i/oauth2/authorize"
+from vimi_social.ops.staging_x_oauth import (
+    authorization_url,
+    callback_code,
+    request_target,
+    write_env_value,
+)
+
 TOKEN_ENDPOINT = "https://api.x.com/2/oauth2/token"
-DEFAULT_SCOPES = "tweet.read tweet.write users.read media.write offline.access"
 
 
 def _read_env_value(path: Path, key: str) -> str:
@@ -25,22 +30,6 @@ def _read_env_value(path: Path, key: str) -> str:
         if raw_line.startswith(f"{key}="):
             return raw_line.split("=", 1)[1].strip()
     raise RuntimeError(f"{key} is missing from {path}")
-
-
-def write_env_value(path: Path, key: str, value: str) -> None:
-    lines = path.read_text().splitlines()
-    updated: list[str] = []
-    found = False
-    for line in lines:
-        if line.startswith(f"{key}="):
-            updated.append(f"{key}={value}")
-            found = True
-        else:
-            updated.append(line)
-    if not found:
-        raise RuntimeError(f"{key} is missing from {path}")
-    path.write_text("\n".join(updated) + "\n")
-    path.chmod(0o600)
 
 
 def _load_client_id(path: Path) -> str:
@@ -56,40 +45,6 @@ def _load_client_id(path: Path) -> str:
     if not client_id:
         raise RuntimeError(f"client_id is missing from {path}")
     return client_id
-
-
-def request_target(line: str) -> str | None:
-    parts = line.split('"')
-    if len(parts) < 2:
-        return None
-    request_parts = parts[1].split()
-    if len(request_parts) < 2:
-        return None
-    return request_parts[1]
-
-
-def callback_code(request_target_value: str, expected_state: str) -> str | None:
-    query = parse_qs(urlsplit(request_target_value).query)
-    state = query.get("state", [""])[0]
-    code = query.get("code", [""])[0]
-    if state != expected_state or not code:
-        return None
-    return code
-
-
-def authorization_url(
-    *, client_id: str, redirect_uri: str, state: str, code_challenge: str
-) -> str:
-    params = {
-        "response_type": "code",
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "scope": DEFAULT_SCOPES,
-        "state": state,
-        "code_challenge": code_challenge,
-        "code_challenge_method": "S256",
-    }
-    return f"{AUTHORIZATION_ENDPOINT}?{urlencode(params)}"
 
 
 def _exchange_code(
