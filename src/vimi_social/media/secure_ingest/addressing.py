@@ -73,7 +73,9 @@ class DestinationPolicy:
     @staticmethod
     def _parse_and_normalize(raw_url: str) -> SplitResult:
         if not raw_url or raw_url.strip() != raw_url:
-            raise InvalidUrlError("URL must be non-empty and must not contain outer whitespace")
+            raise InvalidUrlError(
+                "URL must be non-empty and must not contain outer whitespace"
+            )
         try:
             parsed = urlsplit(raw_url)
         except ValueError as exc:
@@ -97,7 +99,11 @@ class DestinationPolicy:
 
         canonical_host = _canonicalize_host(parsed.hostname)
         literal = _parse_ip_literal(canonical_host)
-        netloc = f"[{canonical_host}]" if isinstance(literal, ipaddress.IPv6Address) else canonical_host
+        netloc = (
+            f"[{canonical_host}]"
+            if isinstance(literal, ipaddress.IPv6Address)
+            else canonical_host
+        )
         return SplitResult(
             scheme=scheme,
             netloc=netloc,
@@ -135,7 +141,8 @@ def _canonicalize_host(host: str) -> str:
         ascii_host = value.encode("idna").decode("ascii")
     except UnicodeError as exc:
         raise InvalidUrlError("hostname IDNA normalization failed") from exc
-    if len(ascii_host) > 253 or any(not label or len(label) > 63 for label in ascii_host.split(".")):
+    invalid_label = any(not label or len(label) > 63 for label in ascii_host.split("."))
+    if len(ascii_host) > 253 or invalid_label:
         raise InvalidUrlError("hostname is invalid")
     return ascii_host
 
@@ -147,7 +154,9 @@ def _parse_ip_literal(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Addre
         return None
 
 
-def _validated_public_ip(value: str | ipaddress.IPv4Address | ipaddress.IPv6Address) -> str:
+def _validated_public_ip(
+    value: str | ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> str:
     try:
         address = ipaddress.ip_address(value) if isinstance(value, str) else value
     except ValueError as exc:
