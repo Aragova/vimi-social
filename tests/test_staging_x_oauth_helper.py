@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from scripts.configure_staging_x_oauth import (
+from vimi_social.ops.staging_x_oauth import (
     authorization_url,
     callback_code,
     request_target,
