@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 from enum import StrEnum
 
 from vimi_social.domain.international import UiLocale
