@@ -7,13 +7,13 @@ from vimi_social.domain.analysis import RankedScene, SceneClassificationBasis
 from vimi_social.domain.media import BaseAdultClassification
 from vimi_social.media.visual_classifier import (
     OpenAIVisualModerationProvider,
-    _classification_for_score,
+    classification_for_visual_score,
 )
 
 
 def test_visual_score_thresholds_are_conservative() -> None:
     assert (
-        _classification_for_score(
+        classification_for_visual_score(
             0.01,
             explicit_threshold=0.65,
             sensitive_threshold=0.15,
@@ -21,7 +21,7 @@ def test_visual_score_thresholds_are_conservative() -> None:
         is BaseAdultClassification.NO_ADULT_SIGNAL_DETECTED
     )
     assert (
-        _classification_for_score(
+        classification_for_visual_score(
             0.20,
             explicit_threshold=0.65,
             sensitive_threshold=0.15,
@@ -29,7 +29,7 @@ def test_visual_score_thresholds_are_conservative() -> None:
         is BaseAdultClassification.POSSIBLY_SENSITIVE
     )
     assert (
-        _classification_for_score(
+        classification_for_visual_score(
             0.80,
             explicit_threshold=0.65,
             sensitive_threshold=0.15,
@@ -68,7 +68,7 @@ async def test_openai_visual_moderation_reads_sexual_score_without_age_claim(
 
     result = await provider.classify(image)
 
-    assert result.sexual_score == pytest.approx(0.82)
+    assert abs(result.sexual_score - 0.82) < 1e-9
     assert result.flagged is True
     assert result.model == "omni-moderation-latest"
     assert captured_authorization == ["Bearer test-secret"]
