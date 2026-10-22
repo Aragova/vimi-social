@@ -227,18 +227,10 @@ def _size_label(size_bytes: int) -> str:
 
 
 def _adult_label(locale: UiLocale, classification: BaseAdultClassification) -> str:
-    labels = {
-        UiLocale.RU: {
-            BaseAdultClassification.UNKNOWN: "не определено",
-            BaseAdultClassification.NO_ADULT_SIGNAL_DETECTED: "базовые сигналы 18+ не обнаружены",
-            BaseAdultClassification.POSSIBLY_SENSITIVE: "возможно чувствительный контент",
-            BaseAdultClassification.ADULT_EXPLICIT: "18+ / explicit",
-        },
-        UiLocale.EN: {
-            BaseAdultClassification.UNKNOWN: "unknown",
-            BaseAdultClassification.NO_ADULT_SIGNAL_DETECTED: "no adult signal in base checks",
-            BaseAdultClassification.POSSIBLY_SENSITIVE: "possibly sensitive",
-            BaseAdultClassification.ADULT_EXPLICIT: "adult / explicit",
-        },
+    keys = {
+        BaseAdultClassification.UNKNOWN: MessageKey.MEDIA_ADULT_UNKNOWN,
+        BaseAdultClassification.NO_ADULT_SIGNAL_DETECTED: MessageKey.MEDIA_ADULT_NO_SIGNAL,
+        BaseAdultClassification.POSSIBLY_SENSITIVE: MessageKey.MEDIA_ADULT_POSSIBLY_SENSITIVE,
+        BaseAdultClassification.ADULT_EXPLICIT: MessageKey.MEDIA_ADULT_EXPLICIT,
     }
-    return labels[locale][classification]
+    return translate(keys[classification], locale)
