@@ -36,7 +36,9 @@ class EnvironmentCredentialResolver:
             raise DestinationCredentialError("unsupported destination credential reference")
         variable = credential_ref[len(prefix) :]
         if not variable.startswith(self._allowed_prefix):
-            raise DestinationCredentialError("destination credential reference is outside allowlist")
+            raise DestinationCredentialError(
+                "destination credential reference is outside allowlist"
+            )
         value = os.environ.get(variable)
         if value is None or not value.strip():
             raise DestinationCredentialError("destination credential is unavailable")
