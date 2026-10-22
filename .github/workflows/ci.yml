@@ -140,23 +140,37 @@ jobs:
 
           services = json.loads(Path("/tmp/staging-compose.json").read_text())["services"]
 
-          def env_keys(service: str) -> set[str]:
-              environment = services[service].get("environment", {})
-              return set(environment)
+          def services_with_value(secret_value: str) -> set[str]:
+              result = set()
+              for name, service in services.items():
+                  environment = service.get("environment", {})
+                  if secret_value in environment.values():
+                      result.add(name)
+              return result
 
           assertions = {
-              "VIMI_POSTGRES_BOOTSTRAP_PASSWORD": {"postgres", "db-provision", "temporal"},
-              "VIMI_MIGRATOR_DB_PASSWORD": {"db-provision"},
-              "VIMI_TELEGRAM_WEBHOOK_SECRET": {"bot"},
-              "VIMI_X_BEARER_TOKEN": {"worker"},
-              "VIMI_OPENAI_API_KEY": {"media-worker"},
-              "VIMI_DEST_X_PRIMARY_TOKEN": {"destination-worker"},
+              "bootstrap_ci": {"postgres", "db-provision", "temporal"},
+              "migrator_ci": {"db-provision", "migrate"},
+              "app_ci": {
+                  "db-provision",
+                  "bot",
+                  "worker",
+                  "media-worker",
+                  "destination-worker",
+                  "api",
+              },
+              "telegram_ci": {"bot", "worker"},
+              "webhook_ci": {"bot"},
+              "x_source_ci": {"worker"},
+              "openai_ci": {"media-worker"},
+              "x_destination_ci": {"destination-worker"},
           }
-          for secret, expected_services in assertions.items():
-              actual = {name for name in services if secret in env_keys(name)}
+          for secret_value, expected_services in assertions.items():
+              actual = services_with_value(secret_value)
               if actual != expected_services:
                   raise SystemExit(
-                      f"secret scope mismatch for {secret}: expected {expected_services}, got {actual}"
+                      "secret scope mismatch for test value "
+                      f"{secret_value}: expected {expected_services}, got {actual}"
                   )
           PY
       - name: Validate Caddy configuration
