@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from typing import Protocol, cast
 
 import httpx
@@ -31,6 +32,13 @@ class TelegramGatewayAmbiguous(TelegramGatewayError):
 class TelegramGateway(Protocol):
     async def send_message(self, chat_id: int, message: OutgoingMessage) -> None: ...
 
+    async def send_video(
+        self,
+        chat_id: int,
+        video_path: Path,
+        message: OutgoingMessage,
+    ) -> None: ...
+
     async def answer_callback_query(self, callback_query_id: str) -> None: ...
 
     async def aclose(self) -> None: ...
@@ -61,10 +69,46 @@ class TelegramBotApiClient:
                     [_button_payload(button) for button in row] for row in message.keyboard
                 ]
             }
-        await self._post("sendMessage", payload)
+        await self._post_json("sendMessage", payload)
+
+    async def send_video(
+        self,
+        chat_id: int,
+        video_path: Path,
+        message: OutgoingMessage,
+    ) -> None:
+        if not video_path.is_file():
+            raise TelegramGatewayRejected(400)
+        data: dict[str, str] = {
+            "chat_id": str(chat_id),
+            "caption": message.text,
+            "supports_streaming": "true",
+        }
+        if message.keyboard:
+            data["reply_markup"] = json.dumps(
+                {
+                    "inline_keyboard": [
+                        [_button_payload(button) for button in row] for row in message.keyboard
+                    ]
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        try:
+            with video_path.open("rb") as handle:
+                response = await self._client.post(
+                    f"{self._base_url}/sendVideo",
+                    data=data,
+                    files={"video": (video_path.name, handle, "video/mp4")},
+                )
+        except (httpx.HTTPError, OSError):
+            raise TelegramGatewayAmbiguous(
+                "Telegram Bot API video outcome is unknown"
+            ) from None
+        self._raise_for_response(response)
 
     async def answer_callback_query(self, callback_query_id: str) -> None:
-        await self._post(
+        await self._post_json(
             "answerCallbackQuery",
             {"callback_query_id": callback_query_id},
         )
@@ -72,14 +116,16 @@ class TelegramBotApiClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def _post(self, method: str, payload: dict[str, object]) -> None:
+    async def _post_json(self, method: str, payload: dict[str, object]) -> None:
         try:
             response = await self._client.post(f"{self._base_url}/{method}", json=payload)
         except httpx.HTTPError:
             raise TelegramGatewayAmbiguous(
                 "Telegram Bot API transport outcome is unknown"
             ) from None
+        self._raise_for_response(response)
 
+    def _raise_for_response(self, response: httpx.Response) -> None:
         status_code = response.status_code
         if status_code == 429:
             raise TelegramGatewayRateLimited(_retry_after_seconds(response)) from None
