@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from typing import cast
 from uuid import UUID
@@ -17,6 +18,17 @@ from vimi_social.domain.media import (
 )
 from vimi_social.domain.source import AdultClassification, CandidateContent
 from vimi_social.media.secure_ingest.models import FetchResult
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionClaim:
+    state: MediaPreparationState
+    attempt_token: UUID | None
+    owns_attempt: bool
+
+
+class MediaAttemptOwnershipLost(RuntimeError):
+    pass
 
 
 class MediaPreparationRepository:
@@ -85,6 +97,7 @@ class MediaPreparationRepository:
                        preparation.operation_key,
                        preparation.rights_basis,
                        preparation.state,
+                       preparation.acquisition_attempt_token,
                        preparation.failure_code,
                        task.operation_key AS source_task_operation_key,
                        task.execution_token AS source_task_execution_token
@@ -113,6 +126,7 @@ class MediaPreparationRepository:
                        preparation.operation_key,
                        preparation.rights_basis,
                        preparation.state,
+                       preparation.acquisition_attempt_token,
                        preparation.failure_code,
                        task.operation_key AS source_task_operation_key,
                        task.execution_token AS source_task_execution_token
@@ -221,26 +235,90 @@ class MediaPreparationRepository:
         ).mappings().one_or_none()
         return _candidate_from_row(cast(Mapping[str, object], row)) if row is not None else None
 
-    def claim_acquisition(self, session: Session, preparation_id: UUID) -> MediaPreparationState:
+    def claim_acquisition(
+        self,
+        session: Session,
+        preparation_id: UUID,
+        attempt_token: UUID,
+    ) -> AcquisitionClaim:
         state = session.execute(
             text(
                 """
                 UPDATE media_preparation
-                SET state = 'ACQUIRING', updated_at = clock_timestamp()
+                SET state = 'ACQUIRING',
+                    acquisition_attempt_token = :attempt_token,
+                    updated_at = clock_timestamp()
                 WHERE id = :preparation_id AND state = 'QUEUED'
                 RETURNING state
                 """
             ),
+            {
+                "preparation_id": str(preparation_id),
+                "attempt_token": str(attempt_token),
+            },
+        ).scalar_one_or_none()
+        if state is not None:
+            return AcquisitionClaim(
+                state=MediaPreparationState(str(state)),
+                attempt_token=attempt_token,
+                owns_attempt=True,
+            )
+
+        row = session.execute(
+            text(
+                """
+                SELECT state, acquisition_attempt_token
+                FROM media_preparation
+                WHERE id = :preparation_id
+                """
+            ),
             {"preparation_id": str(preparation_id)},
+        ).mappings().one_or_none()
+        if row is None:
+            raise RuntimeError("media preparation was not found in tenant context")
+        existing_state = MediaPreparationState(_str(row["state"]))
+        existing_token = _optional_uuid(row["acquisition_attempt_token"])
+        return AcquisitionClaim(
+            state=existing_state,
+            attempt_token=existing_token,
+            owns_attempt=(
+                existing_state is MediaPreparationState.ACQUIRING
+                and existing_token == attempt_token
+            ),
+        )
+
+    def fail_ambiguous_acquisition(
+        self,
+        session: Session,
+        *,
+        preparation_id: UUID,
+        observed_attempt_token: UUID,
+    ) -> MediaPreparationState:
+        state = session.execute(
+            text(
+                """
+                UPDATE media_preparation
+                SET state = 'FAILED_SAFE',
+                    acquisition_attempt_token = NULL,
+                    failure_code = 'ACQUISITION_ATTEMPT_AMBIGUOUS',
+                    updated_at = clock_timestamp()
+                WHERE id = :preparation_id
+                  AND state = 'ACQUIRING'
+                  AND acquisition_attempt_token = :observed_attempt_token
+                RETURNING state
+                """
+            ),
+            {
+                "preparation_id": str(preparation_id),
+                "observed_attempt_token": str(observed_attempt_token),
+            },
         ).scalar_one_or_none()
         if state is not None:
             return MediaPreparationState(str(state))
         existing = session.execute(
             text("SELECT state FROM media_preparation WHERE id = :preparation_id"),
             {"preparation_id": str(preparation_id)},
-        ).scalar_one_or_none()
-        if existing is None:
-            raise RuntimeError("media preparation was not found in tenant context")
+        ).scalar_one()
         return MediaPreparationState(str(existing))
 
     def persist_asset(
@@ -248,11 +326,36 @@ class MediaPreparationRepository:
         session: Session,
         *,
         preparation: MediaPreparation,
+        attempt_token: UUID,
         fetch: FetchResult,
         storage_path: str,
         probe: MediaProbeResult,
         classification: BaseContentClassification,
     ) -> MediaAsset:
+        ownership = session.execute(
+            text(
+                """
+                SELECT state, acquisition_attempt_token
+                FROM media_preparation
+                WHERE id = :preparation_id
+                FOR UPDATE
+                """
+            ),
+            {"preparation_id": str(preparation.id)},
+        ).mappings().one_or_none()
+        if ownership is None:
+            raise MediaAttemptOwnershipLost("media preparation disappeared before persistence")
+
+        state = MediaPreparationState(_str(ownership["state"]))
+        current_token = _optional_uuid(ownership["acquisition_attempt_token"])
+        if state is MediaPreparationState.READY:
+            existing = self.get_asset(session, preparation.id)
+            if existing is None:
+                raise RuntimeError("ready media preparation has no asset")
+            return existing
+        if state is not MediaPreparationState.ACQUIRING or current_token != attempt_token:
+            raise MediaAttemptOwnershipLost("media acquisition attempt no longer owns the task")
+
         session.execute(
             text(
                 """
@@ -296,16 +399,27 @@ class MediaPreparationRepository:
                 "classification_signals": list(classification.signals),
             },
         )
-        session.execute(
+        updated = session.execute(
             text(
                 """
                 UPDATE media_preparation
-                SET state = 'READY', failure_code = NULL, updated_at = clock_timestamp()
-                WHERE id = :preparation_id AND state IN ('QUEUED', 'ACQUIRING', 'READY')
+                SET state = 'READY',
+                    acquisition_attempt_token = NULL,
+                    failure_code = NULL,
+                    updated_at = clock_timestamp()
+                WHERE id = :preparation_id
+                  AND state = 'ACQUIRING'
+                  AND acquisition_attempt_token = :attempt_token
+                RETURNING id::text
                 """
             ),
-            {"preparation_id": str(preparation.id)},
-        )
+            {
+                "preparation_id": str(preparation.id),
+                "attempt_token": str(attempt_token),
+            },
+        ).scalar_one_or_none()
+        if updated is None:
+            raise MediaAttemptOwnershipLost("media acquisition ownership changed before commit")
         asset = self.get_asset(session, preparation.id)
         if asset is None:
             raise RuntimeError("media asset persistence failed")
@@ -328,20 +442,37 @@ class MediaPreparationRepository:
         *,
         preparation_id: UUID,
         failure_code: str,
+        attempt_token: UUID | None = None,
     ) -> MediaPreparationState:
+        if attempt_token is None:
+            ownership_clause = "state = 'QUEUED'"
+            params: dict[str, object] = {
+                "preparation_id": str(preparation_id),
+                "failure_code": failure_code,
+            }
+        else:
+            ownership_clause = (
+                "state = 'ACQUIRING' AND acquisition_attempt_token = :attempt_token"
+            )
+            params = {
+                "preparation_id": str(preparation_id),
+                "failure_code": failure_code,
+                "attempt_token": str(attempt_token),
+            }
         state = session.execute(
             text(
-                """
+                f"""
                 UPDATE media_preparation
                 SET state = 'FAILED_SAFE',
+                    acquisition_attempt_token = NULL,
                     failure_code = :failure_code,
                     updated_at = clock_timestamp()
                 WHERE id = :preparation_id
-                  AND state IN ('QUEUED', 'ACQUIRING')
+                  AND {ownership_clause}
                 RETURNING state
                 """
             ),
-            {"preparation_id": str(preparation_id), "failure_code": failure_code},
+            params,
         ).scalar_one_or_none()
         if state is not None:
             return MediaPreparationState(str(state))
@@ -360,6 +491,7 @@ def _preparation_from_row(row: Mapping[str, object]) -> MediaPreparation:
         operation_key=_str(row["operation_key"]),
         rights_basis=RightsBasis(_str(row["rights_basis"])),
         state=MediaPreparationState(_str(row["state"])),
+        acquisition_attempt_token=_optional_uuid(row["acquisition_attempt_token"]),
         failure_code=_optional_str(row["failure_code"]),
         source_task_operation_key=_str(row["source_task_operation_key"]),
         source_task_execution_token=_uuid(row["source_task_execution_token"]),
@@ -432,6 +564,12 @@ def _uuid(value: object) -> UUID:
     if isinstance(value, str):
         return UUID(value)
     raise RuntimeError("expected UUID")
+
+
+def _optional_uuid(value: object) -> UUID | None:
+    if value is None:
+        return None
+    return _uuid(value)
 
 
 def _str(value: object) -> str:
