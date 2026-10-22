@@ -145,8 +145,8 @@ class MediaPreparationRepository:
                     rights_confirmed_by_user_id = :actor_user_id,
                     rights_confirmed_at = COALESCE(rights_confirmed_at, clock_timestamp()),
                     state = CASE
-                        WHEN state = 'AWAITING_RIGHTS' THEN 'QUEUED'
-                        ELSE state
+                        WHEN preparation.state = 'AWAITING_RIGHTS' THEN 'QUEUED'
+                        ELSE preparation.state
                     END,
                     updated_at = clock_timestamp()
                 FROM source_task_candidate AS candidate,
@@ -455,13 +455,16 @@ def _optional_int(value: object) -> int | None:
 
 
 def _optional_float(value: object) -> float | None:
-    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    return None
 
 
 def _str_tuple(value: object) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):
         return ()
-    return tuple(item for item in cast(list[object] | tuple[object, ...], value) if isinstance(item, str))
+    items = cast(list[object] | tuple[object, ...], value)
+    return tuple(item for item in items if isinstance(item, str))
 
 
 def _int_mapping(value: object) -> dict[str, int]:
@@ -477,4 +480,5 @@ def _int_mapping(value: object) -> dict[str, int]:
 def _object_mapping(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         return {}
-    return {key: item for key, item in cast(dict[object, object], value).items() if isinstance(key, str)}
+    items = cast(dict[object, object], value)
+    return {key: item for key, item in items.items() if isinstance(key, str)}
