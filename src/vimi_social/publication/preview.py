@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Callable
 from uuid import UUID
 
@@ -31,7 +32,18 @@ class PublicationPreviewActivities:
         self._source_repository = source_repository or SourceTaskRepository()
 
     @activity.defn(name="prepare_publication_preview")
-    def prepare_publication_preview(
+    async def prepare_publication_preview(
+        self,
+        workflow_input: MediaPreparationWorkflowInput,
+        render_result: RenderResult,
+    ) -> PublicationPreviewResult:
+        return await asyncio.to_thread(
+            self._prepare_publication_preview_sync,
+            workflow_input,
+            render_result,
+        )
+
+    def _prepare_publication_preview_sync(
         self,
         workflow_input: MediaPreparationWorkflowInput,
         render_result: RenderResult,
