@@ -162,6 +162,33 @@ class SecureMediaFetcher:
                 await asyncio.to_thread(_unlink_if_exists, temp_path)
 
 
+async def promote_validated_fetch(
+    fetched: FetchResult,
+    destination_dir: Path,
+) -> FetchResult:
+    """Move a validated staged artifact into durable content-addressed storage."""
+    await asyncio.to_thread(destination_dir.mkdir, parents=True, exist_ok=True)
+    suffix = fetched.path.suffix
+    if not suffix:
+        raise ContentValidationError("staged media artifact has no file extension")
+    final_path = destination_dir / f"{fetched.sha256}{suffix}"
+    await _promote_cancellation_safe(
+        fetched.path,
+        final_path,
+        expected_digest=fetched.sha256,
+        expected_size=fetched.size_bytes,
+    )
+    return FetchResult(
+        path=final_path,
+        sha256=fetched.sha256,
+        size_bytes=fetched.size_bytes,
+        media_format=fetched.media_format,
+        content_type=fetched.content_type,
+        final_url=fetched.final_url,
+        redirect_count=fetched.redirect_count,
+    )
+
+
 async def _write_all_cancellation_safe(file_descriptor: int, data: bytes) -> None:
     task = asyncio.create_task(asyncio.to_thread(_write_all, file_descriptor, data))
     try:
