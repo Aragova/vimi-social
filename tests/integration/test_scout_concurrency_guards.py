@@ -31,7 +31,8 @@ class CountingConnector:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def search(self, _: ScoutSearchRequest) -> tuple[CandidateContent, ...]:
+    async def search(self, request: ScoutSearchRequest) -> tuple[CandidateContent, ...]:
+        del request
         self.calls += 1
         return ()
 
