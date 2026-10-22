@@ -138,7 +138,7 @@ class VisualSceneClassifier:
             midpoint_ms = scene.start_ms + max(1, (scene.end_ms - scene.start_ms) // 2)
             await self._extract_frame(media_path, midpoint_ms, frame_path, scratch_dir)
             result = await self._provider.classify(frame_path)
-            classification = _classification_for_score(
+            classification = classification_for_visual_score(
                 result.sexual_score,
                 explicit_threshold=self._explicit_threshold,
                 sensitive_threshold=self._sensitive_threshold,
@@ -195,7 +195,7 @@ class VisualSceneClassifier:
         await self._provider.aclose()
 
 
-def _classification_for_score(
+def classification_for_visual_score(
     score: float,
     *,
     explicit_threshold: float,
