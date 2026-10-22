@@ -129,6 +129,19 @@ jobs:
           caddy validate --config /etc/caddy/Caddyfile
       - name: Build Python runtime image
         run: docker build -f infra/docker/Dockerfile -t vimi-social:ci .
+      - name: Smoke compose database provisioning and migrations
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          up --abort-on-container-exit --exit-code-from migrate migrate
+      - name: Clean compose smoke resources
+        if: always()
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          down -v --remove-orphans
 
   web:
     runs-on: ubuntu-latest
