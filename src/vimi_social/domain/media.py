@@ -96,6 +96,7 @@ class MediaPreparationWorkflowInput:
     operation_key: str
     source_task_operation_key: str
     source_task_execution_token: str
+    media_task_queue: str = "vimi-social-media"
 
 
 @dataclass(frozen=True, slots=True)
