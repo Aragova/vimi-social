@@ -1,6 +1,8 @@
 from typing import Protocol
 from uuid import UUID
 
+from vimi_social.domain.media import MediaPreparationWorkflowInput
+from vimi_social.media.service import MediaPreparationService
 from vimi_social.source.service import SourceTaskIntentTooLong, SourceTaskService
 from vimi_social.telegram.identity import (
     TelegramIdentityResolver,
@@ -11,9 +13,12 @@ from vimi_social.telegram.menus import (
     build_ai_search_intent_too_long,
     build_ai_search_prompt,
     build_ai_search_started,
-    build_candidate_selected,
     build_feed_prompt,
     build_main_menu,
+    build_media_preparation_quota_exceeded,
+    build_media_preparation_started,
+    build_media_rights_declined,
+    build_media_rights_prompt,
     build_scout_quota_exceeded,
     build_source_menu,
     build_upload_prompt,
@@ -25,6 +30,10 @@ from vimi_social.usage.repository import CapacityExceeded
 
 class ScoutWorkflowStarter(Protocol):
     async def start(self, operation_key: str, execution_token: str) -> None: ...
+
+
+class MediaWorkflowStarter(Protocol):
+    async def start(self, workflow_input: MediaPreparationWorkflowInput) -> None: ...
 
 
 class TelegramUpdateBusy(RuntimeError):
@@ -45,12 +54,16 @@ class TelegramBotService:
         messenger: TelegramMessenger,
         source_tasks: SourceTaskService,
         scout_starter: ScoutWorkflowStarter,
+        media_preparations: MediaPreparationService,
+        media_starter: MediaWorkflowStarter,
     ) -> None:
         self._identity_resolver = identity_resolver
         self._update_guard = update_guard
         self._messenger = messenger
         self._source_tasks = source_tasks
         self._scout_starter = scout_starter
+        self._media_preparations = media_preparations
+        self._media_starter = media_starter
 
     async def handle_update(self, update: TelegramUpdate) -> None:
         actor = _extract_actor(update)
@@ -164,12 +177,45 @@ class TelegramBotService:
             action = "source-feed-prompt"
             outgoing = build_feed_prompt(principal.locale)
         elif callback.data.startswith("candidate:select:"):
-            candidate_id = _parse_candidate_id(callback.data)
+            candidate_id = _parse_uuid_suffix(callback.data, "candidate:select:")
             if candidate_id is None:
                 return
-            selected = self._source_tasks.select_candidate(principal, candidate_id)
-            action = f"candidate-selected:{candidate_id}"
-            outgoing = build_candidate_selected(principal.locale, selected=selected)
+            preparation = self._media_preparations.select_candidate(principal, candidate_id)
+            if preparation is None:
+                action = f"candidate-not-available:{candidate_id}"
+                from vimi_social.telegram.menus import build_candidate_selected
+
+                outgoing = build_candidate_selected(principal.locale, selected=False)
+            else:
+                action = f"media-rights:{preparation.id}"
+                outgoing = build_media_rights_prompt(principal.locale, preparation.id)
+        elif callback.data.startswith("media:rights:yes:"):
+            preparation_id = _parse_uuid_suffix(callback.data, "media:rights:yes:")
+            if preparation_id is None:
+                return
+            try:
+                workflow_input = self._media_preparations.confirm_rights(
+                    principal,
+                    preparation_id,
+                )
+            except CapacityExceeded:
+                action = f"media-quota:{preparation_id}"
+                outgoing = build_media_preparation_quota_exceeded(principal.locale)
+            else:
+                if workflow_input is None:
+                    return
+                await self._media_starter.start(workflow_input)
+                action = f"media-started:{preparation_id}"
+                outgoing = build_media_preparation_started(principal.locale)
+        elif callback.data.startswith("media:rights:no:"):
+            preparation_id = _parse_uuid_suffix(callback.data, "media:rights:no:")
+            if preparation_id is None:
+                return
+            declined = self._media_preparations.decline_rights(principal, preparation_id)
+            if not declined:
+                return
+            action = f"media-rights-declined:{preparation_id}"
+            outgoing = build_media_rights_declined(principal.locale)
         else:
             return
 
@@ -189,8 +235,10 @@ def _extract_actor(update: TelegramUpdate) -> TelegramUser | None:
     return None
 
 
-def _parse_candidate_id(callback_data: str) -> UUID | None:
-    _, _, raw_id = callback_data.partition("candidate:select:")
+def _parse_uuid_suffix(callback_data: str, prefix: str) -> UUID | None:
+    if not callback_data.startswith(prefix):
+        return None
+    raw_id = callback_data[len(prefix) :]
     if not raw_id:
         return None
     try:

@@ -1,3 +1,4 @@
+# ruff: noqa: RUF001
 from enum import StrEnum
 
 from vimi_social.domain.international import UiLocale
@@ -30,6 +31,19 @@ class MessageKey(StrEnum):
     SEARCH_MORE = "search_more"
     CANDIDATE_SELECTED = "candidate_selected"
     CANDIDATE_NOT_AVAILABLE = "candidate_not_available"
+    MEDIA_RIGHTS_PROMPT = "media_rights_prompt"
+    MEDIA_RIGHTS_CONFIRM = "media_rights_confirm"
+    MEDIA_RIGHTS_DECLINE = "media_rights_decline"
+    MEDIA_RIGHTS_DECLINED = "media_rights_declined"
+    MEDIA_PREPARATION_STARTED = "media_preparation_started"
+    MEDIA_PREPARATION_QUOTA_EXCEEDED = "media_preparation_quota_exceeded"
+    MEDIA_PREPARATION_READY = "media_preparation_ready"
+    MEDIA_PREPARATION_FAILED = "media_preparation_failed"
+    MEDIA_PREPARATION_BLOCKED = "media_preparation_blocked"
+    MEDIA_ADULT_UNKNOWN = "media_adult_unknown"
+    MEDIA_ADULT_NO_SIGNAL = "media_adult_no_signal"
+    MEDIA_ADULT_POSSIBLY_SENSITIVE = "media_adult_possibly_sensitive"
+    MEDIA_ADULT_EXPLICIT = "media_adult_explicit"
     UPLOAD_PROMPT = "upload_prompt"
     FEED_PROMPT = "feed_prompt"
 
@@ -60,11 +74,9 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
             "🔎 Задача сохранена. Scout начал поиск по подключённым источникам."
         ),
         MessageKey.AI_SEARCH_INTENT_TOO_LONG: (
-            "⚠️ Запрос слишком длинный. Сократите его до 4000 символов и отправьте снова."  # noqa: RUF001
+            "⚠️ Запрос слишком длинный. Сократите его до 4000 символов и отправьте снова."
         ),
-        MessageKey.SCOUT_RESULTS: (
-            "🔎 Найдено: {discovered}\nПосле нормализации: {candidates}"  # noqa: RUF001
-        ),
+        MessageKey.SCOUT_RESULTS: "🔎 Найдено: {discovered}\nПосле нормализации: {candidates}",
         MessageKey.SCOUT_EMPTY: (
             "🔎 По этому запросу подходящих видео пока не найдено. "
             "Можно уточнить запрос и поискать ещё."
@@ -83,12 +95,39 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         MessageKey.VIEW: "👀 Посмотреть",
         MessageKey.SELECT: "✅ Выбрать",
         MessageKey.SEARCH_MORE: "🔄 Искать ещё",
-        MessageKey.CANDIDATE_SELECTED: (
-            "✅ Кандидат выбран. Следующий этап — безопасное получение и MediaProbe."
-        ),
+        MessageKey.CANDIDATE_SELECTED: "✅ Кандидат выбран.",
         MessageKey.CANDIDATE_NOT_AVAILABLE: (
             "⚠️ Этот кандидат недоступен в текущем workspace или уже изменён."
         ),
+        MessageKey.MEDIA_RIGHTS_PROMPT: (
+            "🛡 Перед получением файла нужно подтвердить права.\n\n"
+            "Подтвердите только если вы владеете контентом, получили разрешение/лицензию "
+            "или иным образом имеете право использовать этот материал. Публичность поста "
+            "сама по себе такого права не даёт."
+        ),
+        MessageKey.MEDIA_RIGHTS_CONFIRM: "✅ Подтверждаю права",
+        MessageKey.MEDIA_RIGHTS_DECLINE: "🚫 Не подтверждаю",
+        MessageKey.MEDIA_RIGHTS_DECLINED: (
+            "🚫 Получение файла отменено. Без подтверждённых прав ViMi не скачивает материал."
+        ),
+        MessageKey.MEDIA_PREPARATION_STARTED: (
+            "⚙️ Права подтверждены. ViMi безопасно получает файл, запускает MediaProbe "
+            "и базовую классификацию."
+        ),
+        MessageKey.MEDIA_PREPARATION_QUOTA_EXCEEDED: (
+            "⚠️ Лимит обработки видео для этого workspace исчерпан или ещё не настроен."
+        ),
+        MessageKey.MEDIA_PREPARATION_READY: "✅ Материал подготовлен",
+        MessageKey.MEDIA_PREPARATION_FAILED: (
+            "⚠️ ViMi остановила получение или анализ материала безопасным образом."
+        ),
+        MessageKey.MEDIA_PREPARATION_BLOCKED: (
+            "🛡 Материал заблокирован на этапе Curator/rights gate и не был получен."
+        ),
+        MessageKey.MEDIA_ADULT_UNKNOWN: "не определено",
+        MessageKey.MEDIA_ADULT_NO_SIGNAL: "базовые сигналы 18+ не обнаружены",
+        MessageKey.MEDIA_ADULT_POSSIBLY_SENSITIVE: "возможно чувствительный контент",
+        MessageKey.MEDIA_ADULT_EXPLICIT: "18+ / explicit",
         MessageKey.UPLOAD_PROMPT: (
             "📤 Ручной источник выбран.\n\n"
             "Отправьте или перешлите материал в этот чат."
@@ -144,12 +183,39 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         MessageKey.VIEW: "👀 View",
         MessageKey.SELECT: "✅ Select",
         MessageKey.SEARCH_MORE: "🔄 Search more",
-        MessageKey.CANDIDATE_SELECTED: (
-            "✅ Candidate selected. The next slice will acquire it safely and run MediaProbe."
-        ),
+        MessageKey.CANDIDATE_SELECTED: "✅ Candidate selected.",
         MessageKey.CANDIDATE_NOT_AVAILABLE: (
             "⚠️ This candidate is not available in the current workspace or has changed."
         ),
+        MessageKey.MEDIA_RIGHTS_PROMPT: (
+            "🛡 Rights confirmation is required before ViMi acquires the file.\n\n"
+            "Confirm only if you own the content, have permission/a license, or otherwise have "
+            "the right to use it. A public post alone does not establish reuse rights."
+        ),
+        MessageKey.MEDIA_RIGHTS_CONFIRM: "✅ I confirm the rights",
+        MessageKey.MEDIA_RIGHTS_DECLINE: "🚫 I do not confirm",
+        MessageKey.MEDIA_RIGHTS_DECLINED: (
+            "🚫 File acquisition cancelled. ViMi does not download the material without "
+            "confirmed rights."
+        ),
+        MessageKey.MEDIA_PREPARATION_STARTED: (
+            "⚙️ Rights confirmed. ViMi is securely acquiring the file, running MediaProbe, "
+            "and performing the base classification."
+        ),
+        MessageKey.MEDIA_PREPARATION_QUOTA_EXCEEDED: (
+            "⚠️ The video-processing limit for this workspace is exhausted or not configured."
+        ),
+        MessageKey.MEDIA_PREPARATION_READY: "✅ Media prepared",
+        MessageKey.MEDIA_PREPARATION_FAILED: (
+            "⚠️ ViMi stopped media acquisition or analysis safely."
+        ),
+        MessageKey.MEDIA_PREPARATION_BLOCKED: (
+            "🛡 The media was blocked by the Curator/rights gate and was not acquired."
+        ),
+        MessageKey.MEDIA_ADULT_UNKNOWN: "unknown",
+        MessageKey.MEDIA_ADULT_NO_SIGNAL: "no adult signal in base checks",
+        MessageKey.MEDIA_ADULT_POSSIBLY_SENSITIVE: "possibly sensitive",
+        MessageKey.MEDIA_ADULT_EXPLICIT: "adult / explicit",
         MessageKey.UPLOAD_PROMPT: (
             "📤 Manual source selected.\n\n"
             "Send or forward the material to this chat."

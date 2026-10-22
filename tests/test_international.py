@@ -10,6 +10,7 @@ from vimi_social.domain.international import (
     UiLocale,
     ui_locale_from_telegram,
 )
+from vimi_social.i18n.catalog import MessageKey, translate
 
 
 def test_telegram_language_is_only_an_initial_ru_en_hint() -> None:
@@ -32,3 +33,9 @@ def test_timezone_country_and_currency_are_structured_types() -> None:
         CountryCode("USA")
     with pytest.raises(ValueError):
         CurrencyCode("US")
+
+
+def test_every_customer_message_key_is_localized_for_supported_locales() -> None:
+    for locale in UiLocale:
+        for key in MessageKey:
+            assert translate(key, locale)
