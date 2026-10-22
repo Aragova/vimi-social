@@ -137,18 +137,27 @@ jobs:
           --env-file .env.staging
           -f infra/docker/docker-compose.staging.yml
           up -d --wait postgres
-      - name: Smoke compose database provisioning
+      - name: Smoke canonical database provisioning lifecycle
         run: >-
           docker compose
           --env-file .env.staging
           -f infra/docker/docker-compose.staging.yml
-          run --rm --no-deps db-provision
-      - name: Smoke compose migrations
+          up --no-deps --force-recreate --abort-on-container-exit
+          --exit-code-from db-provision db-provision
+      - name: Smoke canonical migration lifecycle
         run: >-
           docker compose
           --env-file .env.staging
           -f infra/docker/docker-compose.staging.yml
-          run --rm --no-deps migrate
+          up --no-deps --force-recreate --abort-on-container-exit
+          --exit-code-from migrate migrate
+      - name: Smoke canonical media volume initialization lifecycle
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          up --no-deps --force-recreate --abort-on-container-exit
+          --exit-code-from media-init media-init
       - name: Clean compose smoke resources
         if: always()
         run: >-
