@@ -95,6 +95,20 @@ class VariantRenderActivities:
                     raise RuntimeError("ambiguous variant artifact disappeared")
                 return _result_from_artifact(current)
 
+            try:
+                media_path = self._resolve_media_path(render_input.asset_storage_path)
+            except OSError:
+                self._repository.fail_safe(
+                    session,
+                    artifact_id=artifact.id,
+                    attempt_token=attempt_token,
+                    failure_code="VARIANT_SOURCE_MEDIA_UNAVAILABLE",
+                )
+                current = self._repository.get_by_id(session, artifact.id)
+                if current is None:
+                    raise RuntimeError("source-failed variant artifact disappeared") from None
+                return _result_from_artifact(current)
+
             if render_input.strategy is RenderStrategy.PASSTHROUGH:
                 ready = self._repository.persist_passthrough(
                     session,
@@ -139,7 +153,6 @@ class VariantRenderActivities:
             / str(attempt_token)
         )
         try:
-            media_path = self._resolve_media_path(render_input.asset_storage_path)
             rendered = await self._renderer.render(
                 media_path,
                 render_input,
