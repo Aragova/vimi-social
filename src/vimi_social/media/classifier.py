@@ -16,7 +16,9 @@ class BasicContentClassifier:
 
     def classify(self, candidate: CandidateContent) -> BaseContentClassification:
         text = " ".join(
-            value for value in (candidate.title, candidate.caption, " ".join(candidate.tags)) if value
+            value
+            for value in (candidate.title, candidate.caption, " ".join(candidate.tags))
+            if value
         )
         signals: list[str] = []
 
