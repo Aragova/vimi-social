@@ -1,0 +1,12 @@
+services:
+  bot:
+    ports:
+      - "127.0.0.1:${VIMI_STAGING_BOT_PORT:-18000}:8000"
+
+  # In co-host mode the VM's existing nginx owns public 80/443 and proxies
+  # only the staging hostname to the loopback-bound bot port above. Keeping
+  # Caddy behind a profile prevents an accidental `docker compose up` from
+  # contending with the host ingress.
+  caddy:
+    profiles:
+      - standalone-ingress
