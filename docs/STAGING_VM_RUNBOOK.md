@@ -13,9 +13,10 @@ It is intentionally a staging topology, not the final horizontally scaled produc
 - Internal API process.
 - PostgreSQL 17.
 - Temporal 1.27.2.
+- One-shot database role provisioning and Alembic migration steps.
 - Persistent PostgreSQL, media, and Caddy volumes.
 
-Only ports 80/443 are published by the staging compose file. PostgreSQL and Temporal remain on the internal Docker network.
+Only ports 80/443 are published by the staging compose file. PostgreSQL and Temporal remain on the internal Docker network. Processes that must call Telegram/X/OpenAI also join a separate outbound-only Docker bridge; they still publish no host ports.
 
 ## VM prerequisites
 
@@ -73,36 +74,30 @@ Never commit `.env.staging`.
 The staging hostname must resolve to this VM before Caddy can obtain a public TLS certificate.
 Allow inbound TCP 80 and TCP/UDP 443. Do not expose 5432 or 7233 publicly.
 
-## 4. Validate configuration before startup
+## 4. Deploy
+
+Use the deterministic deploy helper rather than manually relying on the lifecycle of previously completed one-shot Compose services:
 
 ```bash
-docker compose \
-  --env-file .env.staging \
-  -f infra/docker/docker-compose.staging.yml \
-  config --quiet
+sh scripts/deploy_staging.sh
 ```
 
-Build the Python runtime image:
+The helper performs, in order:
 
-```bash
-docker compose \
-  --env-file .env.staging \
-  -f infra/docker/docker-compose.staging.yml \
-  build
-```
+1. validates `.env.staging` and rejects empty/`CHANGE_ME` values;
+2. validates the Compose model;
+3. builds the Python runtime image;
+4. starts and waits for PostgreSQL;
+5. re-runs password-backed DB role provisioning;
+6. re-runs Alembic migrations with the migrator role;
+7. fixes persistent media-volume ownership for the non-root runtime UID;
+8. starts Temporal;
+9. starts bot/core/media/destination/API/Caddy services;
+10. prints final Compose status.
 
-## 5. Start the staging stack
+This sequence is used for both the first deployment and later updates, so database role provisioning and migrations are explicit every time.
 
-```bash
-docker compose \
-  --env-file .env.staging \
-  -f infra/docker/docker-compose.staging.yml \
-  up -d
-```
-
-The one-shot `migrate` service must complete successfully before the application services start.
-
-Check status:
+## 5. Check deployment state
 
 ```bash
 docker compose \
@@ -111,13 +106,13 @@ docker compose \
   ps
 ```
 
-Check migration output:
+Check database provisioning and migration output when troubleshooting:
 
 ```bash
 docker compose \
   --env-file .env.staging \
   -f infra/docker/docker-compose.staging.yml \
-  logs migrate
+  logs db-provision migrate
 ```
 
 Follow application logs:
@@ -240,14 +235,10 @@ docker compose --env-file .env.staging -f infra/docker/docker-compose.staging.ym
 ```bash
 git checkout main
 git pull --ff-only
-
-docker compose \
-  --env-file .env.staging \
-  -f infra/docker/docker-compose.staging.yml \
-  up -d --build
+sh scripts/deploy_staging.sh
 ```
 
-Always inspect migration logs after an update.
+Always inspect `db-provision` and `migrate` output after an update if deployment does not become healthy.
 
 ## 13. Backups before meaningful staging data
 
