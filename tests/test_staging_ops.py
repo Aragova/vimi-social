@@ -1,6 +1,6 @@
 import httpx
 import pytest
-from scripts.configure_telegram_webhook import telegram_request
+from vimi_social.ops.telegram_webhook import telegram_request
 
 
 def test_telegram_http_status_failure_does_not_expose_bot_token(
