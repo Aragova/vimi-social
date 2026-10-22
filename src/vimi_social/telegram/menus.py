@@ -135,6 +135,8 @@ def build_media_preparation_result(
     analysis: MediaAnalysisResult | None = None,
     render: RenderResult | None = None,
     preview: PublicationPreviewResult | None = None,
+    *,
+    video_preview_available: bool = True,
 ) -> OutgoingMessage:
     if result.state is MediaPreparationState.BLOCKED:
         return OutgoingMessage(text=translate(MessageKey.MEDIA_PREPARATION_BLOCKED, locale))
@@ -185,9 +187,7 @@ def build_media_preparation_result(
 
     keyboard: tuple[tuple[InlineButton, ...], ...] = ()
     if render is not None and render.state is VariantArtifactState.FAILED_SAFE:
-        lines.append(
-            translate_publication(PublicationMessageKey.RENDER_FAILED, locale)
-        )
+        lines.append(translate_publication(PublicationMessageKey.RENDER_FAILED, locale))
     if preview is not None:
         preview_line = _publication_preview_line(locale, preview)
         if preview_line is not None:
@@ -196,6 +196,10 @@ def build_media_preparation_result(
             preview.state is PublicationPreviewState.AWAITING_APPROVAL
             and preview.publication_id is not None
         ):
+            if not video_preview_available:
+                lines.append(
+                    translate_publication(PublicationMessageKey.PREVIEW_TOO_LARGE, locale)
+                )
             keyboard = (
                 (
                     InlineButton(
@@ -276,9 +280,7 @@ def build_scout_results(
                 _engagement_line(candidate),
             )
         )
-        buttons = [
-            InlineButton(translate(MessageKey.VIEW, locale), url=candidate.source_url)
-        ]
+        buttons = [InlineButton(translate(MessageKey.VIEW, locale), url=candidate.source_url)]
         if candidate.id is not None:
             buttons.append(
                 InlineButton(
