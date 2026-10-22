@@ -72,6 +72,59 @@ async def test_x_recent_search_normalizes_video_candidate_without_assuming_right
 
 
 @pytest.mark.asyncio
+async def test_x_recent_search_selects_video_when_photo_is_first_attachment() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "mixed-attachments",
+                        "text": "Video post with a leading photo attachment",
+                        "attachments": {"media_keys": ["3_photo", "7_video"]},
+                    }
+                ],
+                "includes": {
+                    "media": [
+                        {
+                            "media_key": "3_photo",
+                            "type": "photo",
+                            "width": 1200,
+                            "height": 800,
+                        },
+                        {
+                            "media_key": "7_video",
+                            "type": "video",
+                            "duration_ms": 23000,
+                            "width": 1080,
+                            "height": 1920,
+                            "preview_image_url": "https://pbs.twimg.com/video-preview.jpg",
+                        },
+                    ]
+                },
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = XSourceConnector("test-token", client=http_client)
+
+    candidates = await connector.search(
+        ScoutSearchRequest(
+            intent="fitness",
+            requested_sources=("x",),
+            preferred_languages=(),
+        )
+    )
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.media_type == "video"
+    assert candidate.duration_ms == 23000
+    assert candidate.connector_metadata["media_key"] == "7_video"
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_x_rate_limit_is_typed_and_preserves_retry_hint() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(429, headers={"Retry-After": "23"})
