@@ -101,10 +101,10 @@ class VariantRenderRepository:
             destination=str(mapped["destination"]),
             decision=PolicyDecision(str(mapped["decision"])),
             strategy=RenderStrategy(str(strategy_raw)),
-            expected_duration_ms=int(duration_raw),
+            expected_duration_ms=int(str(duration_raw)),
             asset_storage_path=str(mapped["storage_path"]),
             asset_sha256=str(mapped["sha256"]),
-            asset_size_bytes=int(mapped["size_bytes"]),
+            asset_size_bytes=int(str(mapped["size_bytes"])),
             has_audio=bool(mapped["has_audio"]),
             segments=tuple((int(item.start_ms), int(item.end_ms)) for item in segments_rows),
         )
