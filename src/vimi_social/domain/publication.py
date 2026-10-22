@@ -32,6 +32,30 @@ class DestinationAccountState(StrEnum):
     REAUTH_REQUIRED = "REAUTH_REQUIRED"
 
 
+class PublicationPreviewState(StrEnum):
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
+    BLOCKED = "BLOCKED"
+    NO_DESTINATION = "NO_DESTINATION"
+    ACCOUNT_SELECTION_REQUIRED = "ACCOUNT_SELECTION_REQUIRED"
+    RENDER_FAILED = "RENDER_FAILED"
+
+
+class ProviderMutationKind(StrEnum):
+    CONFIRMED = "CONFIRMED"
+    PROVIDER_ACCEPTED = "PROVIDER_ACCEPTED"
+    FAILED_SAFE = "FAILED_SAFE"
+    FAILED_PERMANENT = "FAILED_PERMANENT"
+    UNKNOWN = "UNKNOWN"
+
+
+class ReconciliationKind(StrEnum):
+    CONFIRMED = "CONFIRMED"
+    PENDING = "PENDING"
+    PROVED_ABSENT = "PROVED_ABSENT"
+    INCONCLUSIVE = "INCONCLUSIVE"
+
+
 @dataclass(frozen=True, slots=True)
 class PublicationCommand:
     tenant_id: TenantId
@@ -99,6 +123,30 @@ class RenderResult:
     sha256: str | None = None
     size_bytes: int | None = None
     duration_ms: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationPreviewResult:
+    state: PublicationPreviewState
+    artifact_id: str | None = None
+    publication_id: str | None = None
+    destination: str | None = None
+    destination_name: str | None = None
+    reason_code: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderMutationResult:
+    kind: ProviderMutationKind
+    remote_media_id: str | None = None
+    remote_post_id: str | None = None
+    failure_code: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReconciliationResult:
+    kind: ReconciliationKind
+    remote_post_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
