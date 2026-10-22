@@ -30,7 +30,8 @@ run_one_shot() {
 }
 
 compose config --quiet
-compose build
+# All Python services share the same image tag, so one build is sufficient.
+compose build bot
 
 # Database authority first. PostgreSQL stays private on the internal network.
 compose up -d --wait postgres
