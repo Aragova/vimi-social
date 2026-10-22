@@ -1,0 +1,231 @@
+name: vimi-staging
+
+x-python-service: &python-service
+  build:
+    context: ../..
+    dockerfile: infra/docker/Dockerfile
+  env_file:
+    - ../../.env.staging
+  restart: unless-stopped
+  networks:
+    - backend
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp:size=256m,mode=1777
+
+x-runtime-environment: &runtime-environment
+  VIMI_ENV: staging
+  VIMI_DATABASE_DSN: postgresql+psycopg://vimi_app@postgres:5432/vimi
+  PGPASSWORD: ${VIMI_APP_DB_PASSWORD:?VIMI_APP_DB_PASSWORD is required}
+  VIMI_TEMPORAL_TARGET: temporal:7233
+  VIMI_TEMPORAL_NAMESPACE: default
+  VIMI_TEMPORAL_TASK_QUEUE: vimi-social
+  VIMI_MEDIA_TASK_QUEUE: vimi-social-media
+  VIMI_DESTINATION_TASK_QUEUE: vimi-social-destination
+  VIMI_MEDIA_ROOT: /var/lib/vimi/media
+
+services:
+  postgres:
+    image: postgres:17
+    env_file:
+      - ../../.env.staging
+    environment:
+      POSTGRES_DB: vimi
+      POSTGRES_USER: vimi_bootstrap
+      POSTGRES_PASSWORD: ${VIMI_POSTGRES_BOOTSTRAP_PASSWORD:?VIMI_POSTGRES_BOOTSTRAP_PASSWORD is required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../postgres/bootstrap_staging.sh:/docker-entrypoint-initdb.d/001-bootstrap-staging.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vimi_bootstrap -d vimi"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+    networks:
+      - backend
+
+  temporal:
+    image: temporalio/auto-setup:1.27.2
+    environment:
+      DB: postgresql
+      DB_PORT: 5432
+      POSTGRES_USER: vimi_bootstrap
+      POSTGRES_PWD: ${VIMI_POSTGRES_BOOTSTRAP_PASSWORD:?VIMI_POSTGRES_BOOTSTRAP_PASSWORD is required}
+      POSTGRES_SEEDS: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "7233"
+    restart: unless-stopped
+    networks:
+      - backend
+
+  migrate:
+    <<: *python-service
+    environment:
+      VIMI_ENV: staging
+      VIMI_MIGRATION_DATABASE_DSN: postgresql+psycopg://vimi_migrator@postgres:5432/vimi
+      PGPASSWORD: ${VIMI_MIGRATOR_DB_PASSWORD:?VIMI_MIGRATOR_DB_PASSWORD is required}
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  media-init:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    user: "0:0"
+    command:
+      - sh
+      - -c
+      - mkdir -p /var/lib/vimi/media && chown -R 10001:10001 /var/lib/vimi/media && chmod 0770 /var/lib/vimi/media
+    volumes:
+      - media-data:/var/lib/vimi/media
+    restart: "no"
+    networks:
+      - backend
+
+  bot:
+    <<: *python-service
+    environment:
+      <<: *runtime-environment
+      VIMI_PUBLIC_HOST: ${VIMI_PUBLIC_HOST:?VIMI_PUBLIC_HOST is required}
+    command:
+      - python
+      - -m
+      - uvicorn
+      - apps.bot.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips=*
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_started
+
+  worker:
+    <<: *python-service
+    environment:
+      <<: *runtime-environment
+    command: ["python", "apps/worker/main.py"]
+    volumes:
+      - media-data:/var/lib/vimi/media:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      media-init:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_started
+
+  media-worker:
+    <<: *python-service
+    environment:
+      <<: *runtime-environment
+    command: ["python", "apps/media-worker/main.py"]
+    volumes:
+      - media-data:/var/lib/vimi/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      media-init:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_started
+
+  destination-worker:
+    <<: *python-service
+    environment:
+      <<: *runtime-environment
+    command: ["python", "apps/destination-worker/main.py"]
+    volumes:
+      - media-data:/var/lib/vimi/media:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      media-init:
+        condition: service_completed_successfully
+      temporal:
+        condition: service_started
+
+  api:
+    <<: *python-service
+    environment:
+      <<: *runtime-environment
+    command:
+      - python
+      - -m
+      - uvicorn
+      - apps.api.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+    expose:
+      - "8001"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3).read()"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  caddy:
+    image: caddy:2.10-alpine
+    env_file:
+      - ../../.env.staging
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      bot:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - backend
+      - edge
+
+networks:
+  backend:
+    internal: true
+  edge:
+
+volumes:
+  postgres-data:
+  media-data:
+  caddy-data:
+  caddy-config:
