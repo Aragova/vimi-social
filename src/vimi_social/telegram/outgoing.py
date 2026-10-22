@@ -14,7 +14,7 @@ from vimi_social.telegram.client import (
     TelegramGatewayRateLimited,
     TelegramGatewayRejected,
 )
-from vimi_social.telegram.menus import OutgoingMessage
+from vimi_social.telegram.menus import InlineButton, OutgoingMessage
 
 
 class TelegramOutgoingState(StrEnum):
@@ -186,11 +186,7 @@ def _message_fingerprint(chat_id: int, message: OutgoingMessage) -> str:
         "chat_id": chat_id,
         "text": message.text,
         "keyboard": [
-            [
-                {"text": button.text, "callback_data": button.callback_data}
-                for button in row
-            ]
-            for row in message.keyboard
+            [_button_fingerprint(button) for button in row] for row in message.keyboard
         ],
     }
     canonical = json.dumps(
@@ -200,3 +196,11 @@ def _message_fingerprint(chat_id: int, message: OutgoingMessage) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
+
+
+def _button_fingerprint(button: InlineButton) -> dict[str, str]:
+    if button.callback_data is not None:
+        return {"text": button.text, "callback_data": button.callback_data}
+    if button.url is not None:
+        return {"text": button.text, "url": button.url}
+    raise ValueError("inline button has no action")

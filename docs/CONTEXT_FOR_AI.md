@@ -4,14 +4,28 @@ Read these first:
 
 1. `docs/PRODUCT_VISION.md`
 2. `docs/PROJECT_STATUS.md`
-3. `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md`
+3. `docs/CONTEXT_FOR_AI.md`
 4. `AGENTS.md`
+5. Relevant historical architecture decisions only when their contract is being implemented.
 
 ## What this project is
 
 ViMi Social is a production **Telegram-first, AI-first, automation-first** multi-tenant SaaS for discovering/receiving content, analyzing it, creating destination-specific variants, publishing safely and operating recurring content workflows.
 
-The Telegram bot is the primary customer interface. Web/Next.js is secondary.
+Telegram is the primary customer interface. Web/Next.js is secondary.
+
+Do not restart broad architecture research. The architecture laboratory is historical. New work should deliver a small production slice while preserving the validated reliability/security contracts.
+
+## Repository reality
+
+Production repository: `Aragova/vimi-social`.
+
+Merged production milestones:
+
+- PR #1 — production foundation, merge commit `7811892d02f8d454a968c3877b53f1b7ad7b6a18`;
+- PR #2 — Telegram-first customer entrypoint, merge commit `6b7ec905e7f7d6f7b4f37a7bbdef9982259ad4db`.
+
+The active next slice is PR #4 on `feat/source-task-scout`: durable AI Search SourceTask + Scout foundation + first real source connector.
 
 ## Fundamental source model
 
@@ -23,11 +37,31 @@ There are exactly three first-class source modes in the current product concept:
 
 These modes converge into one downstream pipeline. Do not build three separate processing systems.
 
-## Scout / source integrations
+## Current AI Search / Scout implementation direction
 
-Scout is not generic web search. It routes through a typed Source Connector Registry, e.g. X, Telegram, Reddit, adult-content source adapters and future permitted sources. Generic web search is fallback/supplement only.
+The current production slice is:
 
-Connectors may only use permitted access methods and must not bypass auth, paywalls, DRM, age gates, anti-bot protections or source restrictions.
+```text
+Telegram AI Search selection
+-> durable conversation state
+-> user intent
+-> tenant-bound SourceTask
+-> scout_run usage reservation
+-> Temporal ScoutWorkflow
+-> SourceConnectorRegistry
+-> source-specific connector(s)
+-> CandidateContent
+-> persisted candidates
+-> Telegram results / selection
+```
+
+The first real connector uses the **official X API v2 Recent Search**. Do not replace it with scraping. Generic web search remains fallback/supplement only and is not the basis of Scout.
+
+The connector currently discovers metadata only. Public availability is not treated as reuse permission. Media acquisition, provenance/rights gate, secure ingest and MediaProbe are the next production slice.
+
+If the user explicitly asks for a source for which no configured connector exists, fail closed rather than silently searching a different platform.
+
+UI locale must not automatically become search language. UI language, content language, search language and destination/account language remain separate concepts.
 
 ## Adult/18+ workload
 
@@ -42,11 +76,9 @@ MANUAL_REVIEW_REQUIRED
 BLOCKED
 ```
 
-Adaptation must create a genuinely policy-compliant derivative. Never disguise prohibited content or attempt to bypass moderation.
+Adaptation must create a genuinely policy-compliant derivative. Never disguise prohibited content or attempt to bypass moderation/access controls.
 
 ## International / regional contract
-
-Design international-ready from the first slices:
 
 - persisted event timestamps: UTC;
 - schedules/quiet hours: IANA timezone IDs;
@@ -55,14 +87,12 @@ Design international-ready from the first slices:
 - Telegram `language_code` is only an initial hint;
 - region/country is separate from language;
 - money always has ISO 4217 currency;
-- recurring schedules must preserve local wall-clock intent across DST;
+- recurring schedules preserve local wall-clock intent across DST;
 - VM/server timezone never defines customer schedule behavior.
-
-Do not block MVP on many translations, global taxes or full age/KYC, but do not design data models that make them expensive to add.
 
 ## Workspace / brand / accounts
 
-Do not assume one tenant equals one social account/brand.
+Do not assume one tenant equals one social account or brand.
 
 Conceptual shape:
 
@@ -101,45 +131,27 @@ User UI/notification preferences remain separate from workspace/brand publishing
 9. AI has no unrestricted shell/DB/secrets/network authority.
 10. Bot handlers, source connectors and provider adapters do not own core business rules.
 11. Platform/content policies are versioned/testable, not scattered ad-hoc conditionals.
-12. Privileged cross-tenant access requires durable audit evidence.
+12. Privileged cross-tenant access must be narrow, explicit and auditable; never broaden the normal app role to BYPASSRLS.
 
-## Current reality / correction to the initial foundation
+## Current task after the Scout slice
 
-Production foundation PR #1 was created before the final product concept was fully clarified. It is mostly reusable, but it must not be merged/extended blindly as if the product were web-first or managed-IdP-first.
-
-Important corrections:
-
-- `ExecutionContext` must be a source-neutral trusted envelope. Telegram is the first customer identity adapter; managed IdP remains optional for web/admin.
-- Next.js stays but is secondary.
-- PostgreSQL roles/RLS integration tests still need production-like hardening.
-- Usage reservation has a known concurrent-first-seen operation race and is not production-complete.
-- Telegram bot/source models, Source Feed, source connectors and internationalization primitives have not yet been implemented.
-
-See `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md` for the explicit KEEP / CHANGE / DEFER decisions.
-
-## Current task
-
-Align the foundation first, then implement vertical slice 1:
+Once PR #4 is green and reviewed, the next production slice should continue from selected `CandidateContent`:
 
 ```text
-Telegram /start
--> trusted Telegram identity/workspace resolution
--> localized RU/EN-ready menu
--> AI Search task
--> one real authorized source connector
--> normalized candidates + Curator
--> media/scene analysis
--> adult classification + platform preflight
--> one direct/compliant variant
--> Telegram preview/approval
--> usage reservation + persisted operation
--> Temporal
--> one real destination adapter
--> publication/status/reconciliation
+selected candidate
+-> Curator/ranking boundary
+-> permitted media acquisition
+-> provenance / rights gate
+-> secure ingest
+-> MediaProbe
+-> base content/adult classification
+-> persisted asset lineage
 ```
 
-Deploy to staging/VM as soon as this works end-to-end. Manual Upload and Telegram Source Feed are early follow-ups through the same pipeline.
+Then continue into SceneDetector / SceneRanker / policy preflight / VariantPlanner and one real destination adapter with UNKNOWN-safe reconciliation.
+
+Deploy to staging/VM as soon as one source-to-destination path works end-to-end through Telegram. Manual Upload and Telegram Source Feed are early follow-ups through the same downstream pipeline.
 
 ## Sources of truth
 
-`docs/PRODUCT_VISION.md` is the canonical product concept. `docs/PROJECT_STATUS.md` is the live implementation status. Historical architecture under `docs/history/` remains authoritative for validated security/reliability contracts unless explicitly superseded.
+`docs/PRODUCT_VISION.md` is the canonical product concept. `docs/PROJECT_STATUS.md` is the live implementation status. `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md` is historical evidence explaining the initial foundation alignment and must not be mistaken for current live status. Historical architecture under `docs/history/` remains authoritative for validated security/reliability contracts unless explicitly superseded.

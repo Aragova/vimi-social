@@ -2,89 +2,97 @@
 
 **Updated:** 2026-10-21  
 **Repository:** `Aragova/vimi-social`  
-**Phase:** Production implementation — foundation hardening before Telegram/AI-first vertical slice 1
+**Phase:** Production implementation — durable AI Search / Scout slice
 
-## Completed
+## Completed baseline
 
-- Architecture Baseline 0.9/0.10, Red-Team v1, PoCs A–E, post-PoC decisions and Red-Team v2 completed.
-- Architecture PR #8 merged at `6252c6f4e425006f927f7b5e5556c96ecb37d245`.
-- Production repository created; historical architecture/PoC evidence preserved under `docs/history/`.
-- Canonical product concept finalized in `docs/PRODUCT_VISION.md`:
-  - Telegram-first;
-  - AI-first / automation-first;
-  - three source modes: AI Search, Manual Upload, Source Feed;
-  - typed Source Connector Registry;
-  - adult/18+ content as a first-class workload;
-  - platform-policy-aware compliant variants;
-  - UTC + IANA timezone model;
-  - RU/EN localization architecture;
-  - separate UI/content/search/destination languages;
-  - region and currency-aware data model;
-  - workspace/brand/multi-account readiness.
-- Production foundation concept-alignment audit recorded in `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md`.
-- Audit conclusion: **keep the foundation; do not restart**.
-- PR #1 identity boundary corrected: `ExecutionContext` is now trusted/source-neutral; Telegram is the first customer identity adapter and managed IdP is optional for web/admin.
-- Codex P1 Alembic logging blocker fixed.
-- Codex P1 usage-reservation concurrent-first-seen race fixed by porting the verified PoC E reservation ordering.
-- Both original Codex P1 review threads resolved.
-- Current PR #1 head: `f158b1ba573d0f03d0283b226c39bbc03a068391`.
-- CI run `39640557288` (#7) on that head: **SUCCESS** (backend + web).
-- Fresh Codex review requested on the current head after the fixes.
+- Architecture Baseline 0.9/0.10, Red-Team v1/v2, PoCs A–E and post-PoC decisions are complete and preserved under `docs/history/`.
+- The finalized product concept is canonical in `docs/PRODUCT_VISION.md`: Telegram-first, AI-first, automation-first, with AI Search / Manual Upload / Source Feed as the three first-class source modes.
+- Production foundation PR #1 is merged. Merge commit: `7811892d02f8d454a968c3877b53f1b7ad7b6a18`.
+- Telegram-first entrypoint PR #2 is merged. Merge commit/current base for the Scout slice: `6b7ec905e7f7d6f7b4f37a7bbdef9982259ad4db`.
+- Foundation correctness work is complete enough to build product slices without restarting architecture research:
+  - PostgreSQL RLS with production-like non-owner, non-superuser, NOBYPASSRLS application role;
+  - explicit DB grants and PostgreSQL integration CI;
+  - fail-closed tenant context and cross-tenant denial tests;
+  - atomic usage reservation with duplicate-operation joining;
+  - append-only usage ledger;
+  - stable operation identity and UNKNOWN/no-blind-retry semantics for external mutation shells.
+- Telegram entrypoint now provides:
+  - separate bot process and verified webhook secret;
+  - server-side Telegram identity -> app user -> membership -> workspace resolution;
+  - personal workspace provisioning on first `/start`;
+  - RU/EN localization primitives and international domain primitives;
+  - localized main menu and source selection;
+  - AI Search / Manual Upload / Source Feed entry choices;
+  - durable incoming-update idempotency;
+  - stable outgoing Telegram operation identity;
+  - UNKNOWN handling and Telegram 429 delayed retry semantics.
 
-## Current goal
+## Current work — PR #4
 
-Finish foundation hardening/review without expanding the wrong product surface, then merge PR #1 and begin the real Telegram/AI-first vertical slice.
+Active PR: **`feat: durable AI Search Scout pipeline`** on branch `feat/source-task-scout`.
 
-The next remaining foundation correctness priority is PostgreSQL production-role/RLS integration evidence:
-
-- separate migration owner and application role;
-- application role non-owner/non-superuser/NOBYPASSRLS;
-- explicit grants;
-- CI PostgreSQL service + migrations;
-- tests proving fail-closed no-tenant behavior, cross-tenant denial and transaction-local context non-leakage.
-
-After that, the first real product path is:
+The slice moves the product from a Telegram menu to a real durable AI Search workflow:
 
 ```text
-Telegram /start
--> trusted Telegram identity/workspace resolution
--> localized RU/EN-ready onboarding/menu
--> user chooses AI Search
--> user describes desired content/task
--> Scout routes to one authorized source connector
--> normalized candidates + Curator
--> MediaProbe + SceneDetector + SceneRanker
--> adult/content classification + destination policy preflight
--> VariantPlanner creates/recommends one compliant variant
--> Telegram preview/approval
--> tenant-scoped usage reservation + persisted operation
--> Temporal workflow
--> one real destination adapter
--> Telegram status
--> UNKNOWN-safe reconciliation
+Telegram
+-> choose AI Search
+-> durable conversation state
+-> user intent
+-> tenant-bound SourceTask + scout_run reservation
+-> Temporal ScoutWorkflow
+-> SourceConnectorRegistry
+-> real authorized source connector
+-> normalized CandidateContent
+-> persisted candidates
+-> Telegram results / selection
 ```
 
-Deploy to staging/VM as soon as this works end-to-end for one authorized source and one real destination.
+Implemented in the active PR:
 
-## Immediate implementation sequence
+- durable `SourceTask` with stable operation key and actor/workspace binding;
+- durable Telegram `AWAITING_AI_SEARCH_INTENT` conversation state;
+- `scout_run` usage reservation bound to the source-task operation key;
+- usage commit when connector work starts and release when work is proven not to have started;
+- Temporal `ScoutWorkflow` rather than FastAPI background tasks;
+- typed `SourceConnector` + registry/router;
+- first real connector through the official X API v2 Recent Search endpoint;
+- no generic scraping and no assumption that public availability grants redistribution rights;
+- normalized `CandidateContent` persistence with provenance/availability hints;
+- RLS protection for source tasks, conversation state and candidates;
+- narrow background authority restoration via stable operation key + random execution token;
+- dedicated NOLOGIN resolver role for the narrow cross-tenant lookup while `vimi_app` remains NOBYPASSRLS;
+- localized Telegram result cards with View / Select / Search more;
+- unit and PostgreSQL integration coverage for routing, X normalization, usage idempotency and tenant isolation.
 
-1. Finish fresh Codex review of PR #1 and address any new findings.
-2. Add production-like PostgreSQL role/grant bootstrap and DB integration CI/RLS tests.
-3. Merge PR #1 only when CI/review gates are clean.
-4. Add first-class Telegram bot process/ingress with duplicate-update idempotency.
-5. Add early international primitives: localization resources (`ru`, `en`), IANA timezone types/defaults, locale/region/content-language separation, currency-aware Money.
-6. Add Telegram user/membership/workspace mapping compatible with future Brand/Project and multiple connected accounts.
-7. Build `/start`, localized onboarding, source selection and main menu.
-8. Add typed source domain with AI Search / Manual Upload / Source Feed.
-9. Implement Source Connector Registry and one real authorized source connector for Scout.
-10. Persist candidate/source provenance metadata and route discovered media through secure ingest.
-11. Add Curator/media/scene-analysis contracts, adult classification and destination preflight.
-12. Add VariantPlanner/render path and Telegram preview/approval.
-13. Bind `operation_key`, reserve usage, persist operation and compose Temporal through the validated durable-authority pattern.
-14. Dispatch through one real destination adapter; surface status and reconcile UNKNOWN safely.
-15. Deploy to staging/VM and test through a real Telegram account.
-16. Add Manual Upload through the same downstream pipeline.
-17. Add Telegram Source Feed (channel/group/topic) with idempotent item claiming and timezone-aware cadence.
+The X connector in this slice is discovery/metadata-only. It does **not** download discovered media and does **not** establish reuse rights.
+
+## Immediate next step after PR #4
+
+Build the next vertical slice around the selected candidate:
+
+```text
+selected CandidateContent
+-> Curator/ranking boundary
+-> permitted media acquisition
+-> provenance / rights gate
+-> secure ingest of untrusted media
+-> MediaProbe
+-> base content + adult classification
+-> persisted asset lineage
+-> Telegram status/preview
+```
+
+Do not jump directly to broad rendering or many destinations before this acquisition/probe boundary is reliable.
+
+After that:
+
+1. SceneDetector + feature extraction + SceneRanker + scene-level explicitness.
+2. Platform Capability/Compliance preflight + VariantPlanner.
+3. One real Destination Adapter with stable operation identity, typed outcomes, UNKNOWN and reconciliation.
+4. Early staging/VM deployment and manual exercise through a real Telegram account.
+5. Manual Upload through the same downstream pipeline.
+6. Telegram Source Feed with concurrency-safe claiming, durable cursors and timezone-aware cadence.
 
 ## Definition of done for vertical slice 1
 
@@ -93,14 +101,14 @@ Deploy to staging/VM as soon as this works end-to-end for one authorized source 
 - Telegram identity resolves server-side to ViMi workspace authority.
 - User can choose AI Search and describe a task.
 - One real source connector returns normalized candidates with provenance metadata.
-- Curator selects/ranks candidate material.
+- Candidate selection feeds the common downstream pipeline.
 - Media/scene analysis and adult/explicitness classification are normal pipeline stages.
 - One real destination produces DIRECT / ADAPT / REVIEW / BLOCKED decision.
 - One usable direct/compliant variant can be previewed in Telegram.
-- Usage is atomically reserved before expensive/external work.
+- Usage is atomically reserved before expensive work.
 - Duplicate Telegram updates/operation starts do not double-reserve or double-dispatch.
 - Cross-tenant access is blocked by production-like RLS roles.
-- Ambiguous provider outcome becomes `UNKNOWN`, never blind retry.
+- Ambiguous external mutation outcome becomes `UNKNOWN`, never blind retry.
 - Persisted event timestamps are UTC; schedules use IANA timezones.
 - Customer-facing strings are localization-key based rather than hard-coded through business logic.
 - CI including DB/bot tests is green.
@@ -108,7 +116,7 @@ Deploy to staging/VM as soon as this works end-to-end for one authorized source 
 
 ## Fundamental Source Feed follow-up
 
-Source Feed is one of the three core source modes, not a distant optional feature:
+Source Feed remains one of the three core source modes, not a distant optional feature:
 
 ```text
 Telegram channel/group/topic
@@ -143,7 +151,7 @@ Next.js/web remains secondary: landing/marketing, OAuth callbacks, optional dash
 
 1. `docs/PRODUCT_VISION.md`
 2. `docs/PROJECT_STATUS.md`
-3. `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md`
-4. `docs/CONTEXT_FOR_AI.md`
-5. `AGENTS.md`
-6. `docs/history/`
+3. `docs/CONTEXT_FOR_AI.md`
+4. `AGENTS.md`
+5. `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md` for the historical foundation alignment decision
+6. `docs/history/` for validated architecture rationale and PoC evidence
