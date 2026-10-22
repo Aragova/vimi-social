@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from datetime import timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
 from temporalio import activity
@@ -24,6 +24,7 @@ from vimi_social.source.connectors import (
     SourceConnectorUnavailable,
 )
 from vimi_social.source.repository import SourceTaskRepository
+from vimi_social.source.scout_attempts import ScoutAttemptStore
 from vimi_social.telegram.menus import build_scout_results
 from vimi_social.telegram.outgoing import (
     TelegramMessageRetryAfter,
@@ -42,12 +43,14 @@ class ScoutActivities:
         *,
         source_repository: SourceTaskRepository | None = None,
         usage_repository: UsageRepository | None = None,
+        attempt_store: ScoutAttemptStore | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._registry = registry
         self._messenger = messenger
         self._source_repository = source_repository or SourceTaskRepository()
         self._usage_repository = usage_repository or UsageRepository()
+        self._attempt_store = attempt_store or ScoutAttemptStore()
 
     @activity.defn(name="execute_scout_task")
     async def execute_scout_task(self, workflow_input: ScoutWorkflowInput) -> ScoutRunResult:
@@ -64,31 +67,38 @@ class ScoutActivities:
         except SourceConnectorUnavailable:
             return self._fail_safe(task, "SOURCE_UNAVAILABLE", release_usage=True)
 
+        attempt_token = uuid4()
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
             current = self._source_repository.get_by_operation_key(session, task.operation_key)
             if current is None:
                 raise RuntimeError("source task disappeared from tenant context")
-            if current.state is SourceTaskState.COMPLETED:
-                existing = self._source_repository.list_candidates(session, current.id, limit=100)
-                return ScoutRunResult(
-                    operation_key=task.operation_key.value,
-                    state=SourceTaskState.COMPLETED,
-                    discovered_count=len(existing),
-                    candidate_count=len(existing),
-                )
-            if current.state is SourceTaskState.FAILED_SAFE:
-                return ScoutRunResult(
-                    operation_key=task.operation_key.value,
-                    state=SourceTaskState.FAILED_SAFE,
-                    discovered_count=0,
-                    candidate_count=0,
-                    failure_code=current.failure_code,
-                )
-            self._source_repository.set_state(
+            if current.state in {
+                SourceTaskState.COMPLETED,
+                SourceTaskState.FAILED_SAFE,
+                SourceTaskState.UNKNOWN,
+            }:
+                return self._result_for_task(session, current)
+
+            claim = self._attempt_store.claim(
                 session,
-                task.operation_key,
-                SourceTaskState.SCOUTING,
+                operation_key=task.operation_key,
+                attempt_token=attempt_token,
             )
+            if not claim.claimed:
+                if claim.state is SourceTaskState.SCOUTING:
+                    self._attempt_store.mark_ambiguous_retry(
+                        session,
+                        operation_key=task.operation_key,
+                        retry_token=attempt_token,
+                    )
+                current = self._source_repository.get_by_operation_key(
+                    session,
+                    task.operation_key,
+                )
+                if current is None:
+                    raise RuntimeError("source task disappeared from tenant context")
+                return self._result_for_task(session, current)
+
             self._usage_repository.commit(session, task.operation_key)
 
         try:
@@ -96,25 +106,52 @@ class ScoutActivities:
             for connector in connectors:
                 discovered.extend(await connector.search(request))
         except SourceConnectorRateLimited:
-            return self._fail_safe(task, "SOURCE_RATE_LIMITED")
+            return self._fail_safe(
+                task,
+                "SOURCE_RATE_LIMITED",
+                attempt_token=attempt_token,
+            )
         except SourceConnectorRejected:
-            return self._fail_safe(task, "SOURCE_ACCESS_REJECTED")
+            return self._fail_safe(
+                task,
+                "SOURCE_ACCESS_REJECTED",
+                attempt_token=attempt_token,
+            )
         except SourceConnectorUnavailable:
-            return self._fail_safe(task, "SOURCE_UNAVAILABLE")
+            return self._fail_safe(
+                task,
+                "SOURCE_UNAVAILABLE",
+                attempt_token=attempt_token,
+            )
 
         normalized = _deduplicate(discovered)
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
+            if not self._attempt_store.lock_owned_attempt(
+                session,
+                operation_key=task.operation_key,
+                attempt_token=attempt_token,
+            ):
+                current = self._source_repository.get_by_operation_key(
+                    session,
+                    task.operation_key,
+                )
+                if current is None:
+                    raise RuntimeError("source task disappeared from tenant context")
+                return self._result_for_task(session, current)
+
             persisted = self._source_repository.replace_candidates(
                 session,
                 task_id=task.id,
                 tenant_id=task.tenant_id,
                 candidates=normalized,
             )
-            self._source_repository.set_state(
+            if not self._attempt_store.finish_owned_attempt(
                 session,
-                task.operation_key,
-                SourceTaskState.COMPLETED,
-            )
+                operation_key=task.operation_key,
+                attempt_token=attempt_token,
+                state=SourceTaskState.COMPLETED,
+            ):
+                raise RuntimeError("Scout attempt lost its fence while holding the task lock")
 
         return ScoutRunResult(
             operation_key=task.operation_key.value,
@@ -200,23 +237,66 @@ class ScoutActivities:
         failure_code: str,
         *,
         release_usage: bool = False,
+        attempt_token: UUID | None = None,
     ) -> ScoutRunResult:
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
-            if release_usage:
-                self._usage_repository.release(session, task.operation_key)
-            self._source_repository.set_state(
-                session,
-                task.operation_key,
-                SourceTaskState.FAILED_SAFE,
-                failure_code=failure_code,
+            if attempt_token is None:
+                transitioned = self._attempt_store.fail_queued(
+                    session,
+                    operation_key=task.operation_key,
+                    failure_code=failure_code,
+                )
+                if transitioned and release_usage:
+                    self._usage_repository.release(session, task.operation_key)
+            else:
+                transitioned = self._attempt_store.finish_owned_attempt(
+                    session,
+                    operation_key=task.operation_key,
+                    attempt_token=attempt_token,
+                    state=SourceTaskState.FAILED_SAFE,
+                    failure_code=failure_code,
+                )
+
+            if transitioned:
+                return ScoutRunResult(
+                    operation_key=task.operation_key.value,
+                    state=SourceTaskState.FAILED_SAFE,
+                    discovered_count=0,
+                    candidate_count=0,
+                    failure_code=failure_code,
+                )
+
+            current = self._source_repository.get_by_operation_key(session, task.operation_key)
+            if current is None:
+                raise RuntimeError("source task disappeared from tenant context")
+            return self._result_for_task(session, current)
+
+    def _result_for_task(self, session: Session, task: SourceTask) -> ScoutRunResult:
+        if task.state is SourceTaskState.COMPLETED:
+            candidates = self._source_repository.list_candidates(session, task.id, limit=100)
+            return ScoutRunResult(
+                operation_key=task.operation_key.value,
+                state=SourceTaskState.COMPLETED,
+                discovered_count=len(candidates),
+                candidate_count=len(candidates),
             )
-        return ScoutRunResult(
-            operation_key=task.operation_key.value,
-            state=SourceTaskState.FAILED_SAFE,
-            discovered_count=0,
-            candidate_count=0,
-            failure_code=failure_code,
-        )
+        if task.state is SourceTaskState.FAILED_SAFE:
+            return ScoutRunResult(
+                operation_key=task.operation_key.value,
+                state=SourceTaskState.FAILED_SAFE,
+                discovered_count=0,
+                candidate_count=0,
+                failure_code=task.failure_code,
+            )
+        if task.state is SourceTaskState.UNKNOWN:
+            return ScoutRunResult(
+                operation_key=task.operation_key.value,
+                state=SourceTaskState.UNKNOWN,
+                discovered_count=0,
+                candidate_count=0,
+                failure_code=task.failure_code or "SCOUT_ATTEMPT_AMBIGUOUS",
+            )
+        raise RuntimeError(f"source task is not terminal: {task.state.value}")
 
 
 def _deduplicate(candidates: list[CandidateContent]) -> tuple[CandidateContent, ...]:
