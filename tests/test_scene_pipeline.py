@@ -16,7 +16,7 @@ from vimi_social.domain.media import (
     MediaAsset,
     MediaProbeResult,
 )
-from vimi_social.media.policy import PlatformPreflight, X_ORGANIC_PROFILE
+from vimi_social.media.policy import X_ORGANIC_PROFILE, PlatformPreflight
 from vimi_social.media.process_runner import ProcessResult
 from vimi_social.media.scenes import SceneDetector, SceneRanker
 from vimi_social.media.variant_planner import VariantPlanner
@@ -113,8 +113,13 @@ def test_scene_ranker_is_deterministic_and_preserves_conservative_classification
 
     assert ranked[0].ordinal == 1
     assert ranked[-1].ordinal == 0
-    assert all(scene.adult_classification is BaseAdultClassification.POSSIBLY_SENSITIVE for scene in ranked)
-    assert all("scene_classification_inherits_asset_baseline" in scene.signals for scene in ranked)
+    assert all(
+        scene.adult_classification is BaseAdultClassification.POSSIBLY_SENSITIVE
+        for scene in ranked
+    )
+    assert all(
+        "scene_classification_inherits_asset_baseline" in scene.signals for scene in ranked
+    )
 
 
 def test_x_preflight_requires_review_for_metadata_only_and_explicit_content() -> None:
