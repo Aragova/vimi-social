@@ -133,6 +133,35 @@ jobs:
           --env-file .env.staging
           -f infra/docker/docker-compose.staging.yml
           config --format json > /tmp/staging-compose.json
+      - name: Render nginx co-host Compose model
+        env:
+          VIMI_STAGING_BOT_PORT: "18000"
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          -f infra/docker/docker-compose.staging.cohost.yml
+          config --format json > /tmp/staging-compose-cohost.json
+      - name: Verify nginx co-host isolation
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          services = json.loads(Path("/tmp/staging-compose-cohost.json").read_text())["services"]
+          ports = services["bot"].get("ports", [])
+          expected = any(
+              str(port.get("target")) == "8000"
+              and str(port.get("published")) == "18000"
+              and port.get("host_ip") == "127.0.0.1"
+              for port in ports
+          )
+          if not expected:
+              raise SystemExit(f"co-host bot port is not loopback-only: {ports}")
+
+          if "caddy" in services:
+              raise SystemExit("co-host Caddy must be omitted unless its standalone profile is enabled")
+          PY
       - name: Verify least-privilege secret scoping
         run: |
           python - <<'PY'
