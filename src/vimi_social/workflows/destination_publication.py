@@ -20,12 +20,16 @@ class DestinationPublicationWorkflow:
             result_type=PublicationResult,
             task_queue=workflow_input.destination_task_queue,
             start_to_close_timeout=timedelta(minutes=20),
-            retry_policy=RetryPolicy(maximum_attempts=1),
+            retry_policy=RetryPolicy(
+                initial_interval=timedelta(seconds=2),
+                maximum_interval=timedelta(seconds=10),
+                maximum_attempts=2,
+            ),
         )
         if result.state is PublicationState.UNKNOWN:
-            # Reconciliation is read-only and may retry. It never authorizes a new
-            # external mutation unless the adapter returns PROVED_ABSENT, which X's
-            # current adapter deliberately does not claim from a generic missing read.
+            # Reconciliation is read-only and may retry. The second mutation-activity
+            # attempt above cannot issue X I/O after the first attempt durably claimed
+            # DISPATCHING: fencing converts that ambiguous worker loss to UNKNOWN.
             result = await workflow.execute_activity(
                 "reconcile_destination_publication",
                 workflow_input,
