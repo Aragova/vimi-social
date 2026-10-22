@@ -5,6 +5,7 @@ from vimi_social.domain.international import UiLocale
 
 class PublicationMessageKey(StrEnum):
     PREVIEW_READY = "preview_ready"
+    PREVIEW_TOO_LARGE = "preview_too_large"
     PUBLISH_X = "publish_x"
     REVIEW_REQUIRED = "review_required"
     BLOCKED = "blocked"
@@ -23,6 +24,10 @@ _CATALOG: dict[UiLocale, dict[PublicationMessageKey, str]] = {
     UiLocale.RU: {
         PublicationMessageKey.PREVIEW_READY: (
             "🎞 Вариант для X готов. Проверьте видео и подтвердите публикацию."
+        ),
+        PublicationMessageKey.PREVIEW_TOO_LARGE: (
+            "ℹ️ Видео больше безопасного лимита Telegram для preview, поэтому файл здесь "
+            "не прикреплён. Кнопка подтверждения публикации остаётся доступной."
         ),
         PublicationMessageKey.PUBLISH_X: "🚀 Опубликовать в X",
         PublicationMessageKey.REVIEW_REQUIRED: (
@@ -59,6 +64,10 @@ _CATALOG: dict[UiLocale, dict[PublicationMessageKey, str]] = {
     UiLocale.EN: {
         PublicationMessageKey.PREVIEW_READY: (
             "🎞 The X variant is ready. Review the video and approve publication."
+        ),
+        PublicationMessageKey.PREVIEW_TOO_LARGE: (
+            "ℹ️ The video is above the safe Telegram preview limit, so the file is not "
+            "attached here. The publication approval button remains available."
         ),
         PublicationMessageKey.PUBLISH_X: "🚀 Publish to X",
         PublicationMessageKey.REVIEW_REQUIRED: (
