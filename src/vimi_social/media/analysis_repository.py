@@ -220,11 +220,13 @@ class MediaAnalysisRepository:
                     INSERT INTO media_scene (
                         id, tenant_id, analysis_id, asset_id, ordinal,
                         start_ms, end_ms, rank_score, adult_classification,
-                        explicitness_score, classification_basis, classification_signals
+                        explicitness_score, classification_basis, classification_signals,
+                        classifier_version
                     ) VALUES (
                         :id, :tenant_id, :analysis_id, :asset_id, :ordinal,
                         :start_ms, :end_ms, :rank_score, :adult_classification,
-                        :explicitness_score, :classification_basis, :classification_signals
+                        :explicitness_score, :classification_basis, :classification_signals,
+                        :classifier_version
                     )
                     ON CONFLICT (analysis_id, ordinal) DO NOTHING
                     """
@@ -242,6 +244,7 @@ class MediaAnalysisRepository:
                     "explicitness_score": scene.explicitness_score,
                     "classification_basis": scene.classification_basis.value,
                     "classification_signals": list(scene.signals),
+                    "classifier_version": scene.classifier_version,
                 },
             )
             persisted_id = session.execute(
