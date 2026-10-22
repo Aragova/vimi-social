@@ -106,15 +106,16 @@ class VariantRenderActivities:
 
             quantity = max(1, math.ceil(render_input.expected_duration_ms / 60_000))
             try:
-                self._usage_repository.reserve(
-                    session,
-                    ReservationRequest(
-                        tenant_id=tenant_id,
-                        operation_key=OperationKey(artifact.operation_key),
-                        metric="rendered_video_minute",
-                        quantity=quantity,
-                    ),
-                )
+                with session.begin_nested():
+                    self._usage_repository.reserve(
+                        session,
+                        ReservationRequest(
+                            tenant_id=tenant_id,
+                            operation_key=OperationKey(artifact.operation_key),
+                            metric="rendered_video_minute",
+                            quantity=quantity,
+                        ),
+                    )
             except CapacityExceeded:
                 self._repository.fail_safe(
                     session,
