@@ -63,6 +63,10 @@ def build_ai_search_started(locale: UiLocale) -> OutgoingMessage:
     return OutgoingMessage(text=translate(MessageKey.AI_SEARCH_STARTED, locale))
 
 
+def build_ai_search_intent_too_long(locale: UiLocale) -> OutgoingMessage:
+    return OutgoingMessage(text=translate(MessageKey.AI_SEARCH_INTENT_TOO_LONG, locale))
+
+
 def build_scout_quota_exceeded(locale: UiLocale) -> OutgoingMessage:
     return OutgoingMessage(text=translate(MessageKey.SCOUT_QUOTA_EXCEEDED, locale))
 
@@ -84,6 +88,11 @@ def build_scout_results(
     if result.state is SourceTaskState.FAILED_SAFE:
         return OutgoingMessage(
             text=translate(MessageKey.SCOUT_FAILED, locale),
+            keyboard=(search_more,),
+        )
+    if result.state is SourceTaskState.UNKNOWN:
+        return OutgoingMessage(
+            text=translate(MessageKey.SCOUT_UNKNOWN, locale),
             keyboard=(search_more,),
         )
     if not candidates:
