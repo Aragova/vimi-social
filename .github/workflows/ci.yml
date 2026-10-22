@@ -16,9 +16,9 @@ jobs:
       - name: Install
         run: pip install -e ".[dev]"
       - name: Ruff
-        run: ruff check src apps tests
+        run: ruff check src apps tests scripts
       - name: Pyright
-        run: pyright src apps tests
+        run: pyright src apps tests scripts
       - name: Pytest
         run: pytest
 
@@ -54,6 +54,30 @@ jobs:
         run: alembic upgrade head
       - name: PostgreSQL integration tests
         run: pytest tests/integration
+
+  deployment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare staging environment fixture
+        run: cp .env.staging.example .env.staging
+      - name: Validate PostgreSQL staging bootstrap shell
+        run: sh -n infra/postgres/bootstrap_staging.sh
+      - name: Validate Docker Compose model
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          config --quiet
+      - name: Validate Caddy configuration
+        run: >-
+          docker run --rm
+          -e VIMI_PUBLIC_HOST=staging.example.com
+          -v "$PWD/infra/docker/Caddyfile:/etc/caddy/Caddyfile:ro"
+          caddy:2.10-alpine
+          caddy validate --config /etc/caddy/Caddyfile
+      - name: Build Python runtime image
+        run: docker build -f infra/docker/Dockerfile -t vimi-social:ci .
 
   web:
     runs-on: ubuntu-latest
