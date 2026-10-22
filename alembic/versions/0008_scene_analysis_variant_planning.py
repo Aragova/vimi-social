@@ -108,8 +108,12 @@ def upgrade() -> None:
             )),
             CHECK (render_strategy IS NULL OR render_strategy IN ('PASSTHROUGH', 'CLIP_SEQUENCE')),
             CHECK (
-                (decision IN ('MANUAL_REVIEW_REQUIRED', 'BLOCKED') AND render_strategy IS NULL)
-                OR decision IN ('DIRECT_ALLOWED', 'ADAPTATION_REQUIRED')
+                (decision = 'BLOCKED' AND render_strategy IS NULL AND expected_duration_ms IS NULL)
+                OR (
+                    decision IN ('DIRECT_ALLOWED', 'ADAPTATION_REQUIRED', 'MANUAL_REVIEW_REQUIRED')
+                    AND render_strategy IS NOT NULL
+                    AND expected_duration_ms IS NOT NULL
+                )
             )
         );
 
