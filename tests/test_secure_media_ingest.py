@@ -11,7 +11,10 @@ from vimi_social.media.secure_ingest.errors import (
     RedirectPolicyError,
     UnsafeAddressError,
 )
-from vimi_social.media.secure_ingest.fetcher import SecureMediaFetcher
+from vimi_social.media.secure_ingest.fetcher import (
+    SecureMediaFetcher,
+    promote_validated_fetch,
+)
 from vimi_social.media.secure_ingest.models import FetchLimits, FetchTimeouts, ResolvedTarget
 
 MP4_BYTES = b"\x00\x00\x00\x18ftypisom" + b"safe-video-payload"
@@ -91,6 +94,31 @@ async def test_secure_ingest_pins_public_resolution_and_promotes_by_digest(
     assert transport.targets[0].addresses == ("8.8.8.8",)
     assert response.closed is True
     assert not list(tmp_path.glob("*.part"))
+
+
+@pytest.mark.asyncio
+async def test_validated_staging_artifact_is_promoted_only_on_explicit_commit(
+    tmp_path: Path,
+) -> None:
+    resolver = FakeResolver({"video.example": ["8.8.8.8"]})
+    transport = ScriptedTransport(
+        {"https://video.example/file.mp4": [_ok_mp4()]}
+    )
+    fetcher = SecureMediaFetcher(DestinationPolicy(resolver), transport)
+    staging_dir = tmp_path / "scratch" / "attempt" / "download"
+    content_dir = tmp_path / "content"
+
+    staged = await fetcher.fetch("https://video.example/file.mp4", staging_dir)
+
+    assert staged.path.parent == staging_dir
+    assert staged.path.exists()
+    assert not content_dir.exists()
+
+    promoted = await promote_validated_fetch(staged, content_dir)
+
+    assert promoted.path.parent == content_dir
+    assert promoted.path.read_bytes() == MP4_BYTES
+    assert not staged.path.exists()
 
 
 @pytest.mark.asyncio
