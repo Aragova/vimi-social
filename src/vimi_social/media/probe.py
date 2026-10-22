@@ -41,8 +41,14 @@ class MediaProbe:
             raise ContentValidationError("ffprobe returned an invalid response shape")
         payload = cast(dict[str, object], raw)
         streams = _object_list(payload.get("streams"))
-        video = next((stream for stream in streams if stream.get("codec_type") == "video"), None)
-        audio = next((stream for stream in streams if stream.get("codec_type") == "audio"), None)
+        video = next(
+            (stream for stream in streams if stream.get("codec_type") == "video"),
+            None,
+        )
+        audio = next(
+            (stream for stream in streams if stream.get("codec_type") == "audio"),
+            None,
+        )
         format_obj = payload.get("format")
         format_data = cast(dict[str, object], format_obj) if isinstance(format_obj, dict) else {}
 
@@ -54,10 +60,16 @@ class MediaProbe:
             duration_ms=duration_ms,
             width=_positive_int(video.get("width")) if video is not None else None,
             height=_positive_int(video.get("height")) if video is not None else None,
-            video_codec=_optional_str(video.get("codec_name")) if video is not None else None,
-            audio_codec=_optional_str(audio.get("codec_name")) if audio is not None else None,
+            video_codec=(
+                _optional_str(video.get("codec_name")) if video is not None else None
+            ),
+            audio_codec=(
+                _optional_str(audio.get("codec_name")) if audio is not None else None
+            ),
             container=_optional_str(format_data.get("format_name")),
-            frame_rate=_parse_frame_rate(video.get("avg_frame_rate")) if video is not None else None,
+            frame_rate=(
+                _parse_frame_rate(video.get("avg_frame_rate")) if video is not None else None
+            ),
             has_audio=audio is not None,
         )
 
@@ -65,7 +77,8 @@ class MediaProbe:
 def _object_list(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
-    return [cast(dict[str, object], item) for item in cast(list[object], value) if isinstance(item, dict)]
+    items = cast(list[object], value)
+    return [cast(dict[str, object], item) for item in items if isinstance(item, dict)]
 
 
 def _optional_str(value: object) -> str | None:
