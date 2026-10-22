@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -15,9 +16,11 @@ from vimi_social.domain.analysis import (
     SceneClassificationBasis,
     VariantPlan,
 )
-from vimi_social.domain.media import BaseAdultClassification
+from vimi_social.domain.media import BaseAdultClassification, MediaPreparationWorkflowInput
+from vimi_social.media.analysis_activities import MediaSceneAnalysisActivities
 from vimi_social.media.analysis_repository import MediaAnalysisRepository
 from vimi_social.media.repository import MediaPreparationRepository
+from vimi_social.media.scenes import SceneDetector
 from vimi_social.source.service import SourceTaskService
 from vimi_social.telegram.identity import TelegramIdentityResolver
 from vimi_social.telegram.models import TelegramUser
@@ -28,6 +31,22 @@ def _database_dsn() -> str:
     if dsn is None:
         pytest.skip("PostgreSQL integration DSN is not configured")
     return dsn
+
+
+class NoCallSceneDetector(SceneDetector):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def detect(
+        self,
+        path: Path,
+        *,
+        duration_ms: int | None,
+        scratch_dir: Path,
+    ) -> tuple[object, ...]:
+        del path, duration_ms, scratch_dir
+        self.calls += 1
+        raise AssertionError("retry must not start ffmpeg scene detection")
 
 
 def _seed_ready_asset(
@@ -115,7 +134,10 @@ def _seed_ready_asset(
     return preparation_id
 
 
-def test_scene_analysis_persistence_attempt_fence_and_tenant_isolation() -> None:
+@pytest.mark.asyncio
+async def test_scene_analysis_persistence_attempt_fence_and_tenant_isolation(
+    tmp_path: Path,
+) -> None:
     engine = create_engine(_database_dsn())
     session_factory = sessionmaker[Session](bind=engine, expire_on_commit=False, autoflush=False)
     first_user = TelegramUser(
@@ -231,22 +253,30 @@ def test_scene_analysis_persistence_attempt_fence_and_tenant_isolation() -> None
             assert fence_asset is not None
             fenced = analysis_repository.ensure_analysis(session, fence_asset)
             first_attempt = uuid4()
-            retry_attempt = uuid4()
             assert analysis_repository.claim_analysis(
                 session, fenced.id, first_attempt
             ).owns_attempt is True
-            retry_claim = analysis_repository.claim_analysis(session, fenced.id, retry_attempt)
-            assert retry_claim.owns_attempt is False
-            assert retry_claim.attempt_token == first_attempt
-            state = analysis_repository.fail_ambiguous(
-                session,
-                analysis_id=fenced.id,
-                observed_attempt_token=first_attempt,
-            )
-            assert state is SceneAnalysisState.FAILED_SAFE
-            assert analysis_repository.build_result(session, fenced.id).failure_code == (
-                "ANALYSIS_ATTEMPT_AMBIGUOUS"
-            )
+
+        detector = NoCallSceneDetector()
+        activities = MediaSceneAnalysisActivities(
+            session_factory,
+            media_root=tmp_path,
+            detector=detector,
+        )
+        workflow_input = MediaPreparationWorkflowInput(
+            preparation_id=str(fence_preparation),
+            operation_key=f"media-prep:{fence_candidate}",
+            source_task_operation_key=task.operation_key.value,
+            source_task_execution_token=str(task.execution_token),
+        )
+        retry_result = await activities.analyze_prepared_media(
+            workflow_input,
+            str(fence_asset.id),
+        )
+
+        assert retry_result.state is SceneAnalysisState.FAILED_SAFE
+        assert retry_result.failure_code == "ANALYSIS_ATTEMPT_AMBIGUOUS"
+        assert detector.calls == 0
 
         with session_factory() as session, tenant_transaction(session, second.context.tenant_id):
             invisible = session.execute(
