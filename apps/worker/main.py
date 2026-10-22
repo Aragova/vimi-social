@@ -8,6 +8,7 @@ from temporalio.worker import Worker
 from vimi_social.core.config import get_settings
 from vimi_social.db.base import build_engine
 from vimi_social.media.delivery import MediaPreparationDeliveryActivities
+from vimi_social.publication.delivery import PublicationDeliveryActivities
 from vimi_social.publication.preview import PublicationPreviewActivities
 from vimi_social.source.activities import ScoutActivities
 from vimi_social.source.connectors import SourceConnectorRegistry
@@ -53,6 +54,7 @@ async def run() -> None:
         media_root=Path(settings.media_root),
     )
     publication_preview = PublicationPreviewActivities(session_factory)
+    publication_delivery = PublicationDeliveryActivities(session_factory, messenger)
     worker = Worker(
         client,
         task_queue=settings.temporal_task_queue,
@@ -67,6 +69,7 @@ async def run() -> None:
             scout_activities.deliver_scout_results,
             media_delivery.deliver_media_preparation_result,
             publication_preview.prepare_publication_preview,
+            publication_delivery.deliver_publication_result,
         ],
     )
     try:
