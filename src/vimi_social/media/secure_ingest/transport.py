@@ -7,7 +7,11 @@ import aiohttp
 from aiohttp.abc import AbstractResolver, ResolveResult
 
 from vimi_social.media.secure_ingest.errors import TransportError
-from vimi_social.media.secure_ingest.models import FetchTimeouts, ResolvedTarget
+from vimi_social.media.secure_ingest.models import (
+    FetchTimeouts,
+    ResolvedTarget,
+    ResponseStream,
+)
 
 
 class StaticPinnedResolver(AbstractResolver):
@@ -75,7 +79,7 @@ class PinnedAiohttpTransport:
         target: ResolvedTarget,
         *,
         timeouts: FetchTimeouts,
-    ) -> AiohttpResponseStream:
+    ) -> ResponseStream:
         resolver = StaticPinnedResolver(target.host, target.addresses)
         connector = aiohttp.TCPConnector(
             resolver=resolver,
