@@ -131,12 +131,24 @@ jobs:
           caddy validate --config /etc/caddy/Caddyfile
       - name: Build Python runtime image
         run: docker build -f infra/docker/Dockerfile -t vimi-social:ci .
-      - name: Smoke compose database provisioning and migrations
+      - name: Start staging PostgreSQL
         run: >-
           docker compose
           --env-file .env.staging
           -f infra/docker/docker-compose.staging.yml
-          up --abort-on-container-exit --exit-code-from migrate migrate
+          up -d --wait postgres
+      - name: Smoke compose database provisioning
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          run --rm --no-deps db-provision
+      - name: Smoke compose migrations
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          run --rm --no-deps migrate
       - name: Clean compose smoke resources
         if: always()
         run: >-
