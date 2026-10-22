@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID, uuid4
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from temporalio import activity
 
@@ -26,7 +27,10 @@ from vimi_social.media.repository import (
 )
 from vimi_social.media.secure_ingest.addressing import DestinationPolicy, SystemHostResolver
 from vimi_social.media.secure_ingest.errors import MediaIngestError
-from vimi_social.media.secure_ingest.fetcher import SecureMediaFetcher
+from vimi_social.media.secure_ingest.fetcher import (
+    SecureMediaFetcher,
+    promote_validated_fetch,
+)
 from vimi_social.media.secure_ingest.models import FetchLimits
 from vimi_social.media.secure_ingest.transport import PinnedAiohttpTransport
 from vimi_social.source.repository import SourceTaskRepository
@@ -152,17 +156,75 @@ class MediaPreparationActivities:
 
         content_dir = self._media_root / "content"
         scratch_dir = self._media_root / "scratch" / str(preparation.id) / str(attempt_token)
+        staging_dir = scratch_dir / "download"
         try:
-            fetched = await self._fetcher.fetch(acquisition_url, content_dir)
-            probe = await self._probe.probe(fetched.path, scratch_dir=scratch_dir)
+            staged = await self._fetcher.fetch(acquisition_url, staging_dir)
+            probe = await self._probe.probe(staged.path, scratch_dir=scratch_dir)
             classification = self._classifier.classify(candidate)
+
+            with self._session_factory() as session, tenant_transaction(
+                session,
+                preparation_tenant,
+            ):
+                locked_id = session.execute(
+                    text(
+                        """
+                        SELECT id::text
+                        FROM media_preparation
+                        WHERE id = :preparation_id
+                        FOR UPDATE
+                        """
+                    ),
+                    {"preparation_id": str(preparation.id)},
+                ).scalar_one_or_none()
+                if locked_id is None:
+                    raise RuntimeError("media preparation disappeared before asset persistence")
+
+                current = self._repository.get_by_id(session, preparation.id)
+                if current is None:
+                    raise RuntimeError("media preparation disappeared before asset persistence")
+                if current.state is MediaPreparationState.READY:
+                    existing = self._repository.get_asset(session, preparation.id)
+                    if existing is None:
+                        raise RuntimeError("ready media preparation has no asset")
+                    return _result_from_asset(existing)
+                if current.state in {
+                    MediaPreparationState.FAILED_SAFE,
+                    MediaPreparationState.BLOCKED,
+                }:
+                    return MediaPreparationResult(
+                        preparation_id=str(current.id),
+                        state=current.state,
+                        failure_code=current.failure_code,
+                    )
+                if (
+                    current.state is not MediaPreparationState.ACQUIRING
+                    or current.acquisition_attempt_token != attempt_token
+                ):
+                    return self._current_result(session, preparation.id)
+
+                fetched = await promote_validated_fetch(staged, content_dir)
+                storage_path = str(fetched.path.relative_to(self._media_root))
+                try:
+                    asset = self._repository.persist_asset(
+                        session,
+                        preparation=current,
+                        attempt_token=attempt_token,
+                        fetch=fetched,
+                        storage_path=storage_path,
+                        probe=probe,
+                        classification=classification,
+                    )
+                except MediaAttemptOwnershipLost:
+                    return self._current_result(session, preparation.id)
+            return _result_from_asset(asset)
         except MediaIngestError:
             return self._mark_failed(
                 preparation,
                 attempt_token,
                 "MEDIA_INGEST_OR_PROBE_FAILED",
             )
-        except OSError:
+        except (OSError, ValueError):
             return self._mark_failed(
                 preparation,
                 attempt_token,
@@ -170,44 +232,6 @@ class MediaPreparationActivities:
             )
         finally:
             await asyncio.to_thread(shutil.rmtree, scratch_dir, True)
-
-        try:
-            storage_path = str(fetched.path.relative_to(self._media_root))
-        except ValueError:
-            return self._mark_failed(
-                preparation,
-                attempt_token,
-                "MEDIA_STORAGE_PATH_INVALID",
-            )
-
-        with self._session_factory() as session, tenant_transaction(session, preparation_tenant):
-            current = self._repository.get_by_id(session, preparation.id)
-            if current is None:
-                raise RuntimeError("media preparation disappeared before asset persistence")
-            if current.state is MediaPreparationState.READY:
-                existing = self._repository.get_asset(session, preparation.id)
-                if existing is None:
-                    raise RuntimeError("ready media preparation has no asset")
-                return _result_from_asset(existing)
-            if current.state in {MediaPreparationState.FAILED_SAFE, MediaPreparationState.BLOCKED}:
-                return MediaPreparationResult(
-                    preparation_id=str(current.id),
-                    state=current.state,
-                    failure_code=current.failure_code,
-                )
-            try:
-                asset = self._repository.persist_asset(
-                    session,
-                    preparation=current,
-                    attempt_token=attempt_token,
-                    fetch=fetched,
-                    storage_path=storage_path,
-                    probe=probe,
-                    classification=classification,
-                )
-            except MediaAttemptOwnershipLost:
-                return self._current_result(session, preparation.id)
-        return _result_from_asset(asset)
 
     def _authorized_preparation(
         self,
