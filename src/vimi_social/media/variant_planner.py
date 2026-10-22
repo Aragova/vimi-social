@@ -44,14 +44,7 @@ class VariantPlanner:
             recipe = RenderRecipe(
                 strategy=RenderStrategy.PASSTHROUGH,
                 expected_duration_ms=duration_ms,
-                segments=(
-                    RenderSegment(
-                        scene_ordinal=-1,
-                        start_ms=0,
-                        end_ms=duration_ms,
-                        rank_score=1.0,
-                    ),
-                ),
+                segments=(),
             )
         else:
             limit = preflight.max_video_duration_ms
