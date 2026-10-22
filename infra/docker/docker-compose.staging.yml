@@ -1,6 +1,7 @@
 name: vimi-staging
 
 x-python-service: &python-service
+  image: vimi-social:${VIMI_IMAGE_TAG:-staging}
   build:
     context: ../..
     dockerfile: infra/docker/Dockerfile
@@ -98,9 +99,7 @@ services:
       - backend
 
   media-init:
-    build:
-      context: ../..
-      dockerfile: infra/docker/Dockerfile
+    image: vimi-social:${VIMI_IMAGE_TAG:-staging}
     user: "0:0"
     command:
       - sh
