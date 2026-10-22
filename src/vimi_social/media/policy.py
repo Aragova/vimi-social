@@ -6,7 +6,6 @@ from vimi_social.domain.analysis import (
 )
 from vimi_social.domain.media import BaseAdultClassification, MediaAsset
 
-
 X_ORGANIC_PROFILE = DestinationProfile(
     destination="x",
     capability_version="x-organic-video-v1",
