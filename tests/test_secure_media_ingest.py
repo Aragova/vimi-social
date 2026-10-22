@@ -71,7 +71,9 @@ def _ok_mp4() -> ScriptedResponse:
 
 
 @pytest.mark.asyncio
-async def test_secure_ingest_pins_public_resolution_and_promotes_by_digest(tmp_path: Path) -> None:
+async def test_secure_ingest_pins_public_resolution_and_promotes_by_digest(
+    tmp_path: Path,
+) -> None:
     resolver = FakeResolver({"video.example": ["8.8.8.8"]})
     response = _ok_mp4()
     transport = ScriptedTransport({"https://video.example/file.mp4": [response]})
@@ -90,7 +92,9 @@ async def test_secure_ingest_pins_public_resolution_and_promotes_by_digest(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_secure_ingest_rejects_mixed_public_private_dns_before_transport(tmp_path: Path) -> None:
+async def test_secure_ingest_rejects_mixed_public_private_dns_before_transport(
+    tmp_path: Path,
+) -> None:
     resolver = FakeResolver({"video.example": ["8.8.8.8", "127.0.0.1"]})
     transport = ScriptedTransport({})
     fetcher = SecureMediaFetcher(DestinationPolicy(resolver), transport)
