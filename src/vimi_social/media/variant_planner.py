@@ -21,10 +21,7 @@ class VariantPlanner:
         scenes: Sequence[RankedScene],
         preflight: PreflightDecision,
     ) -> VariantPlan:
-        if preflight.decision in {
-            PolicyDecision.MANUAL_REVIEW_REQUIRED,
-            PolicyDecision.BLOCKED,
-        }:
+        if preflight.decision is PolicyDecision.BLOCKED:
             return VariantPlan(
                 destination=preflight.destination,
                 decision=preflight.decision,
@@ -40,17 +37,17 @@ class VariantPlanner:
         if duration_ms is None or duration_ms <= 0:
             raise ValueError("variant planning requires a positive media duration")
 
-        if preflight.decision is PolicyDecision.DIRECT_ALLOWED:
+        if preflight.decision is PolicyDecision.ADAPTATION_REQUIRED:
+            limit = preflight.max_video_duration_ms
+            if limit is None or limit <= 0:
+                raise ValueError("adaptation-required preflight must provide a duration limit")
+            recipe = _build_clip_recipe(scenes, limit)
+        else:
             recipe = RenderRecipe(
                 strategy=RenderStrategy.PASSTHROUGH,
                 expected_duration_ms=duration_ms,
                 segments=(),
             )
-        else:
-            limit = preflight.max_video_duration_ms
-            if limit is None or limit <= 0:
-                raise ValueError("adaptation-required preflight must provide a duration limit")
-            recipe = _build_clip_recipe(scenes, limit)
 
         return VariantPlan(
             destination=preflight.destination,
