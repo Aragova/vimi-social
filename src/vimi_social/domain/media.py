@@ -42,6 +42,7 @@ class MediaPreparation:
     operation_key: str
     rights_basis: RightsBasis
     state: MediaPreparationState
+    acquisition_attempt_token: UUID | None
     failure_code: str | None
     source_task_operation_key: str
     source_task_execution_token: UUID
