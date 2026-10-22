@@ -3,8 +3,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 from uuid import UUID
 
-from vimi_social.domain.identity import TenantId
-
 
 class RightsBasis(StrEnum):
     UNKNOWN = "UNKNOWN"
@@ -39,7 +37,7 @@ class CuratorDecision(StrEnum):
 @dataclass(frozen=True, slots=True)
 class MediaPreparation:
     id: UUID
-    tenant_id: TenantId
+    tenant_id: UUID
     candidate_id: UUID
     operation_key: str
     rights_basis: RightsBasis
@@ -72,7 +70,7 @@ class BaseContentClassification:
 @dataclass(frozen=True, slots=True)
 class MediaAsset:
     id: UUID
-    tenant_id: TenantId
+    tenant_id: UUID
     candidate_id: UUID
     preparation_id: UUID
     sha256: str
