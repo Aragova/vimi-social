@@ -91,7 +91,9 @@ class SceneDetector:
 
         scenes = tuple(
             SceneBoundary(ordinal=index, start_ms=start, end_ms=end)
-            for index, (start, end) in enumerate(zip(boundaries, boundaries[1:], strict=True))
+            for index, (start, end) in enumerate(
+                zip(boundaries[:-1], boundaries[1:], strict=True)
+            )
             if end > start
         )
         if not scenes:
