@@ -13,6 +13,7 @@ from vimi_social.domain.analysis import (
     RenderRecipe,
     RenderStrategy,
     SceneAnalysisState,
+    SceneBoundary,
     SceneClassificationBasis,
     VariantPlan,
 )
@@ -43,7 +44,7 @@ class NoCallSceneDetector(SceneDetector):
         *,
         duration_ms: int | None,
         scratch_dir: Path,
-    ) -> tuple[object, ...]:
+    ) -> tuple[SceneBoundary, ...]:
         del path, duration_ms, scratch_dir
         self.calls += 1
         raise AssertionError("retry must not start ffmpeg scene detection")
@@ -71,7 +72,7 @@ def _seed_ready_asset(
                 :candidate_id, :tenant_id, :source_task_id, 'x', :source_id,
                 :source_url, '42', 'video', 20000, 1080, 1920,
                 'Scene integration', 'training clip', '{}', '{}'::jsonb,
-                'NO_ADULT_SIGNAL_DETECTED', NULL,
+                'UNKNOWN', NULL,
                 'PUBLIC_X_POST_REUSE_RIGHTS_NOT_ESTABLISHED',
                 'DISCOVERED_MEDIA_REFERENCE_AVAILABLE', '{}'::jsonb
             )
