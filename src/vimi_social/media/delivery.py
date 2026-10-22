@@ -37,7 +37,7 @@ class MediaPreparationDeliveryActivities:
         self,
         workflow_input: MediaPreparationWorkflowInput,
         result: MediaPreparationResult,
-        analysis_result: MediaAnalysisResult | None,
+        analysis_result: MediaAnalysisResult | None = None,
     ) -> str:
         if self._messenger is None:
             raise ApplicationError(
