@@ -70,7 +70,7 @@ services:
   temporal:
     image: temporalio/auto-setup:1.27.2
     environment:
-      DB: postgresql
+      DB: postgres12
       DB_PORT: 5432
       POSTGRES_USER: vimi_bootstrap
       POSTGRES_PWD: ${VIMI_POSTGRES_BOOTSTRAP_PASSWORD:?VIMI_POSTGRES_BOOTSTRAP_PASSWORD is required}
@@ -80,6 +80,14 @@ services:
         condition: service_healthy
     expose:
       - "7233"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - temporal operator cluster health --address $$(hostname -i):7233 | grep -q SERVING
+      interval: 5s
+      timeout: 5s
+      start_period: 15s
+      retries: 30
     restart: unless-stopped
     networks:
       - backend
@@ -144,7 +152,7 @@ services:
       migrate:
         condition: service_completed_successfully
       temporal:
-        condition: service_started
+        condition: service_healthy
 
   worker:
     <<: *python-service
@@ -161,7 +169,7 @@ services:
       media-init:
         condition: service_completed_successfully
       temporal:
-        condition: service_started
+        condition: service_healthy
 
   media-worker:
     <<: *python-service
@@ -178,7 +186,7 @@ services:
       media-init:
         condition: service_completed_successfully
       temporal:
-        condition: service_started
+        condition: service_healthy
 
   destination-worker:
     <<: *python-service
@@ -194,7 +202,7 @@ services:
       media-init:
         condition: service_completed_successfully
       temporal:
-        condition: service_started
+        condition: service_healthy
 
   api:
     <<: *python-service
