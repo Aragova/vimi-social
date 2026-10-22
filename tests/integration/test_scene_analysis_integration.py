@@ -23,7 +23,7 @@ from vimi_social.media.analysis_repository import MediaAnalysisRepository
 from vimi_social.media.repository import MediaPreparationRepository
 from vimi_social.media.scenes import SceneDetector
 from vimi_social.source.service import SourceTaskService
-from vimi_social.telegram.identity import TelegramIdentityResolver
+from vimi_social.telegram.identity import TelegramIdentityResolver, TelegramUpdateGuard
 from vimi_social.telegram.models import TelegramUser
 
 
@@ -153,16 +153,20 @@ async def test_scene_analysis_persistence_attempt_fence_and_tenant_isolation(
         username="scene_two",
         language_code="en",
     )
+    update_id = 840000001
 
     try:
         resolver = TelegramIdentityResolver(session_factory)
         first = resolver.resolve(first_user)
         second = resolver.resolve(second_user)
+        guard = TelegramUpdateGuard(session_factory)
+        assert guard.claim(update_id, first_user.id).value == "CLAIMED"
+
         source_service = SourceTaskService(session_factory)
         source_service.begin_ai_search(first, chat_id=first_user.id)
         task = source_service.submit_ai_search_intent(
             first,
-            update_id=840000001,
+            update_id=update_id,
             message_id=101,
             chat_id=first_user.id,
             intent="scene analysis integration",
