@@ -14,6 +14,7 @@ from vimi_social.media.classifier import BasicContentClassifier
 from vimi_social.media.curator import CandidateCurator
 from vimi_social.media.probe import MediaProbe
 from vimi_social.media.process_runner import ProcessResult
+from vimi_social.media.secure_ingest.errors import ContentValidationError
 
 
 class FakeToolRunner:
@@ -137,3 +138,22 @@ async def test_media_probe_extracts_deterministic_technical_metadata(tmp_path: P
     assert abs(result.frame_rate - (30000 / 1001)) < 1e-8
     assert runner.calls[0][0][0] == "ffprobe"
     assert "--" in runner.calls[0][0]
+
+
+@pytest.mark.asyncio
+async def test_media_probe_rejects_audio_only_container(tmp_path: Path) -> None:
+    runner = FakeToolRunner(
+        {
+            "streams": [{"codec_type": "audio", "codec_name": "aac"}],
+            "format": {
+                "duration": "12.500000",
+                "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+            },
+        }
+    )
+
+    with pytest.raises(ContentValidationError, match="video stream"):
+        await MediaProbe(runner).probe(
+            tmp_path / "audio-only.mp4",
+            scratch_dir=tmp_path / "scratch",
+        )
