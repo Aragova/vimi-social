@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 from sqlalchemy.orm import Session, sessionmaker
 from temporalio.client import Client
@@ -46,7 +47,11 @@ async def run() -> None:
         )
 
     scout_activities = ScoutActivities(session_factory, registry, messenger)
-    media_delivery = MediaPreparationDeliveryActivities(session_factory, messenger)
+    media_delivery = MediaPreparationDeliveryActivities(
+        session_factory,
+        messenger,
+        media_root=Path(settings.media_root),
+    )
     publication_preview = PublicationPreviewActivities(session_factory)
     worker = Worker(
         client,
