@@ -72,7 +72,10 @@ class MediaPreparationWorkflow:
                             maximum_attempts=2,
                         ),
                     )
-                    if render_result.state is VariantArtifactState.READY:
+                    if (
+                        render_result is not None
+                        and render_result.state is VariantArtifactState.READY
+                    ):
                         preview_result = await workflow.execute_activity(
                             "prepare_publication_preview",
                             args=[workflow_input, render_result],
