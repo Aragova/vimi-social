@@ -1,6 +1,5 @@
 import httpx
 import pytest
-
 from scripts.configure_telegram_webhook import _telegram_request
 
 
