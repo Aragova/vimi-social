@@ -106,12 +106,11 @@ class MediaSceneAnalysisActivities:
                 classification=asset.classification,
             )
             if self._visual_classifier is not None:
-                ranked = self._visual_classifier.classify(
+                ranked = await self._visual_classifier.classify(
                     media_path,
                     ranked,
                     scratch_dir=scratch_dir,
                 )
-                ranked = await ranked
             profile = self._profiles.require(self._destination)
             preflight = self._preflight.evaluate(asset, profile, ranked)
             plan = self._planner.plan(asset, ranked, preflight)
