@@ -9,6 +9,7 @@ x-python-service: &python-service
   restart: unless-stopped
   networks:
     - backend
+    - egress
   security_opt:
     - no-new-privileges:true
   cap_drop:
@@ -31,21 +32,38 @@ x-runtime-environment: &runtime-environment
 services:
   postgres:
     image: postgres:17
-    env_file:
-      - ../../.env.staging
     environment:
       POSTGRES_DB: vimi
       POSTGRES_USER: vimi_bootstrap
       POSTGRES_PASSWORD: ${VIMI_POSTGRES_BOOTSTRAP_PASSWORD:?VIMI_POSTGRES_BOOTSTRAP_PASSWORD is required}
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ../postgres/bootstrap_staging.sh:/docker-entrypoint-initdb.d/001-bootstrap-staging.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vimi_bootstrap -d vimi"]
       interval: 5s
       timeout: 3s
       retries: 30
     restart: unless-stopped
+    networks:
+      - backend
+
+  db-provision:
+    image: postgres:17
+    env_file:
+      - ../../.env.staging
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGPASSWORD: ${VIMI_POSTGRES_BOOTSTRAP_PASSWORD:?VIMI_POSTGRES_BOOTSTRAP_PASSWORD is required}
+      POSTGRES_DB: vimi
+      POSTGRES_USER: vimi_bootstrap
+    volumes:
+      - ../postgres/bootstrap_staging.sh:/opt/vimi/bootstrap_staging.sh:ro
+    command: ["sh", "/opt/vimi/bootstrap_staging.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
     networks:
       - backend
 
@@ -74,8 +92,8 @@ services:
       PGPASSWORD: ${VIMI_MIGRATOR_DB_PASSWORD:?VIMI_MIGRATOR_DB_PASSWORD is required}
     command: ["alembic", "upgrade", "head"]
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-provision:
+        condition: service_completed_successfully
     restart: "no"
 
   media-init:
@@ -222,6 +240,7 @@ services:
 networks:
   backend:
     internal: true
+  egress:
   edge:
 
 volumes:
