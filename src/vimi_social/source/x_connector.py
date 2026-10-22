@@ -18,8 +18,8 @@ from vimi_social.source.connectors import (
 class XSourceConnector:
     """Official X API v2 Recent Search connector.
 
-    The connector intentionally uses metadata discovery only. It does not download
-    discovered media and does not infer redistribution rights from public availability.
+    The connector performs discovery only. A returned video variant is retained as
+    metadata for the rights-gated media worker; discovery never establishes reuse rights.
     """
 
     source_name = "x"
@@ -48,7 +48,7 @@ class XSourceConnector:
             ),
             "expansions": "attachments.media_keys",
             "media.fields": (
-                "alt_text,duration_ms,height,media_key,preview_image_url,type,url,width"
+                "alt_text,duration_ms,height,media_key,preview_image_url,type,url,variants,width"
             ),
         }
         headers = {"Authorization": f"Bearer {self._token}"}
@@ -143,12 +143,15 @@ def _candidate_from_post(
     author_id = item.get("author_id")
     author = author_id if isinstance(author_id, str) else None
     possibly_sensitive = item.get("possibly_sensitive") is True
+    acquisition_url = _best_mp4_variant(selected_media.get("variants"))
 
     metadata: dict[str, object] = {
         "media_key": _optional_str(selected_media.get("media_key")),
         "preview_image_url": _optional_str(selected_media.get("preview_image_url")),
         "media_url": _optional_str(selected_media.get("url")),
         "language": _optional_str(item.get("lang")),
+        "acquisition_url": acquisition_url,
+        "acquisition_reference": "OFFICIAL_X_API_VIDEO_VARIANT",
     }
 
     return CandidateContent(
@@ -173,7 +176,11 @@ def _candidate_from_post(
         ),
         explicitness_score=None,
         provenance_hint="PUBLIC_X_POST_REUSE_RIGHTS_NOT_ESTABLISHED",
-        availability="DISCOVERED_METADATA_ONLY",
+        availability=(
+            "DISCOVERED_MEDIA_REFERENCE_AVAILABLE"
+            if acquisition_url is not None
+            else "DISCOVERED_METADATA_ONLY"
+        ),
         connector_metadata=metadata,
     )
 
@@ -187,6 +194,32 @@ def _select_video_media(
         if item is not None and item.get("type") == "video":
             return item
     return None
+
+
+def _best_mp4_variant(value: object) -> str | None:
+    if not isinstance(value, list):
+        return None
+    best_url: str | None = None
+    best_bitrate = -1
+    for raw in cast(list[object], value):
+        if not isinstance(raw, dict):
+            continue
+        variant = cast(dict[object, object], raw)
+        if variant.get("content_type") != "video/mp4":
+            continue
+        url = variant.get("url")
+        if not isinstance(url, str) or not url:
+            continue
+        raw_bitrate = variant.get("bit_rate")
+        bitrate = (
+            raw_bitrate
+            if isinstance(raw_bitrate, int) and not isinstance(raw_bitrate, bool)
+            else 0
+        )
+        if best_url is None or bitrate > best_bitrate:
+            best_url = url
+            best_bitrate = bitrate
+    return best_url
 
 
 def _object_list(value: object) -> list[dict[str, object]]:
