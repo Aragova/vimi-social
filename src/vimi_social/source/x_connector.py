@@ -133,7 +133,7 @@ def _candidate_from_post(
             keys = cast(list[object], raw_keys)
             media_keys = tuple(key for key in keys if isinstance(key, str))
 
-    selected_media = next((media[key] for key in media_keys if key in media), None)
+    selected_media = _select_video_media(media_keys, media)
     if selected_media is None:
         return None
 
@@ -176,6 +176,17 @@ def _candidate_from_post(
         availability="DISCOVERED_METADATA_ONLY",
         connector_metadata=metadata,
     )
+
+
+def _select_video_media(
+    media_keys: tuple[str, ...],
+    media: dict[str, dict[str, object]],
+) -> dict[str, object] | None:
+    for key in media_keys:
+        item = media.get(key)
+        if item is not None and item.get("type") == "video":
+            return item
+    return None
 
 
 def _object_list(value: object) -> list[dict[str, object]]:
