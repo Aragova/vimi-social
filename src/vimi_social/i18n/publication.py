@@ -26,7 +26,7 @@ _CATALOG: dict[UiLocale, dict[PublicationMessageKey, str]] = {
             "🎞 Вариант для X готов. Проверьте видео и подтвердите публикацию."
         ),
         PublicationMessageKey.PREVIEW_TOO_LARGE: (
-            "ℹ️ Видео больше безопасного лимита Telegram для preview, поэтому файл здесь "
+            "📦 Видео больше безопасного лимита Telegram для preview, поэтому файл здесь "
             "не прикреплён. Кнопка подтверждения публикации остаётся доступной."
         ),
         PublicationMessageKey.PUBLISH_X: "🚀 Опубликовать в X",
@@ -66,7 +66,7 @@ _CATALOG: dict[UiLocale, dict[PublicationMessageKey, str]] = {
             "🎞 The X variant is ready. Review the video and approve publication."
         ),
         PublicationMessageKey.PREVIEW_TOO_LARGE: (
-            "ℹ️ The video is above the safe Telegram preview limit, so the file is not "
+            "📦 The video is above the safe Telegram preview limit, so the file is not "
             "attached here. The publication approval button remains available."
         ),
         PublicationMessageKey.PUBLISH_X: "🚀 Publish to X",
