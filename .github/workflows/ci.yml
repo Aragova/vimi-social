@@ -110,6 +110,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VIMI_PUBLIC_HOST: staging.example.com
+      VIMI_IMAGE_TAG: ci
       VIMI_POSTGRES_BOOTSTRAP_PASSWORD: bootstrap_ci
       VIMI_APP_DB_PASSWORD: app_ci
       VIMI_MIGRATOR_DB_PASSWORD: migrator_ci
@@ -209,6 +210,33 @@ jobs:
           -f infra/docker/docker-compose.staging.yml
           up --no-deps --force-recreate --abort-on-container-exit
           --exit-code-from media-init media-init
+      - name: Start bot, API and Temporal
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          up -d --wait bot api
+      - name: Start background workers
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          up -d worker media-worker destination-worker
+      - name: Verify background workers remain running
+        run: |
+          sleep 10
+          running="$(docker compose --env-file .env.staging -f infra/docker/docker-compose.staging.yml ps --status running --services)"
+          for service in worker media-worker destination-worker; do
+            echo "$running" | grep -Fx "$service"
+          done
+      - name: Show staging smoke logs on failure
+        if: failure()
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          logs --no-color --tail=200
+          postgres temporal bot worker media-worker destination-worker api
       - name: Clean compose smoke resources
         if: always()
         run: >-
