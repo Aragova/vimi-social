@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from vimi_social.db.tenant import tenant_transaction
@@ -35,7 +36,7 @@ class CountingConnector:
         return ()
 
 
-def _session_factory() -> tuple[object, sessionmaker[Session]]:
+def _session_factory() -> tuple[Engine, sessionmaker[Session]]:
     engine = create_engine(_database_dsn())
     return engine, sessionmaker[Session](
         bind=engine,
