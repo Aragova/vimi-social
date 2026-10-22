@@ -7,16 +7,23 @@ from sqlalchemy.orm import Session
 from vimi_social.db.tenant import tenant_transaction
 from vimi_social.domain.identity import OperationKey
 from vimi_social.domain.source import SourceTask
+from vimi_social.source.conversation_state import consume_ai_search_conversation
 from vimi_social.source.repository import SourceTaskRepository
 from vimi_social.telegram.identity import TelegramPrincipal
 from vimi_social.usage.models import ReservationRequest
 from vimi_social.usage.repository import UsageRepository
+
+_MAX_SOURCE_TASK_INTENT_LENGTH = 4000
 
 _EXPLICIT_SOURCE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("x", re.compile(r"(?:^|\W)(?:x|twitter|твиттер\w*)(?:\W|$)", re.IGNORECASE)),
     ("telegram", re.compile(r"(?:telegram|телеграм\w*)", re.IGNORECASE)),
     ("reddit", re.compile(r"(?:reddit|реддит\w*)", re.IGNORECASE)),
 )
+
+
+class SourceTaskIntentTooLong(ValueError):
+    pass
 
 
 class SourceTaskService:
@@ -60,6 +67,10 @@ class SourceTaskService:
         normalized_intent = " ".join(intent.split())
         if not normalized_intent:
             return None
+        if len(normalized_intent) > _MAX_SOURCE_TASK_INTENT_LENGTH:
+            raise SourceTaskIntentTooLong(
+                f"AI Search intent exceeds {_MAX_SOURCE_TASK_INTENT_LENGTH} characters"
+            )
 
         operation_key = OperationKey(f"source-task:telegram:{chat_id}:{message_id}")
         requested_sources = infer_requested_sources(normalized_intent)
@@ -80,7 +91,7 @@ class SourceTaskService:
                     telegram_chat_id=chat_id,
                 )
             else:
-                if not self._repository.is_waiting_for_ai_search(
+                if not consume_ai_search_conversation(
                     session,
                     tenant_id=principal.context.tenant_id,
                     user_id=principal.user_id,
@@ -99,12 +110,6 @@ class SourceTaskService:
                     telegram_message_id=message_id,
                     telegram_chat_id=chat_id,
                     locale=principal.locale.value,
-                )
-                self._repository.clear_ai_search_conversation(
-                    session,
-                    tenant_id=principal.context.tenant_id,
-                    user_id=principal.user_id,
-                    chat_id=chat_id,
                 )
 
             self._usage_repository.reserve(
