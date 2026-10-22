@@ -1,6 +1,6 @@
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
@@ -147,7 +147,6 @@ class TelegramMessenger:
             update_id=update_id,
             action=action,
             chat_id=chat_id,
-            message=message,
             payload_sha256=_message_fingerprint(chat_id, message),
             dispatch=lambda: self._gateway.send_message(chat_id, message),
         )
@@ -165,7 +164,6 @@ class TelegramMessenger:
             update_id=update_id,
             action=action,
             chat_id=chat_id,
-            message=message,
             payload_sha256=_video_fingerprint(chat_id, video_sha256, message),
             dispatch=lambda: self._gateway.send_video(chat_id, video_path, message),
         )
@@ -176,11 +174,9 @@ class TelegramMessenger:
         update_id: int,
         action: str,
         chat_id: int,
-        message: OutgoingMessage,
         payload_sha256: str,
-        dispatch: Callable[[], object],
+        dispatch: Callable[[], Awaitable[None]],
     ) -> TelegramOutgoingState:
-        del message
         operation_key = f"telegram:update:{update_id}:{action}"
         self._store.prepare(operation_key, update_id, chat_id, action, payload_sha256)
         decision = self._store.begin(operation_key)
@@ -195,10 +191,7 @@ class TelegramMessenger:
             return TelegramOutgoingState.FAILED_SAFE
 
         try:
-            pending = dispatch()
-            if not hasattr(pending, "__await__"):
-                raise TypeError("telegram dispatch callback must return an awaitable")
-            await pending  # type: ignore[misc]
+            await dispatch()
         except TelegramGatewayRateLimited as error:
             self._store.defer(operation_key, error.retry_after_seconds)
             raise TelegramMessageRetryAfter(error.retry_after_seconds) from None
