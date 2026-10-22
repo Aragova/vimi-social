@@ -127,7 +127,7 @@ def build_media_preparation_result(
     if result.duration_ms is not None:
         lines.append(f"⏱ {_duration_label(result.duration_ms)}")
     if result.width is not None and result.height is not None:
-        lines.append(f"📐 {result.width}×{result.height}")
+        lines.append(f"📐 {result.width}x{result.height}")
     if result.size_bytes is not None:
         lines.append(f"💾 {_size_label(result.size_bytes)}")
     lines.append(f"🔞 {_adult_label(locale, result.adult_classification)}")
