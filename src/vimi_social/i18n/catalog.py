@@ -60,7 +60,7 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
             "🔎 Задача сохранена. Scout начал поиск по подключённым источникам."
         ),
         MessageKey.AI_SEARCH_INTENT_TOO_LONG: (
-            "⚠️ Запрос слишком длинный. Сократите его до 4000 символов и отправьте снова."
+            "⚠️ Запрос слишком длинный. Сократите его до 4000 символов и отправьте снова."  # noqa: RUF001
         ),
         MessageKey.SCOUT_RESULTS: (
             "🔎 Найдено: {discovered}\nПосле нормализации: {candidates}"  # noqa: RUF001
