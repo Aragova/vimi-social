@@ -1,6 +1,5 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import cast
 from uuid import UUID
 
