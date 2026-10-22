@@ -164,7 +164,7 @@ with the configured Telegram secret-token header and verifies the resulting webh
 Open the dedicated staging bot in Telegram and send `/start`.
 This creates/resolves the Telegram identity, user, workspace, tenant, locale, and initial usage capacity through the normal application path.
 
-To identify the new staging tenant while OAuth/account-management UI is not implemented yet:
+To identify the new staging tenant while OAuth/account-management UI is not implemented yet, resolve each Telegram identity through its workspace membership using the same default-first ordering as the application:
 
 ```bash
 docker compose \
@@ -172,7 +172,7 @@ docker compose \
   -f infra/docker/docker-compose.staging.yml \
   exec postgres \
   psql -U vimi_bootstrap -d vimi \
-  -c "SELECT telegram_user_id, tenant_id, username, created_at FROM telegram_identity ORDER BY created_at DESC;"
+  -c "SELECT ti.telegram_user_id, wm.tenant_id, ti.username, ti.last_seen_at FROM telegram_identity AS ti JOIN LATERAL (SELECT tenant_id FROM workspace_membership WHERE user_id = ti.user_id ORDER BY is_default DESC, created_at ASC LIMIT 1) AS wm ON TRUE ORDER BY ti.last_seen_at DESC;"
 ```
 
 Use the tenant UUID belonging to the staging Telegram account only.
