@@ -16,7 +16,9 @@ It is intentionally a staging topology, not the final horizontally scaled produc
 - One-shot database role provisioning and Alembic migration steps.
 - Persistent PostgreSQL, media, and Caddy volumes.
 
-Only ports 80/443 are published by the staging compose file. PostgreSQL and Temporal remain on the internal Docker network. Processes that must call Telegram/X/OpenAI also join a separate outbound-only Docker bridge; they still publish no host ports.
+Only ports 80/443 are published by the staging compose file. PostgreSQL and Temporal remain on the internal Docker network. Processes that must call Telegram/X/OpenAI also join a separate egress-capable Docker bridge; they still publish no host ports.
+
+The Compose model deliberately scopes credentials by process: Caddy does not receive application secrets; source-search credentials stay with the core worker; visual-moderation credentials stay with the media worker; and the X publication credential stays with the destination worker.
 
 ## VM prerequisites
 
@@ -67,6 +69,8 @@ Replace every `CHANGE_ME` value and fill these external credentials:
 
 Database passwords are passed to PostgreSQL through environment variables and to psycopg through `PGPASSWORD`; they are not embedded in application DSNs.
 
+Keep `VIMI_POSTGRES_BOOTSTRAP_PASSWORD` stable after the PostgreSQL volume has been initialized. The official PostgreSQL image consumes `POSTGRES_PASSWORD` when creating a fresh cluster; changing the value in `.env.staging` later does not itself rotate the existing `vimi_bootstrap` database password. App and migrator passwords are re-applied by `db-provision` on every deployment.
+
 Never commit `.env.staging`.
 
 ## 3. Verify DNS and firewall
@@ -86,16 +90,16 @@ The helper performs, in order:
 
 1. validates `.env.staging` and rejects empty/`CHANGE_ME` values;
 2. validates the Compose model;
-3. builds the Python runtime image;
+3. builds one shared Python runtime image for the application processes;
 4. starts and waits for PostgreSQL;
-5. re-runs password-backed DB role provisioning;
-6. re-runs Alembic migrations with the migrator role;
-7. fixes persistent media-volume ownership for the non-root runtime UID;
+5. force-recreates and runs password-backed DB role provisioning;
+6. force-recreates and runs Alembic migrations with the migrator role;
+7. force-recreates media-volume initialization for the non-root runtime UID;
 8. starts Temporal;
 9. starts bot/core/media/destination/API/Caddy services;
 10. prints final Compose status.
 
-This sequence is used for both the first deployment and later updates, so database role provisioning and migrations are explicit every time.
+The completed one-shot service containers remain as the exact `service_completed_successfully` dependency evidence for the application startup. This sequence is used for both the first deployment and later updates, so database role provisioning and migrations are explicit every time.
 
 ## 5. Check deployment state
 
@@ -140,7 +144,7 @@ Do not continue to Telegram webhook configuration until HTTPS health succeeds.
 
 ## 7. Register the Telegram webhook
 
-The bot container already contains the helper script and staging environment.
+The bot container already contains the helper script and the minimal environment it needs.
 
 ```bash
 docker compose \
@@ -175,7 +179,7 @@ Use the tenant UUID belonging to the staging Telegram account only.
 
 ## 9. Provision one staging X destination
 
-Until customer OAuth/account-management lands, provision one destination account through the repository helper. The helper stores only the credential reference; the actual X token remains in `VIMI_DEST_X_PRIMARY_TOKEN`.
+Until customer OAuth/account-management lands, provision one destination account through the repository helper. The helper stores only the credential reference; the actual X token remains available only to the destination worker as `VIMI_DEST_X_PRIMARY_TOKEN`.
 
 ```bash
 docker compose \
