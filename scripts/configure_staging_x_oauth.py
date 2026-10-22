@@ -5,8 +5,8 @@ import argparse
 import base64
 import hashlib
 import json
-import selectors
 import secrets
+import selectors
 import subprocess
 import time
 from pathlib import Path
@@ -115,7 +115,7 @@ def _exchange_code(
         },
     )
     try:
-        with urlopen(request, timeout=20) as response:  # noqa: S310 - fixed HTTPS endpoint
+        with urlopen(request, timeout=20) as response:
             payload: Any = json.loads(response.read())
     except HTTPError as exc:
         raw_body = exc.read().decode(errors="replace")
