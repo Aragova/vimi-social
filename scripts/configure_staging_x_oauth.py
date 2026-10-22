@@ -10,7 +10,7 @@ import selectors
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
+from typing import cast
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import Request, urlopen
@@ -27,7 +27,7 @@ def _read_env_value(path: Path, key: str) -> str:
     raise RuntimeError(f"{key} is missing from {path}")
 
 
-def _write_env_value(path: Path, key: str, value: str) -> None:
+def write_env_value(path: Path, key: str, value: str) -> None:
     lines = path.read_text().splitlines()
     updated: list[str] = []
     found = False
@@ -45,16 +45,20 @@ def _write_env_value(path: Path, key: str, value: str) -> None:
 
 def _load_client_id(path: Path) -> str:
     try:
-        payload = json.loads(path.read_text())
+        payload_obj: object = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"cannot read X OAuth client config from {path}") from exc
-    client_id = str(payload.get("client_id", "")).strip()
+    if not isinstance(payload_obj, dict):
+        raise RuntimeError(f"invalid X OAuth client config in {path}")
+    payload = cast(dict[str, object], payload_obj)
+    client_id_raw = payload.get("client_id")
+    client_id = client_id_raw.strip() if isinstance(client_id_raw, str) else ""
     if not client_id:
         raise RuntimeError(f"client_id is missing from {path}")
     return client_id
 
 
-def _request_target(line: str) -> str | None:
+def request_target(line: str) -> str | None:
     parts = line.split('"')
     if len(parts) < 2:
         return None
@@ -64,8 +68,8 @@ def _request_target(line: str) -> str | None:
     return request_parts[1]
 
 
-def _callback_code(request_target: str, expected_state: str) -> str | None:
-    query = parse_qs(urlsplit(request_target).query)
+def callback_code(request_target_value: str, expected_state: str) -> str | None:
+    query = parse_qs(urlsplit(request_target_value).query)
     state = query.get("state", [""])[0]
     code = query.get("code", [""])[0]
     if state != expected_state or not code:
@@ -73,7 +77,7 @@ def _callback_code(request_target: str, expected_state: str) -> str | None:
     return code
 
 
-def _authorization_url(
+def authorization_url(
     *, client_id: str, redirect_uri: str, state: str, code_challenge: str
 ) -> str:
     params = {
@@ -116,27 +120,38 @@ def _exchange_code(
     )
     try:
         with urlopen(request, timeout=20) as response:
-            payload: Any = json.loads(response.read())
+            payload_obj: object = json.loads(response.read())
     except HTTPError as exc:
         raw_body = exc.read().decode(errors="replace")
         try:
-            error_payload = json.loads(raw_body)
+            error_obj: object = json.loads(raw_body)
         except json.JSONDecodeError:
-            error_payload = {}
-        error = str(error_payload.get("error", "unknown_error"))
-        description = str(error_payload.get("error_description", "")).strip()
+            error_obj = {}
+        error_payload = (
+            cast(dict[str, object], error_obj) if isinstance(error_obj, dict) else {}
+        )
+        error_raw = error_payload.get("error")
+        description_raw = error_payload.get("error_description")
+        error = error_raw if isinstance(error_raw, str) and error_raw else "unknown_error"
+        description = description_raw.strip() if isinstance(description_raw, str) else ""
         detail = f" {description}" if description else ""
         raise RuntimeError(
             f"X token exchange failed: HTTP {exc.code} {error}{detail}"
         ) from exc
 
-    if not isinstance(payload, dict):
+    if not isinstance(payload_obj, dict):
         raise RuntimeError("X token exchange returned an invalid response")
-    access_token = str(payload.get("access_token", "")).strip()
+    payload = cast(dict[str, object], payload_obj)
+    access_raw = payload.get("access_token")
+    access_token = access_raw.strip() if isinstance(access_raw, str) else ""
     if not access_token:
         raise RuntimeError("X token exchange returned no access_token")
     refresh_raw = payload.get("refresh_token")
-    refresh_token = str(refresh_raw).strip() if refresh_raw else None
+    refresh_token = (
+        refresh_raw.strip()
+        if isinstance(refresh_raw, str) and refresh_raw.strip()
+        else None
+    )
     return access_token, refresh_token
 
 
@@ -171,10 +186,10 @@ def _wait_for_code(
                 if process.poll() is not None:
                     raise RuntimeError("nginx access-log watcher stopped unexpectedly")
                 continue
-            request_target = _request_target(line)
-            if request_target is None:
+            target = request_target(line)
+            if target is None:
                 continue
-            code = _callback_code(request_target, expected_state)
+            code = callback_code(target, expected_state)
             if code is not None:
                 return code
     finally:
@@ -252,7 +267,7 @@ def main() -> int:
     args.client_config.write_text(json.dumps(state_payload))
     args.client_config.chmod(0o600)
 
-    authorization_url = _authorization_url(
+    oauth_url = authorization_url(
         client_id=client_id,
         redirect_uri=redirect_uri,
         state=state,
@@ -260,7 +275,7 @@ def main() -> int:
     )
 
     print("Open this X authorization URL now:")
-    print(authorization_url)
+    print(oauth_url)
     print()
     print("Waiting for the X callback in nginx...")
 
@@ -276,7 +291,7 @@ def main() -> int:
         redirect_uri=redirect_uri,
         code_verifier=code_verifier,
     )
-    _write_env_value(
+    write_env_value(
         args.env_file,
         "VIMI_DEST_X_PRIMARY_TOKEN",
         access_token,
