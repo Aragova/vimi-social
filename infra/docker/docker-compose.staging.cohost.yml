@@ -1,7 +1,38 @@
 services:
+  # Co-host staging shares a small VM with the existing ViMi services. These
+  # ceilings keep staging from consuming all host RAM if one component runs
+  # hot or leaks memory. They apply only when this override file is used.
+  postgres:
+    mem_limit: 384m
+
+  db-provision:
+    mem_limit: 256m
+
+  temporal:
+    mem_limit: 512m
+
+  migrate:
+    mem_limit: 384m
+
+  media-init:
+    mem_limit: 128m
+
   bot:
+    mem_limit: 256m
     ports:
       - "127.0.0.1:${VIMI_STAGING_BOT_PORT:-18000}:8000"
+
+  worker:
+    mem_limit: 384m
+
+  media-worker:
+    mem_limit: 768m
+
+  destination-worker:
+    mem_limit: 256m
+
+  api:
+    mem_limit: 256m
 
   # In co-host mode the VM's existing nginx owns public 80/443 and proxies
   # only the staging hostname to the loopback-bound bot port above. Keeping
