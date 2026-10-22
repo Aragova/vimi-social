@@ -1,6 +1,6 @@
 import os
+import pathlib
 import subprocess
-from pathlib import Path
 
 import httpx
 import pytest
@@ -8,11 +8,11 @@ import pytest
 from vimi_social.ops.telegram_webhook import telegram_request
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 def _run_staging_deploy_validation(
-    tmp_path: Path,
+    tmp_path: pathlib.Path,
     *,
     openai_api_key: str = "",
     x_bearer_token: str = "x-source-test",
@@ -58,13 +58,13 @@ def _run_staging_deploy_validation(
     )
 
 
-def test_staging_deploy_allows_openai_key_to_be_empty(tmp_path: Path) -> None:
+def test_staging_deploy_allows_openai_key_to_be_empty(tmp_path: pathlib.Path) -> None:
     completed = _run_staging_deploy_validation(tmp_path, openai_api_key="")
 
     assert completed.returncode == 0, completed.stderr
 
 
-def test_staging_deploy_still_rejects_empty_required_secret(tmp_path: Path) -> None:
+def test_staging_deploy_still_rejects_empty_required_secret(tmp_path: pathlib.Path) -> None:
     completed = _run_staging_deploy_validation(tmp_path, x_bearer_token="")
 
     assert completed.returncode != 0
