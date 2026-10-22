@@ -1,4 +1,4 @@
-"""Add visual-classification, rendered-variant, and publication state."""
+"""Add visual classification, rendered variants, and destination publishing state."""
 
 from collections.abc import Sequence
 
@@ -75,50 +75,49 @@ def upgrade() -> None:
             CHECK (state IN ('ACTIVE', 'DISABLED', 'REAUTH_REQUIRED'))
         );
 
-        CREATE TABLE publication_operation (
-            id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-            tenant_id uuid NOT NULL REFERENCES tenant(id) ON DELETE CASCADE,
-            artifact_id uuid NOT NULL,
-            destination_account_id uuid NOT NULL,
-            operation_key text NOT NULL UNIQUE,
-            state text NOT NULL DEFAULT 'AWAITING_APPROVAL',
-            publish_attempt_token uuid NULL,
-            caption text NOT NULL DEFAULT '',
-            remote_media_id text NULL,
-            remote_post_id text NULL,
-            failure_code text NULL,
-            approved_by_user_id uuid NULL,
-            approved_at timestamptz NULL,
-            created_at timestamptz NOT NULL DEFAULT now(),
-            updated_at timestamptz NOT NULL DEFAULT now(),
-            UNIQUE (id, tenant_id),
-            UNIQUE (artifact_id, destination_account_id),
-            FOREIGN KEY (artifact_id, tenant_id)
+        -- `publication_operation` is the validated Architecture 1.0 authority
+        -- created by 0001. Extend it rather than creating a competing lifecycle.
+        ALTER TABLE publication_operation
+            ADD CONSTRAINT publication_operation_id_tenant_unique UNIQUE (id, tenant_id);
+        ALTER TABLE publication_operation
+            ADD COLUMN artifact_id uuid NULL,
+            ADD COLUMN destination_account_id uuid NULL,
+            ADD COLUMN publish_attempt_token uuid NULL,
+            ADD COLUMN caption text NOT NULL DEFAULT '',
+            ADD COLUMN remote_media_id text NULL,
+            ADD COLUMN remote_post_id text NULL,
+            ADD COLUMN failure_code text NULL,
+            ADD COLUMN approved_by_user_id uuid NULL,
+            ADD COLUMN approved_at timestamptz NULL;
+
+        ALTER TABLE publication_operation
+            ADD CONSTRAINT publication_operation_artifact_tenant_fk
+                FOREIGN KEY (artifact_id, tenant_id)
                 REFERENCES variant_artifact(id, tenant_id)
                 ON DELETE RESTRICT,
-            FOREIGN KEY (destination_account_id, tenant_id)
+            ADD CONSTRAINT publication_operation_destination_tenant_fk
+                FOREIGN KEY (destination_account_id, tenant_id)
                 REFERENCES destination_account(id, tenant_id)
                 ON DELETE RESTRICT,
-            FOREIGN KEY (tenant_id, approved_by_user_id)
+            ADD CONSTRAINT publication_operation_approved_member_fk
+                FOREIGN KEY (tenant_id, approved_by_user_id)
                 REFERENCES workspace_membership(tenant_id, user_id),
-            CHECK (length(operation_key) BETWEEN 1 AND 200),
-            CHECK (state IN (
-                'AWAITING_APPROVAL', 'READY', 'DISPATCHING', 'CONFIRMED',
-                'UNKNOWN', 'FAILED_SAFE', 'BLOCKED'
-            )),
-            CHECK (
-                (state = 'DISPATCHING' AND publish_attempt_token IS NOT NULL)
-                OR (state <> 'DISPATCHING' AND publish_attempt_token IS NULL)
-            ),
-            CHECK (state <> 'CONFIRMED' OR remote_post_id IS NOT NULL)
-        );
+            ADD CONSTRAINT publication_operation_artifact_destination_unique
+                UNIQUE (artifact_id, destination_account_id);
+
+        ALTER TABLE publication_operation
+            DROP CONSTRAINT publication_operation_state_check;
+        ALTER TABLE publication_operation
+            ADD CONSTRAINT publication_operation_state_check CHECK (state IN (
+                'REQUESTED','RESERVED','AWAITING_APPROVAL','READY','DISPATCHING',
+                'PROVIDER_ACCEPTED','UNKNOWN','CONFIRMED','FAILED_SAFE',
+                'FAILED_PERMANENT','BLOCKED'
+            ));
 
         ALTER TABLE variant_artifact ENABLE ROW LEVEL SECURITY;
         ALTER TABLE variant_artifact FORCE ROW LEVEL SECURITY;
         ALTER TABLE destination_account ENABLE ROW LEVEL SECURITY;
         ALTER TABLE destination_account FORCE ROW LEVEL SECURITY;
-        ALTER TABLE publication_operation ENABLE ROW LEVEL SECURITY;
-        ALTER TABLE publication_operation FORCE ROW LEVEL SECURITY;
 
         CREATE POLICY variant_artifact_tenant_isolation ON variant_artifact
             USING (tenant_id::text = NULLIF(current_setting('app.tenant_id', true), ''))
@@ -126,14 +125,9 @@ def upgrade() -> None:
         CREATE POLICY destination_account_tenant_isolation ON destination_account
             USING (tenant_id::text = NULLIF(current_setting('app.tenant_id', true), ''))
             WITH CHECK (tenant_id::text = NULLIF(current_setting('app.tenant_id', true), ''));
-        CREATE POLICY publication_operation_tenant_isolation ON publication_operation
-            USING (tenant_id::text = NULLIF(current_setting('app.tenant_id', true), ''))
-            WITH CHECK (tenant_id::text = NULLIF(current_setting('app.tenant_id', true), ''));
 
-        REVOKE ALL ON variant_artifact, destination_account, publication_operation FROM PUBLIC;
-        GRANT SELECT, INSERT, UPDATE ON variant_artifact TO vimi_app;
-        GRANT SELECT, INSERT, UPDATE ON destination_account TO vimi_app;
-        GRANT SELECT, INSERT, UPDATE ON publication_operation TO vimi_app;
+        REVOKE ALL ON variant_artifact, destination_account FROM PUBLIC;
+        GRANT SELECT, INSERT, UPDATE ON variant_artifact, destination_account TO vimi_app;
         GRANT UPDATE ON media_scene TO vimi_app;
 
         CREATE FUNCTION provision_default_render_capacity()
@@ -184,7 +178,31 @@ def downgrade() -> None:
         """
         DROP TRIGGER IF EXISTS tenant_provision_default_render_capacity ON public.tenant;
         DROP FUNCTION IF EXISTS provision_default_render_capacity();
-        DROP TABLE IF EXISTS publication_operation;
+
+        ALTER TABLE publication_operation
+            DROP CONSTRAINT IF EXISTS publication_operation_artifact_destination_unique,
+            DROP CONSTRAINT IF EXISTS publication_operation_approved_member_fk,
+            DROP CONSTRAINT IF EXISTS publication_operation_destination_tenant_fk,
+            DROP CONSTRAINT IF EXISTS publication_operation_artifact_tenant_fk,
+            DROP CONSTRAINT IF EXISTS publication_operation_id_tenant_unique;
+        ALTER TABLE publication_operation
+            DROP COLUMN IF EXISTS approved_at,
+            DROP COLUMN IF EXISTS approved_by_user_id,
+            DROP COLUMN IF EXISTS failure_code,
+            DROP COLUMN IF EXISTS remote_post_id,
+            DROP COLUMN IF EXISTS remote_media_id,
+            DROP COLUMN IF EXISTS caption,
+            DROP COLUMN IF EXISTS publish_attempt_token,
+            DROP COLUMN IF EXISTS destination_account_id,
+            DROP COLUMN IF EXISTS artifact_id;
+        ALTER TABLE publication_operation
+            DROP CONSTRAINT IF EXISTS publication_operation_state_check;
+        ALTER TABLE publication_operation
+            ADD CONSTRAINT publication_operation_state_check CHECK (state IN (
+                'REQUESTED','RESERVED','DISPATCHING','PROVIDER_ACCEPTED',
+                'UNKNOWN','CONFIRMED','FAILED_SAFE','FAILED_PERMANENT'
+            ));
+
         DROP TABLE IF EXISTS destination_account;
         DROP TABLE IF EXISTS variant_artifact;
         ALTER TABLE media_scene DROP CONSTRAINT IF EXISTS media_scene_classification_basis_check;
