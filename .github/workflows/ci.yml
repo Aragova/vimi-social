@@ -108,6 +108,16 @@ jobs:
 
   deployment:
     runs-on: ubuntu-latest
+    env:
+      VIMI_PUBLIC_HOST: staging.example.com
+      VIMI_POSTGRES_BOOTSTRAP_PASSWORD: bootstrap_ci
+      VIMI_APP_DB_PASSWORD: app_ci
+      VIMI_MIGRATOR_DB_PASSWORD: migrator_ci
+      VIMI_TELEGRAM_BOT_TOKEN: telegram_ci
+      VIMI_TELEGRAM_WEBHOOK_SECRET: webhook_ci
+      VIMI_X_BEARER_TOKEN: x_source_ci
+      VIMI_OPENAI_API_KEY: openai_ci
+      VIMI_DEST_X_PRIMARY_TOKEN: x_destination_ci
     steps:
       - uses: actions/checkout@v4
       - name: Prepare staging environment fixture
@@ -116,12 +126,39 @@ jobs:
         run: |
           sh -n infra/postgres/bootstrap_staging.sh
           sh -n scripts/deploy_staging.sh
-      - name: Validate Docker Compose model
+      - name: Render Docker Compose model
         run: >-
           docker compose
           --env-file .env.staging
           -f infra/docker/docker-compose.staging.yml
-          config --quiet
+          config --format json > /tmp/staging-compose.json
+      - name: Verify least-privilege secret scoping
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          services = json.loads(Path("/tmp/staging-compose.json").read_text())["services"]
+
+          def env_keys(service: str) -> set[str]:
+              environment = services[service].get("environment", {})
+              return set(environment)
+
+          assertions = {
+              "VIMI_POSTGRES_BOOTSTRAP_PASSWORD": {"postgres", "db-provision", "temporal"},
+              "VIMI_MIGRATOR_DB_PASSWORD": {"db-provision"},
+              "VIMI_TELEGRAM_WEBHOOK_SECRET": {"bot"},
+              "VIMI_X_BEARER_TOKEN": {"worker"},
+              "VIMI_OPENAI_API_KEY": {"media-worker"},
+              "VIMI_DEST_X_PRIMARY_TOKEN": {"destination-worker"},
+          }
+          for secret, expected_services in assertions.items():
+              actual = {name for name in services if secret in env_keys(name)}
+              if actual != expected_services:
+                  raise SystemExit(
+                      f"secret scope mismatch for {secret}: expected {expected_services}, got {actual}"
+                  )
+          PY
       - name: Validate Caddy configuration
         run: >-
           docker run --rm
