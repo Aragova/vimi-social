@@ -20,7 +20,9 @@ MP4_BYTES = b"\x00\x00\x00\x18ftypisom" + b"safe-video-payload"
 @dataclass
 class FakeResolver:
     answers: Mapping[str, Sequence[str]]
-    calls: list[tuple[str, int]] = field(default_factory=list)
+    calls: list[tuple[str, int]] = field(
+        default_factory=lambda: list[tuple[str, int]]()
+    )
 
     async def resolve(self, host: str, port: int) -> Sequence[str]:
         self.calls.append((host, port))
@@ -46,7 +48,7 @@ class ScriptedResponse:
 @dataclass
 class ScriptedTransport:
     responses: dict[str, list[ScriptedResponse]]
-    targets: list[ResolvedTarget] = field(default_factory=list)
+    targets: list[ResolvedTarget] = field(default_factory=lambda: list[ResolvedTarget]())
 
     async def open(
         self,
