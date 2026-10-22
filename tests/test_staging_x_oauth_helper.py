@@ -1,10 +1,10 @@
 from pathlib import Path
 
 from scripts.configure_staging_x_oauth import (
-    _authorization_url,
-    _callback_code,
-    _request_target,
-    _write_env_value,
+    authorization_url,
+    callback_code,
+    request_target,
+    write_env_value,
 )
 
 
@@ -14,17 +14,17 @@ def test_request_target_extracts_nginx_request_path() -> None:
         '"GET /?state=abc&code=xyz HTTP/1.1" 200 32 "-" "Mozilla"'
     )
 
-    assert _request_target(line) == "/?state=abc&code=xyz"
+    assert request_target(line) == "/?state=abc&code=xyz"
 
 
 def test_callback_code_requires_matching_state() -> None:
-    assert _callback_code("/?state=expected&code=abc123", "expected") == "abc123"
-    assert _callback_code("/?state=other&code=abc123", "expected") is None
-    assert _callback_code("/?state=expected", "expected") is None
+    assert callback_code("/?state=expected&code=abc123", "expected") == "abc123"
+    assert callback_code("/?state=other&code=abc123", "expected") is None
+    assert callback_code("/?state=expected", "expected") is None
 
 
 def test_authorization_url_contains_required_oauth_values() -> None:
-    url = _authorization_url(
+    url = authorization_url(
         client_id="client-id",
         redirect_uri="https://staging.usevimi.ru/",
         state="state-value",
@@ -46,7 +46,7 @@ def test_write_env_value_replaces_only_requested_key(tmp_path: Path) -> None:
         "VIMI_X_BEARER_TOKEN=source-token\n"
     )
 
-    _write_env_value(env_file, "VIMI_DEST_X_PRIMARY_TOKEN", "new-token")
+    write_env_value(env_file, "VIMI_DEST_X_PRIMARY_TOKEN", "new-token")
 
     assert env_file.read_text() == (
         "VIMI_PUBLIC_HOST=staging.usevimi.ru\n"
