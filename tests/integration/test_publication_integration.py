@@ -86,7 +86,7 @@ def _seed_ready_variant(
                 :candidate_id, :tenant_id, :source_task_id, 'x', :source_id,
                 :source_url, '42', 'video', 20000, 1080, 1920,
                 'Publish integration', 'training clip', '{}', '{}'::jsonb,
-                'NO_ADULT_SIGNAL_DETECTED', NULL,
+                'UNKNOWN', NULL,
                 'USER_CONFIRMED_REUSE_RIGHTS', 'READY', '{}'::jsonb
             )
             """
