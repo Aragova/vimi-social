@@ -5,6 +5,7 @@ __pycache__/
 .pyright/
 .venv/
 .env
+.env.staging
 node_modules/
 .next/
 dist/
