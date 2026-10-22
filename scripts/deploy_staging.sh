@@ -3,6 +3,8 @@ set -eu
 
 ENV_FILE="${VIMI_STAGING_ENV_FILE:-.env.staging}"
 COMPOSE_FILE="infra/docker/docker-compose.staging.yml"
+COHOST_COMPOSE_FILE="infra/docker/docker-compose.staging.cohost.yml"
+COHOST_MODE="${VIMI_STAGING_COHOST:-false}"
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "Missing staging environment file: $ENV_FILE" >&2
@@ -15,8 +17,24 @@ if grep -Eq '^[A-Z0-9_]+=(|CHANGE_ME.*)$' "$ENV_FILE"; then
   exit 1
 fi
 
+case "$COHOST_MODE" in
+  true|false) ;;
+  *)
+    echo "VIMI_STAGING_COHOST must be 'true' or 'false'." >&2
+    exit 1
+    ;;
+esac
+
 compose() {
-  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  if [ "$COHOST_MODE" = "true" ]; then
+    docker compose \
+      --env-file "$ENV_FILE" \
+      -f "$COMPOSE_FILE" \
+      -f "$COHOST_COMPOSE_FILE" \
+      "$@"
+  else
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  fi
 }
 
 run_one_shot() {
@@ -46,6 +64,12 @@ run_one_shot media-init
 # Temporal may take a short period to become ready; durable workers are configured
 # with restart policies and will reconnect rather than requiring external mutation retries.
 compose up -d temporal
-compose up -d bot worker media-worker destination-worker api caddy
+if [ "$COHOST_MODE" = "true" ]; then
+  # Existing host ingress owns 80/443. The co-host override publishes only the
+  # bot on loopback for nginx and deliberately leaves Caddy stopped.
+  compose up -d bot worker media-worker destination-worker api
+else
+  compose up -d bot worker media-worker destination-worker api caddy
+fi
 
 compose ps
