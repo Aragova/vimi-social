@@ -8,7 +8,7 @@ It is intentionally a staging topology, not the final horizontally scaled produc
 - Caddy: public HTTPS ingress for the Telegram webhook.
 - Telegram bot FastAPI process.
 - Core Temporal worker.
-- Media Temporal worker with ffmpeg/ffprobe and visual moderation.
+- Media Temporal worker with ffmpeg/ffprobe and optional visual moderation.
 - Destination Temporal worker for X publication/reconciliation.
 - Internal API process.
 - PostgreSQL 17.
@@ -18,7 +18,7 @@ It is intentionally a staging topology, not the final horizontally scaled produc
 
 Only ports 80/443 are published by the staging compose file. PostgreSQL and Temporal remain on the internal Docker network. Processes that must call Telegram/X/OpenAI also join a separate egress-capable Docker bridge; they still publish no host ports.
 
-The Compose model deliberately scopes credentials by process: Caddy does not receive application secrets; source-search credentials stay with the core worker; visual-moderation credentials stay with the media worker; and the X publication credential stays with the destination worker.
+The Compose model deliberately scopes credentials by process: Caddy does not receive application secrets; source-search credentials stay with the core worker; visual-moderation credentials, when configured, stay with the media worker; and the X publication credential stays with the destination worker.
 
 ## VM prerequisites
 
@@ -64,7 +64,7 @@ Replace every `CHANGE_ME` value and fill these external credentials:
 - `VIMI_TELEGRAM_BOT_TOKEN`: dedicated staging Telegram bot token.
 - `VIMI_TELEGRAM_WEBHOOK_SECRET`: random webhook secret.
 - `VIMI_X_BEARER_TOKEN`: X source-search credential.
-- `VIMI_OPENAI_API_KEY`: key used by sampled-frame visual moderation.
+- `VIMI_OPENAI_API_KEY`: optional key used by sampled-frame visual moderation; leave it blank to disable that OpenAI-backed stage.
 - `VIMI_DEST_X_PRIMARY_TOKEN`: user-context X credential allowed to upload media and create posts.
 
 Database passwords are passed to PostgreSQL through environment variables and to psycopg through `PGPASSWORD`; they are not embedded in application DSNs.
@@ -88,7 +88,7 @@ sh scripts/deploy_staging.sh
 
 The helper performs, in order:
 
-1. validates `.env.staging` and rejects empty/`CHANGE_ME` values;
+1. validates `.env.staging`, rejects `CHANGE_ME` placeholders and requires the DB/Telegram/X values needed for the staging path; `VIMI_OPENAI_API_KEY` may remain empty;
 2. validates the Compose model;
 3. builds one shared Python runtime image for the application processes;
 4. starts and waits for PostgreSQL;
@@ -202,7 +202,7 @@ Run the real product path through Telegram:
 4. Confirm the rights/provenance gate when requested.
 5. Wait for secure media acquisition and MediaProbe.
 6. Confirm scene detection/ranking completes.
-7. Confirm sampled-frame visual moderation runs when `VIMI_OPENAI_API_KEY` is configured.
+7. Confirm sampled-frame visual moderation runs when `VIMI_OPENAI_API_KEY` is configured; otherwise confirm the rest of the media path proceeds without that optional stage.
 8. Confirm destination preflight and VariantPlanner complete.
 9. Confirm the rendered/passthrough video preview arrives in Telegram.
 10. Confirm the publish button is shown only for an allowed policy decision.
