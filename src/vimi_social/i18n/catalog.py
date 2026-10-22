@@ -19,9 +19,11 @@ class MessageKey(StrEnum):
     SOURCE_FEED = "source_feed"
     AI_SEARCH_PROMPT = "ai_search_prompt"
     AI_SEARCH_STARTED = "ai_search_started"
+    AI_SEARCH_INTENT_TOO_LONG = "ai_search_intent_too_long"
     SCOUT_RESULTS = "scout_results"
     SCOUT_EMPTY = "scout_empty"
     SCOUT_FAILED = "scout_failed"
+    SCOUT_UNKNOWN = "scout_unknown"
     SCOUT_QUOTA_EXCEEDED = "scout_quota_exceeded"
     VIEW = "view"
     SELECT = "select"
@@ -57,6 +59,9 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         MessageKey.AI_SEARCH_STARTED: (
             "🔎 Задача сохранена. Scout начал поиск по подключённым источникам."
         ),
+        MessageKey.AI_SEARCH_INTENT_TOO_LONG: (
+            "⚠️ Запрос слишком длинный. Сократите его до 4000 символов и отправьте снова."
+        ),
         MessageKey.SCOUT_RESULTS: (
             "🔎 Найдено: {discovered}\nПосле нормализации: {candidates}"  # noqa: RUF001
         ),
@@ -67,6 +72,10 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         MessageKey.SCOUT_FAILED: (
             "⚠️ Scout не смог завершить поиск безопасно. "
             "Задача остановлена без повторной отправки внешних операций."
+        ),
+        MessageKey.SCOUT_UNKNOWN: (
+            "⚠️ Результат Scout неоднозначен: предыдущая попытка могла ещё выполняться. "
+            "ViMi не запускает платный поиск повторно вслепую."
         ),
         MessageKey.SCOUT_QUOTA_EXCEEDED: (
             "⚠️ Лимит AI-поиска для этого workspace исчерпан или ещё не настроен."
@@ -113,6 +122,9 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         MessageKey.AI_SEARCH_STARTED: (
             "🔎 Task saved. Scout started searching the connected sources."
         ),
+        MessageKey.AI_SEARCH_INTENT_TOO_LONG: (
+            "⚠️ The request is too long. Shorten it to 4000 characters and send it again."
+        ),
         MessageKey.SCOUT_RESULTS: "🔎 Found: {discovered}\nNormalized: {candidates}",
         MessageKey.SCOUT_EMPTY: (
             "🔎 No suitable videos were found for this query yet. "
@@ -121,6 +133,10 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         MessageKey.SCOUT_FAILED: (
             "⚠️ Scout could not complete the search safely. "
             "The task stopped without blindly repeating external operations."
+        ),
+        MessageKey.SCOUT_UNKNOWN: (
+            "⚠️ Scout has an ambiguous outcome: a previous attempt may still have been running. "
+            "ViMi will not blindly repeat the paid search."
         ),
         MessageKey.SCOUT_QUOTA_EXCEEDED: (
             "⚠️ The AI Search limit for this workspace is exhausted or not configured yet."
