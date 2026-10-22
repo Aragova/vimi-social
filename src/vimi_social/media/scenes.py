@@ -1,6 +1,7 @@
 import math
 import re
 from collections.abc import Sequence
+from itertools import pairwise
 from pathlib import Path
 from typing import Protocol
 
@@ -91,9 +92,7 @@ class SceneDetector:
 
         scenes = tuple(
             SceneBoundary(ordinal=index, start_ms=start, end_ms=end)
-            for index, (start, end) in enumerate(
-                zip(boundaries[:-1], boundaries[1:], strict=True)
-            )
+            for index, (start, end) in enumerate(pairwise(boundaries))
             if end > start
         )
         if not scenes:
@@ -133,7 +132,10 @@ class SceneRanker:
                     adult_classification=classification.adult,
                     explicitness_score=classification.explicitness_score,
                     classification_basis=SceneClassificationBasis.ASSET_LEVEL_INHERITED,
-                    signals=classification.signals + ("scene_classification_inherits_asset_baseline",),
+                    signals=(
+                        *classification.signals,
+                        "scene_classification_inherits_asset_baseline",
+                    ),
                 )
             )
         return tuple(sorted(ranked, key=lambda scene: (-scene.rank_score, scene.ordinal)))
