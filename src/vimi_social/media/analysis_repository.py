@@ -256,42 +256,53 @@ class MediaAnalysisRepository:
             scene_ids[scene.ordinal] = UUID(str(persisted_id))
 
         recipe = plan.recipe
-        plan_id = UUID(
-            session.execute(
+        inserted_plan_id = session.execute(
+            text(
+                """
+                INSERT INTO variant_plan (
+                    tenant_id, analysis_id, asset_id, destination, decision,
+                    capability_version, policy_version, planner_version,
+                    render_strategy, expected_duration_ms, requires_sensitive_label,
+                    reason_codes
+                ) VALUES (
+                    :tenant_id, :analysis_id, :asset_id, :destination, :decision,
+                    :capability_version, :policy_version, :planner_version,
+                    :render_strategy, :expected_duration_ms, :requires_sensitive_label,
+                    :reason_codes
+                )
+                ON CONFLICT (analysis_id, destination) DO NOTHING
+                RETURNING id::text
+                """
+            ),
+            {
+                "tenant_id": str(analysis.tenant_id),
+                "analysis_id": str(analysis.id),
+                "asset_id": str(analysis.asset_id),
+                "destination": plan.destination,
+                "decision": plan.decision.value,
+                "capability_version": plan.capability_version,
+                "policy_version": plan.policy_version,
+                "planner_version": plan.planner_version,
+                "render_strategy": recipe.strategy.value if recipe is not None else None,
+                "expected_duration_ms": recipe.expected_duration_ms if recipe is not None else None,
+                "requires_sensitive_label": plan.requires_sensitive_label,
+                "reason_codes": list(plan.reason_codes),
+            },
+        ).scalar_one_or_none()
+        if inserted_plan_id is None:
+            persisted_plan_id = session.execute(
                 text(
                     """
-                    INSERT INTO variant_plan (
-                        tenant_id, analysis_id, asset_id, destination, decision,
-                        capability_version, policy_version, planner_version,
-                        render_strategy, expected_duration_ms, requires_sensitive_label,
-                        reason_codes
-                    ) VALUES (
-                        :tenant_id, :analysis_id, :asset_id, :destination, :decision,
-                        :capability_version, :policy_version, :planner_version,
-                        :render_strategy, :expected_duration_ms, :requires_sensitive_label,
-                        :reason_codes
-                    )
-                    ON CONFLICT (analysis_id, destination) DO UPDATE SET
-                        decision = EXCLUDED.decision
-                    RETURNING id::text
+                    SELECT id::text FROM variant_plan
+                    WHERE analysis_id = :analysis_id AND destination = :destination
                     """
                 ),
-                {
-                    "tenant_id": str(analysis.tenant_id),
-                    "analysis_id": str(analysis.id),
-                    "asset_id": str(analysis.asset_id),
-                    "destination": plan.destination,
-                    "decision": plan.decision.value,
-                    "capability_version": plan.capability_version,
-                    "policy_version": plan.policy_version,
-                    "planner_version": plan.planner_version,
-                    "render_strategy": recipe.strategy.value if recipe is not None else None,
-                    "expected_duration_ms": recipe.expected_duration_ms if recipe is not None else None,
-                    "requires_sensitive_label": plan.requires_sensitive_label,
-                    "reason_codes": list(plan.reason_codes),
-                },
+                {"analysis_id": str(analysis.id), "destination": plan.destination},
             ).scalar_one()
-        )
+            plan_id = UUID(str(persisted_plan_id))
+        else:
+            plan_id = UUID(str(inserted_plan_id))
+
         if recipe is not None:
             for index, segment in enumerate(recipe.segments):
                 scene_id = scene_ids.get(segment.scene_ordinal)
