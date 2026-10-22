@@ -9,16 +9,13 @@ from temporalio import activity
 
 from vimi_social.db.tenant import tenant_transaction
 from vimi_social.domain.identity import OperationKey, TenantId
-from vimi_social.domain.media import MediaPreparationWorkflowInput
 from vimi_social.domain.publication import (
+    DestinationAccountState,
     ProviderMutationKind,
-    PublicationPreviewResult,
-    PublicationPreviewState,
     PublicationResult,
     PublicationState,
     PublicationWorkflowInput,
     ReconciliationKind,
-    RenderResult,
     VariantArtifactState,
 )
 from vimi_social.publication.repository import PublicationRepository
@@ -35,8 +32,10 @@ from vimi_social.usage.repository import UsageRepository
 class DispatchContext:
     tenant_id: TenantId
     publication_id: UUID
-    artifact_path: Path
+    artifact_storage_path: str
+    artifact_state: VariantArtifactState
     credential_ref: str
+    account_state: DestinationAccountState
     platform: str
     caption: str
 
@@ -61,68 +60,12 @@ class PublicationActivities:
         self._credential_resolver = credential_resolver or EnvironmentCredentialResolver()
         self._x_adapter = x_adapter or XDestinationAdapter()
 
-    @activity.defn(name="prepare_publication_preview")
-    def prepare_publication_preview(
-        self,
-        workflow_input: MediaPreparationWorkflowInput,
-        render_result: RenderResult,
-    ) -> PublicationPreviewResult:
-        if (
-            render_result.state is not VariantArtifactState.READY
-            or render_result.artifact_id is None
-        ):
-            return PublicationPreviewResult(
-                state=PublicationPreviewState.RENDER_FAILED,
-                artifact_id=render_result.artifact_id,
-                reason_code=render_result.failure_code or "VARIANT_RENDER_NOT_READY",
-            )
-        try:
-            artifact_id = UUID(render_result.artifact_id)
-        except ValueError:
-            return PublicationPreviewResult(
-                state=PublicationPreviewState.RENDER_FAILED,
-                reason_code="VARIANT_ARTIFACT_ID_INVALID",
-            )
-        tenant_id = self._resolve_source_tenant(
-            workflow_input.source_task_operation_key,
-            workflow_input.source_task_execution_token,
-        )
-        with self._session_factory() as session, tenant_transaction(session, tenant_id):
-            if not self._artifact_matches_workflow(session, artifact_id, workflow_input):
-                raise RuntimeError("publication preview artifact authority mismatch")
-            return self._repository.prepare_preview(
-                session,
-                artifact_id=artifact_id,
-                destination="x",
-            )
-
     @activity.defn(name="publish_destination")
     async def publish_destination(
         self,
         workflow_input: PublicationWorkflowInput,
     ) -> PublicationResult:
         context = self._authorized_dispatch_context(workflow_input)
-        try:
-            access_token = self._credential_resolver.resolve(context.credential_ref)
-        except DestinationCredentialError:
-            return self._fail_before_mutation(
-                context,
-                workflow_input.operation_key,
-                "DESTINATION_CREDENTIAL_UNAVAILABLE",
-            )
-        if context.platform != "x":
-            return self._fail_before_mutation(
-                context,
-                workflow_input.operation_key,
-                "DESTINATION_ADAPTER_NOT_CONFIGURED",
-            )
-        if not context.artifact_path.is_file():
-            return self._fail_before_mutation(
-                context,
-                workflow_input.operation_key,
-                "VARIANT_ARTIFACT_FILE_UNAVAILABLE",
-            )
-
         attempt_token = uuid4()
         with self._session_factory() as session, tenant_transaction(session, context.tenant_id):
             claim = self._repository.claim_dispatch(
@@ -130,12 +73,9 @@ class PublicationActivities:
                 publication_id=context.publication_id,
                 attempt_token=attempt_token,
             )
-            if claim.state is PublicationState.CONFIRMED:
-                operation = self._repository.get_by_id(session, context.publication_id)
-                if operation is None:
-                    raise RuntimeError("confirmed publication disappeared")
-                return _result(operation)
             if claim.state in {
+                PublicationState.CONFIRMED,
+                PublicationState.PROVIDER_ACCEPTED,
                 PublicationState.UNKNOWN,
                 PublicationState.FAILED_SAFE,
                 PublicationState.FAILED_PERMANENT,
@@ -161,6 +101,54 @@ class PublicationActivities:
                     raise RuntimeError("ambiguous publication disappeared")
                 return _result(operation)
 
+        operation_key = workflow_input.operation_key
+        if context.account_state is not DestinationAccountState.ACTIVE:
+            return self._finish_safe_precondition_failure(
+                context,
+                operation_key,
+                attempt_token,
+                "DESTINATION_ACCOUNT_NOT_ACTIVE",
+            )
+        if context.artifact_state is not VariantArtifactState.READY:
+            return self._finish_safe_precondition_failure(
+                context,
+                operation_key,
+                attempt_token,
+                "VARIANT_ARTIFACT_NOT_READY",
+            )
+        if context.platform != "x":
+            return self._finish_safe_precondition_failure(
+                context,
+                operation_key,
+                attempt_token,
+                "DESTINATION_ADAPTER_NOT_CONFIGURED",
+            )
+        try:
+            access_token = self._credential_resolver.resolve(context.credential_ref)
+        except DestinationCredentialError:
+            return self._finish_safe_precondition_failure(
+                context,
+                operation_key,
+                attempt_token,
+                "DESTINATION_CREDENTIAL_UNAVAILABLE",
+            )
+        try:
+            artifact_path = self._resolve_media_path(context.artifact_storage_path)
+        except RuntimeError:
+            return self._finish_safe_precondition_failure(
+                context,
+                operation_key,
+                attempt_token,
+                "VARIANT_ARTIFACT_PATH_INVALID",
+            )
+        if not artifact_path.is_file():
+            return self._finish_safe_precondition_failure(
+                context,
+                operation_key,
+                attempt_token,
+                "VARIANT_ARTIFACT_FILE_UNAVAILABLE",
+            )
+
         async def checkpoint_media(remote_media_id: str) -> bool:
             with self._session_factory() as checkpoint_session, tenant_transaction(
                 checkpoint_session,
@@ -175,7 +163,7 @@ class PublicationActivities:
 
         outcome = await self._x_adapter.publish_video(
             access_token=access_token,
-            video_path=context.artifact_path,
+            video_path=artifact_path,
             caption=context.caption,
             checkpoint_media=checkpoint_media,
         )
@@ -190,15 +178,15 @@ class PublicationActivities:
                 remote_post_id=outcome.remote_post_id,
                 failure_code=outcome.failure_code,
             )
-            operation_key = OperationKey(workflow_input.operation_key)
+            usage_key = OperationKey(operation_key)
             if result.state in {PublicationState.CONFIRMED, PublicationState.PROVIDER_ACCEPTED}:
-                self._usage_repository.commit(session, operation_key)
+                self._usage_repository.commit(session, usage_key)
             elif result.state in {
                 PublicationState.FAILED_SAFE,
                 PublicationState.FAILED_PERMANENT,
                 PublicationState.BLOCKED,
             }:
-                self._usage_repository.release(session, operation_key)
+                self._usage_repository.release(session, usage_key)
             return result
 
     @activity.defn(name="reconcile_destination_publication")
@@ -236,35 +224,24 @@ class PublicationActivities:
                 self._usage_repository.release(session, operation_key)
             return result
 
-    def _fail_before_mutation(
+    def _finish_safe_precondition_failure(
         self,
         context: DispatchContext,
         operation_key: str,
+        attempt_token: UUID,
         failure_code: str,
     ) -> PublicationResult:
-        attempt_token = uuid4()
         with self._session_factory() as session, tenant_transaction(session, context.tenant_id):
-            claim = self._repository.claim_dispatch(
+            result = self._repository.finish_mutation(
                 session,
                 publication_id=context.publication_id,
                 attempt_token=attempt_token,
+                state=PublicationState.FAILED_SAFE,
+                failure_code=failure_code,
             )
-            if claim.state is PublicationState.READY and not claim.owns_attempt:
-                raise RuntimeError("publication failed to claim safe failure transition")
-            if claim.state is PublicationState.DISPATCHING and claim.owns_attempt:
-                result = self._repository.finish_mutation(
-                    session,
-                    publication_id=context.publication_id,
-                    attempt_token=attempt_token,
-                    state=PublicationState.FAILED_SAFE,
-                    failure_code=failure_code,
-                )
+            if result.state is PublicationState.FAILED_SAFE:
                 self._usage_repository.release(session, OperationKey(operation_key))
-                return result
-            operation = self._repository.get_by_id(session, context.publication_id)
-            if operation is None:
-                raise RuntimeError("publication disappeared during safe failure")
-            return _result(operation)
+            return result
 
     def _authorized_dispatch_context(
         self,
@@ -290,7 +267,10 @@ class PublicationActivities:
                 text(
                     """
                     SELECT account.platform, account.credential_ref,
-                           artifact.storage_path, publication.caption
+                           account.state AS account_state,
+                           artifact.storage_path,
+                           artifact.state AS artifact_state,
+                           publication.caption
                     FROM publication_operation AS publication
                     JOIN destination_account AS account
                       ON account.id = publication.destination_account_id
@@ -299,29 +279,30 @@ class PublicationActivities:
                       ON artifact.id = publication.artifact_id
                      AND artifact.tenant_id = publication.tenant_id
                     WHERE publication.id = :publication_id
-                      AND account.state = 'ACTIVE'
-                      AND artifact.state = 'READY'
                     """
                 ),
                 {"publication_id": str(publication_id)},
             ).one_or_none()
             if row is None:
-                raise RuntimeError("publication destination or artifact is unavailable")
+                raise RuntimeError("publication destination or artifact binding is unavailable")
             if not allow_unknown and operation.state not in {
                 PublicationState.READY,
                 PublicationState.DISPATCHING,
                 PublicationState.CONFIRMED,
+                PublicationState.PROVIDER_ACCEPTED,
                 PublicationState.UNKNOWN,
                 PublicationState.FAILED_SAFE,
                 PublicationState.FAILED_PERMANENT,
+                PublicationState.BLOCKED,
             }:
                 raise RuntimeError("publication is not approved for dispatch")
-            path = self._resolve_media_path(str(row.storage_path))
             return DispatchContext(
                 tenant_id=tenant_id,
                 publication_id=publication_id,
-                artifact_path=path,
+                artifact_storage_path=str(row.storage_path),
+                artifact_state=VariantArtifactState(str(row.artifact_state)),
                 credential_ref=str(row.credential_ref),
+                account_state=DestinationAccountState(str(row.account_state)),
                 platform=str(row.platform),
                 caption=str(row.caption),
             )
@@ -337,43 +318,6 @@ class PublicationActivities:
                 operation_key=OperationKey(operation_key),
                 execution_token=token,
             )
-
-    def _artifact_matches_workflow(
-        self,
-        session: Session,
-        artifact_id: UUID,
-        workflow_input: MediaPreparationWorkflowInput,
-    ) -> bool:
-        return (
-            session.execute(
-                text(
-                    """
-                    SELECT 1
-                    FROM variant_artifact AS artifact
-                    JOIN variant_plan AS plan ON plan.id = artifact.plan_id
-                    JOIN media_analysis AS analysis ON analysis.id = plan.analysis_id
-                    JOIN media_preparation AS preparation
-                      ON preparation.id = analysis.preparation_id
-                    JOIN source_task_candidate AS candidate
-                      ON candidate.id = preparation.candidate_id
-                    JOIN source_task AS task ON task.id = candidate.source_task_id
-                    WHERE artifact.id = :artifact_id
-                      AND preparation.id = :preparation_id
-                      AND preparation.operation_key = :preparation_operation_key
-                      AND task.operation_key = :source_operation_key
-                      AND task.execution_token = :source_execution_token
-                    """
-                ),
-                {
-                    "artifact_id": str(artifact_id),
-                    "preparation_id": workflow_input.preparation_id,
-                    "preparation_operation_key": workflow_input.operation_key,
-                    "source_operation_key": workflow_input.source_task_operation_key,
-                    "source_execution_token": workflow_input.source_task_execution_token,
-                },
-            ).scalar_one_or_none()
-            is not None
-        )
 
     def _publication_matches_source(
         self,
