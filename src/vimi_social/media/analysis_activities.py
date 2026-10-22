@@ -10,7 +10,11 @@ from temporalio import activity
 from vimi_social.db.tenant import tenant_transaction
 from vimi_social.domain.analysis import MediaAnalysisResult, SceneAnalysisState
 from vimi_social.domain.identity import OperationKey, TenantId
-from vimi_social.domain.media import MediaAsset, MediaPreparationWorkflowInput, MediaPreparationState
+from vimi_social.domain.media import (
+    MediaAsset,
+    MediaPreparationState,
+    MediaPreparationWorkflowInput,
+)
 from vimi_social.media.analysis_repository import (
     MediaAnalysisOwnershipLost,
     MediaAnalysisRepository,
