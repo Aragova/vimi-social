@@ -65,8 +65,13 @@ class AiohttpResponseStream:
         return self._response.headers
 
     async def iter_chunks(self, chunk_size: int) -> AsyncIterator[bytes]:
-        async for chunk in self._response.content.iter_chunked(chunk_size):
-            yield bytes(chunk)
+        try:
+            async for chunk in self._response.content.iter_chunked(chunk_size):
+                yield bytes(chunk)
+        except asyncio.CancelledError:
+            raise
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            raise TransportError("HTTP response body failed during media ingest") from exc
 
     async def close(self) -> None:
         self._response.release()
