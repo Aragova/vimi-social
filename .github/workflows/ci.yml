@@ -55,6 +55,57 @@ jobs:
       - name: PostgreSQL integration tests
         run: pytest tests/integration
 
+  staging-database:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: vimi
+          POSTGRES_USER: vimi_bootstrap
+          POSTGRES_PASSWORD: bootstrap_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vimi_bootstrap -d vimi"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      POSTGRES_DB: vimi
+      POSTGRES_USER: vimi_bootstrap
+      VIMI_APP_DB_PASSWORD: app_ci
+      VIMI_MIGRATOR_DB_PASSWORD: migrator_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Provision staging roles with passwords
+        env:
+          PGPASSWORD: bootstrap_ci
+        run: sh infra/postgres/bootstrap_staging.sh
+      - name: Verify application role restrictions
+        env:
+          PGPASSWORD: bootstrap_ci
+        run: >-
+          test "$(psql -U vimi_bootstrap -d vimi -Atc
+          "SELECT rolsuper || '|' || rolcreaterole || '|' || rolcreatedb || '|' || rolreplication || '|' || rolbypassrls FROM pg_roles WHERE rolname = 'vimi_app'")"
+          = "false|false|false|false|false"
+      - name: Apply migrations with staging migrator credentials
+        env:
+          PGPASSWORD: migrator_ci
+          VIMI_MIGRATION_DATABASE_DSN: postgresql+psycopg://vimi_migrator@localhost:5432/vimi
+        run: alembic upgrade head
+      - name: Verify runtime application login
+        env:
+          PGPASSWORD: app_ci
+        run: psql -U vimi_app -d vimi -Atc "SELECT current_user" | grep -Fx vimi_app
+
   deployment:
     runs-on: ubuntu-latest
     steps:
