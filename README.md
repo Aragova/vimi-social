@@ -22,18 +22,35 @@ Read `docs/PRODUCT_VISION.md` first for the canonical product concept.
 
 ## Current stage
 
-Architecture research and executable PoCs A–E are complete. Red-Team v2 composition review is complete and architecture PR #8 was merged at `6252c6f4e425006f927f7b5e5556c96ecb37d245` on 2026-10-21.
+The first real source-to-destination path is implemented through merged PR #7:
 
-Production foundation PR #1 exists and its latest verified CI passed, but it predates the fully clarified product concept. It is being aligned/hardened rather than discarded.
+```text
+Telegram
+-> AI Search / Scout
+-> official X source connector
+-> rights-gated secure media preparation
+-> MediaProbe
+-> scene analysis + sampled-frame visual moderation
+-> destination preflight + VariantPlanner
+-> RenderService
+-> Telegram preview / explicit approval
+-> X v2 media upload + post creation
+-> UNKNOWN-safe reconciliation
+```
+
+Current `main` after PR #7: `a5d693ab8ec38d14995f25b6cfe1f66c185d626f`.
+
+The active work is **PR #8 — single-VM staging deployment**. The goal is to deploy the existing path to a real VM and exercise it before broad feature expansion.
 
 Start here:
 
 1. `docs/PRODUCT_VISION.md` — canonical product/source/automation/internationalization concept.
 2. `docs/PROJECT_STATUS.md` — live implementation stage and next work.
-3. `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md` — KEEP / CHANGE / DEFER review of PR #1.
+3. `docs/STAGING_VM_RUNBOOK.md` — exact current staging deployment and smoke-test procedure.
 4. `AGENTS.md` — mandatory rules for AI/coding agents.
 5. `docs/CONTEXT_FOR_AI.md` — compact handoff for a new AI/chat session.
-6. `docs/history/` — validated architecture/PoC evidence.
+6. `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md` — historical foundation alignment decision.
+7. `docs/history/` — validated architecture/PoC evidence.
 
 ## Production shape
 
@@ -46,29 +63,44 @@ Initial modular monolith with:
 - isolated media workers;
 - typed Source Connector Registry;
 - independent destination/provider adapters;
-- S3-compatible object storage;
+- S3-compatible object storage target for horizontal scale;
 - GitHub Actions, Ruff, strict Pyright, pytest and OpenTelemetry;
 - Next.js as a secondary web surface.
 
-## First real product slice
+## Current staging shape
+
+PR #8 builds a deliberate single-VM staging topology:
+
+- Caddy HTTPS ingress;
+- Telegram bot;
+- core Temporal worker;
+- media worker with ffmpeg/ffprobe;
+- destination worker;
+- internal API;
+- PostgreSQL 17;
+- Temporal;
+- persistent local media/database volumes.
+
+PostgreSQL and Temporal are not published to the public network. Application processes that need Telegram/X/OpenAI receive outbound egress separately from the internal service network.
+
+The staging topology is intentionally not the final horizontally scaled production topology.
+
+## First real staging milestone
+
+The staging milestone is complete only after the real path is manually exercised:
 
 ```text
 Telegram /start
--> server-side Telegram identity/workspace resolution
--> localized menu
--> AI Search task
--> one real authorized source connector
--> candidate normalization/curation
--> media + scene analysis
--> adult classification + destination policy preflight
--> one usable compliant variant
--> Telegram preview/approval
--> usage reservation + persisted operation
--> Temporal
--> one real destination adapter
--> publication/status/reconciliation
+-> AI Search
+-> X candidate
+-> rights confirmation
+-> media acquisition / analysis / render
+-> Telegram preview
+-> explicit publish approval
+-> one real X post
+-> final status / reconciliation
 ```
 
-Deploy to staging/VM as soon as this works end-to-end. Manual Upload and Telegram Source Feed follow early through the same downstream pipeline.
+Then run controlled worker-restart and ambiguous-publication drills and prove that no duplicate X post is created.
 
 Do not reopen broad architecture research unless production evidence demonstrates a concrete defect in an Architecture 1.0 contract.

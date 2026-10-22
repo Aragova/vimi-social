@@ -6,7 +6,8 @@ Read these first:
 2. `docs/PROJECT_STATUS.md`
 3. `docs/CONTEXT_FOR_AI.md`
 4. `AGENTS.md`
-5. Relevant historical architecture decisions only when their contract is being implemented.
+5. `docs/STAGING_VM_RUNBOOK.md` while PR #8 / staging work is active
+6. Historical architecture decisions only when their validated contract is being implemented.
 
 ## What this project is
 
@@ -20,54 +21,84 @@ Do not restart broad architecture research. The architecture laboratory is histo
 
 Production repository: `Aragova/vimi-social`.
 
-Merged production milestones:
+Merged product path through PR #7 now covers:
 
-- PR #1 — production foundation, merge commit `7811892d02f8d454a968c3877b53f1b7ad7b6a18`;
-- PR #2 — Telegram-first customer entrypoint, merge commit `6b7ec905e7f7d6f7b4f37a7bbdef9982259ad4db`.
+```text
+Telegram
+-> AI Search
+-> durable Scout / official X source connector
+-> CandidateContent
+-> rights/provenance gate
+-> secure media acquisition + MediaProbe
+-> scene detection/ranking
+-> sampled-frame visual moderation
+-> destination preflight
+-> VariantPlanner
+-> RenderService
+-> Telegram preview
+-> explicit approval
+-> X v2 media upload / POST /2/tweets
+-> durable result / UNKNOWN / reconciliation
+```
 
-The active next slice is PR #4 on `feat/source-task-scout`: durable AI Search SourceTask + Scout foundation + first real source connector.
+PR #7 is merged into `main` at `a5d693ab8ec38d14995f25b6cfe1f66c185d626f`.
+
+## Current active task
+
+PR #8 on `feat/staging-vm-deployment` is the active slice.
+
+Do **not** jump to OAuth, new destinations, dashboards or broad feature work before the first real staging exercise unless a deployment blocker requires a code change.
+
+PR #8 builds a single-VM staging topology containing:
+
+- Caddy HTTPS ingress;
+- Telegram bot;
+- core Temporal worker;
+- media worker with ffmpeg/ffprobe;
+- destination worker;
+- internal API process;
+- PostgreSQL 17;
+- Temporal;
+- persistent local media/PostgreSQL/Caddy volumes;
+- one-shot Alembic migrations;
+- staging secret template and operator helpers.
+
+PostgreSQL and Temporal must not be exposed publicly. The dev/CI trust-auth PostgreSQL bootstrap must not be reused on the VM.
+
+The deployment runbook is `docs/STAGING_VM_RUNBOOK.md`.
+
+## Required staging evidence
+
+After PR #8 is merged, deploy `main` to the staging VM and manually prove:
+
+1. public HTTPS bot health;
+2. Telegram webhook delivery;
+3. `/start` identity/workspace provisioning;
+4. AI Search through the official X source connector;
+5. rights-gated media acquisition;
+6. MediaProbe + scene analysis + visual moderation;
+7. policy preflight + variant planning/rendering;
+8. Telegram video preview and approval;
+9. exactly one real X publication;
+10. worker restart / ambiguous-publication failure drills without duplicate posts.
+
+Operational defects discovered by this exercise take priority over feature expansion.
 
 ## Fundamental source model
 
-There are exactly three first-class source modes in the current product concept:
+Three first-class source modes remain canonical:
 
-1. **AI Search** — primary automated path. User describes the task; Scout searches authorized source connectors.
-2. **Manual Upload** — user supplies/forwards a specific asset; it enters the same downstream pipeline.
-3. **Source Feed** — a persistent Telegram channel/group/topic becomes a managed queue consumed over time according to an automation policy.
+1. **AI Search** — primary automated path through source-specific connectors.
+2. **Manual Upload** — user-supplied asset entering the common downstream pipeline.
+3. **Source Feed** — persistent authorized Telegram source consumed under automation policy.
 
-These modes converge into one downstream pipeline. Do not build three separate processing systems.
-
-## Current AI Search / Scout implementation direction
-
-The current production slice is:
-
-```text
-Telegram AI Search selection
--> durable conversation state
--> user intent
--> tenant-bound SourceTask
--> scout_run usage reservation
--> Temporal ScoutWorkflow
--> SourceConnectorRegistry
--> source-specific connector(s)
--> CandidateContent
--> persisted candidates
--> Telegram results / selection
-```
-
-The first real connector uses the **official X API v2 Recent Search**. Do not replace it with scraping. Generic web search remains fallback/supplement only and is not the basis of Scout.
-
-The connector currently discovers metadata only. Public availability is not treated as reuse permission. Media acquisition, provenance/rights gate, secure ingest and MediaProbe are the next production slice.
-
-If the user explicitly asks for a source for which no configured connector exists, fail closed rather than silently searching a different platform.
-
-UI locale must not automatically become search language. UI language, content language, search language and destination/account language remain separate concepts.
+They converge into one downstream pipeline. Do not build three processing systems.
 
 ## Adult/18+ workload
 
 Legal adult/18+ content, including explicit gay adult material, is an expected frequent workload. Adult classification, scene-level suitability, provenance/rights metadata and destination policy eligibility are normal pipeline concerns.
 
-Destination decision examples:
+Destination decisions remain:
 
 ```text
 DIRECT_ALLOWED
@@ -76,7 +107,9 @@ MANUAL_REVIEW_REQUIRED
 BLOCKED
 ```
 
-Adaptation must create a genuinely policy-compliant derivative. Never disguise prohibited content or attempt to bypass moderation/access controls.
+Adaptation must produce a genuinely policy-compliant derivative. Never disguise prohibited content or attempt to bypass moderation/access controls.
+
+Visual moderation is evidence about sampled frames; it is not proof of age, consent or redistribution rights.
 
 ## International / regional contract
 
@@ -105,19 +138,6 @@ User -> Membership -> Workspace/Tenant -> Brand/Project
 
 User UI/notification preferences remain separate from workspace/brand publishing defaults.
 
-## Production architecture that remains valid
-
-- modular monolith initially;
-- Python 3.12+, FastAPI/application services;
-- PostgreSQL + RLS, SQLAlchemy/psycopg/Alembic;
-- Temporal durable workflows;
-- isolated media worker;
-- S3-compatible object storage;
-- specialized AI components behind typed tools;
-- source connectors separate from destination/provider adapters;
-- Next.js secondary web surface;
-- GitHub Actions, Ruff, strict Pyright, pytest, OpenTelemetry.
-
 ## Architecture invariants
 
 1. Stable `operation_key` identity for externally visible operations.
@@ -131,27 +151,22 @@ User UI/notification preferences remain separate from workspace/brand publishing
 9. AI has no unrestricted shell/DB/secrets/network authority.
 10. Bot handlers, source connectors and provider adapters do not own core business rules.
 11. Platform/content policies are versioned/testable, not scattered ad-hoc conditionals.
-12. Privileged cross-tenant access must be narrow, explicit and auditable; never broaden the normal app role to BYPASSRLS.
+12. Privileged cross-tenant access must be narrow, explicit and auditable.
+13. Destination secrets are referenced, not stored in plaintext in tenant tables.
+14. A worker recovery attempt must not repeat an irreversible mutation merely because the prior attempt outcome is unknown.
 
-## Current task after the Scout slice
+## Work after staging succeeds
 
-Once PR #4 is green and reviewed, the next production slice should continue from selected `CandidateContent`:
+In priority order:
 
-```text
-selected candidate
--> Curator/ranking boundary
--> permitted media acquisition
--> provenance / rights gate
--> secure ingest
--> MediaProbe
--> base content/adult classification
--> persisted asset lineage
-```
-
-Then continue into SceneDetector / SceneRanker / policy preflight / VariantPlanner and one real destination adapter with UNKNOWN-safe reconciliation.
-
-Deploy to staging/VM as soon as one source-to-destination path works end-to-end through Telegram. Manual Upload and Telegram Source Feed are early follow-ups through the same downstream pipeline.
+1. X OAuth / account connection and destination management.
+2. Caption/editing and destination-selection UX.
+3. Manual Upload through the common pipeline.
+4. Telegram Source Feed with concurrency-safe claiming, durable cursors and timezone-aware cadence.
+5. Shared object storage before horizontal media-worker scaling.
+6. Backups/restore, observability and deployment hardening.
+7. Additional destination adapters after the X path is operationally understood.
 
 ## Sources of truth
 
-`docs/PRODUCT_VISION.md` is the canonical product concept. `docs/PROJECT_STATUS.md` is the live implementation status. `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md` is historical evidence explaining the initial foundation alignment and must not be mistaken for current live status. Historical architecture under `docs/history/` remains authoritative for validated security/reliability contracts unless explicitly superseded.
+`docs/PRODUCT_VISION.md` is the canonical product concept. `docs/PROJECT_STATUS.md` is the live implementation status. `docs/STAGING_VM_RUNBOOK.md` is the current deployment procedure. Historical architecture under `docs/history/` remains authoritative for validated security/reliability contracts unless explicitly superseded.

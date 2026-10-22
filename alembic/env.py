@@ -1,3 +1,4 @@
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -8,6 +9,10 @@ from vimi_social.db.base import Base
 config = context.config
 if config.config_file_name is not None and config.file_config.has_section("loggers"):
     fileConfig(config.config_file_name, disable_existing_loggers=False)
+
+migration_database_dsn = os.getenv("VIMI_MIGRATION_DATABASE_DSN")
+if migration_database_dsn:
+    config.set_main_option("sqlalchemy.url", migration_database_dsn)
 
 target_metadata = Base.metadata
 

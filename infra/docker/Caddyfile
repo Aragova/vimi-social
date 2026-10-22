@@ -1,0 +1,13 @@
+{$VIMI_PUBLIC_HOST} {
+    encode zstd gzip
+
+    route {
+        @telegram path /telegram/webhook
+        reverse_proxy @telegram bot:8000
+
+        @health path /health
+        reverse_proxy @health bot:8000
+
+        respond 404
+    }
+}

@@ -98,14 +98,30 @@ User UI/notification preferences and workspace/brand publishing defaults are dis
 - Do not implement generic unrestricted scraping when a source-specific permitted connector contract is required.
 - Publicly discoverable content must not be treated as automatically reusable; preserve provenance/rights state through the pipeline.
 
+## Deployment / staging contract
+
+- The current priority is real staging evidence, not another broad feature wave.
+- Keep PostgreSQL and Temporal private to the Docker network; only intentional ingress is public.
+- Staging secrets live outside Git and must never be copied into docs, logs, fixtures or database credential fields.
+- Preserve separate PostgreSQL app and migrator roles; do not use the dev/CI trust-auth bootstrap on the VM.
+- Media paths are persistent single-node staging state for now. Do not pretend they are horizontally scalable object storage.
+- Migrations are a one-shot deployment step and must complete before application services start.
+- The first VM exercise must include controlled worker restarts around media processing and X publication.
+- A crash around an irreversible destination mutation must still converge through fencing/UNKNOWN/reconciliation without duplicate publication.
+- Operational defects found on staging take priority over OAuth, additional destinations, dashboards or feature expansion.
+
 ## Current production state
 
-- PR #1 production foundation is merged (`7811892d02f8d454a968c3877b53f1b7ad7b6a18`).
-- PR #2 Telegram-first entrypoint is merged (`6b7ec905e7f7d6f7b4f37a7bbdef9982259ad4db`).
-- Production-like DB roles/RLS integration evidence, Telegram identity, update idempotency, outgoing operation identity, UNKNOWN semantics and Telegram 429 retry handling are already implemented.
-- The active product slice is durable AI Search / Scout: tenant-bound SourceTask, Temporal workflow, Source Connector Registry, normalized CandidateContent and a first real official X source connector.
-- After Scout, continue forward into permitted media acquisition, provenance/rights gate, secure ingest, MediaProbe and content/adult classification. Do not return to foundation research unless a concrete blocker requires it.
+- PR #1 production foundation is merged.
+- PR #2 Telegram-first entrypoint is merged.
+- PR #4 durable AI Search / Scout is merged.
+- PR #5 rights-gated secure media acquisition / MediaProbe is merged.
+- PR #6 scene analysis, preflight and VariantPlanner is merged.
+- PR #7 visual moderation, RenderService, Telegram preview/approval and real X publication path is merged at `a5d693ab8ec38d14995f25b6cfe1f66c185d626f`.
+- The active slice is PR #8 on `feat/staging-vm-deployment`: deploy the existing end-to-end Telegram → X path to a real single-VM staging environment and exercise it manually.
+- Read `docs/STAGING_VM_RUNBOOK.md` before changing deployment behavior.
+- After successful staging evidence, continue with X OAuth/account management, Manual Upload and Source Feed. Do not skip the staging exercise to add more product surface.
 
 ## Sources of truth
 
-`docs/PRODUCT_VISION.md` is the canonical product source of truth. `docs/PROJECT_STATUS.md` is the live phase/status source. `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md` is historical alignment evidence, not the current implementation status. Historical PoC documents explain validated contracts and rationale.
+`docs/PRODUCT_VISION.md` is the canonical product source of truth. `docs/PROJECT_STATUS.md` is the live phase/status source. `docs/STAGING_VM_RUNBOOK.md` is the current deployment exercise. `docs/FOUNDATION_CONCEPT_ALIGNMENT_AUDIT.md` is historical alignment evidence, not the current implementation status. Historical PoC documents explain validated contracts and rationale.

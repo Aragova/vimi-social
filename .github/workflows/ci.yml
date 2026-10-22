@@ -16,9 +16,9 @@ jobs:
       - name: Install
         run: pip install -e ".[dev]"
       - name: Ruff
-        run: ruff check src apps tests
+        run: ruff check src apps tests scripts
       - name: Pyright
-        run: pyright src apps tests
+        run: pyright src apps tests scripts
       - name: Pytest
         run: pytest
 
@@ -54,6 +54,196 @@ jobs:
         run: alembic upgrade head
       - name: PostgreSQL integration tests
         run: pytest tests/integration
+
+  staging-database:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: vimi
+          POSTGRES_USER: vimi_bootstrap
+          POSTGRES_PASSWORD: bootstrap_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vimi_bootstrap -d vimi"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      POSTGRES_DB: vimi
+      POSTGRES_USER: vimi_bootstrap
+      VIMI_APP_DB_PASSWORD: app_ci
+      VIMI_MIGRATOR_DB_PASSWORD: migrator_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Provision staging roles with passwords
+        env:
+          PGPASSWORD: bootstrap_ci
+        run: sh infra/postgres/bootstrap_staging.sh
+      - name: Verify application role restrictions
+        env:
+          PGPASSWORD: bootstrap_ci
+        run: >-
+          test "$(psql -U vimi_bootstrap -d vimi -Atc
+          "SELECT rolsuper || '|' || rolcreaterole || '|' || rolcreatedb || '|' || rolreplication || '|' || rolbypassrls FROM pg_roles WHERE rolname = 'vimi_app'")"
+          = "false|false|false|false|false"
+      - name: Apply migrations with staging migrator credentials
+        env:
+          PGPASSWORD: migrator_ci
+          VIMI_MIGRATION_DATABASE_DSN: postgresql+psycopg://vimi_migrator@localhost:5432/vimi
+        run: alembic upgrade head
+      - name: Verify runtime application login
+        env:
+          PGPASSWORD: app_ci
+        run: psql -U vimi_app -d vimi -Atc "SELECT current_user" | grep -Fx vimi_app
+
+  deployment:
+    runs-on: ubuntu-latest
+    env:
+      VIMI_PUBLIC_HOST: staging.example.com
+      VIMI_IMAGE_TAG: ci
+      VIMI_POSTGRES_BOOTSTRAP_PASSWORD: bootstrap_ci
+      VIMI_APP_DB_PASSWORD: app_ci
+      VIMI_MIGRATOR_DB_PASSWORD: migrator_ci
+      VIMI_TELEGRAM_BOT_TOKEN: telegram_ci
+      VIMI_TELEGRAM_WEBHOOK_SECRET: webhook_ci
+      VIMI_X_BEARER_TOKEN: x_source_ci
+      VIMI_OPENAI_API_KEY: openai_ci
+      VIMI_DEST_X_PRIMARY_TOKEN: x_destination_ci
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare staging environment fixture
+        run: cp .env.staging.example .env.staging
+      - name: Validate staging shell scripts
+        run: |
+          sh -n infra/postgres/bootstrap_staging.sh
+          sh -n scripts/deploy_staging.sh
+      - name: Render Docker Compose model
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          config --format json > /tmp/staging-compose.json
+      - name: Verify least-privilege secret scoping
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          services = json.loads(Path("/tmp/staging-compose.json").read_text())["services"]
+
+          def services_with_value(secret_value: str) -> set[str]:
+              result = set()
+              for name, service in services.items():
+                  environment = service.get("environment", {})
+                  if secret_value in environment.values():
+                      result.add(name)
+              return result
+
+          assertions = {
+              "bootstrap_ci": {"postgres", "db-provision", "temporal"},
+              "migrator_ci": {"db-provision", "migrate"},
+              "app_ci": {
+                  "db-provision",
+                  "bot",
+                  "worker",
+                  "media-worker",
+                  "destination-worker",
+                  "api",
+              },
+              "telegram_ci": {"bot", "worker"},
+              "webhook_ci": {"bot"},
+              "x_source_ci": {"worker"},
+              "openai_ci": {"media-worker"},
+              "x_destination_ci": {"destination-worker"},
+          }
+          for secret_value, expected_services in assertions.items():
+              actual = services_with_value(secret_value)
+              if actual != expected_services:
+                  raise SystemExit(
+                      "secret scope mismatch for test value "
+                      f"{secret_value}: expected {expected_services}, got {actual}"
+                  )
+          PY
+      - name: Validate Caddy configuration
+        run: >-
+          docker run --rm
+          -e VIMI_PUBLIC_HOST=staging.example.com
+          -v "$PWD/infra/docker/Caddyfile:/etc/caddy/Caddyfile:ro"
+          caddy:2.10-alpine
+          caddy validate --config /etc/caddy/Caddyfile
+      - name: Build Python runtime image
+        run: docker build -f infra/docker/Dockerfile -t vimi-social:ci .
+      - name: Start staging PostgreSQL
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          up -d --wait postgres
+      - name: Smoke canonical database provisioning lifecycle
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          up --no-deps --force-recreate --abort-on-container-exit
+          --exit-code-from db-provision db-provision
+      - name: Smoke canonical migration lifecycle
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          up --no-deps --force-recreate --abort-on-container-exit
+          --exit-code-from migrate migrate
+      - name: Smoke canonical media volume initialization lifecycle
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          up --no-deps --force-recreate --abort-on-container-exit
+          --exit-code-from media-init media-init
+      - name: Start bot, API and Temporal
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          up -d --wait bot api
+      - name: Start background workers
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          up -d worker media-worker destination-worker
+      - name: Verify background workers remain running
+        run: |
+          sleep 10
+          running="$(docker compose --env-file .env.staging -f infra/docker/docker-compose.staging.yml ps --status running --services)"
+          for service in worker media-worker destination-worker; do
+            echo "$running" | grep -Fx "$service"
+          done
+      - name: Show staging smoke logs on failure
+        if: failure()
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          logs --no-color --tail=200
+          postgres temporal bot worker media-worker destination-worker api
+      - name: Clean compose smoke resources
+        if: always()
+        run: >-
+          docker compose
+          --env-file .env.staging
+          -f infra/docker/docker-compose.staging.yml
+          down -v --remove-orphans
 
   web:
     runs-on: ubuntu-latest
