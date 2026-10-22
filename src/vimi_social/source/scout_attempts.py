@@ -54,6 +54,33 @@ class ScoutAttemptStore:
         state = self.current_state(session, operation_key=operation_key)
         return ScoutAttemptClaim(claimed=False, state=state)
 
+    def fail_queued(
+        self,
+        session: Session,
+        *,
+        operation_key: OperationKey,
+        failure_code: str,
+    ) -> bool:
+        updated = session.execute(
+            text(
+                """
+                UPDATE source_task
+                SET state = 'FAILED_SAFE',
+                    failure_code = :failure_code,
+                    scout_attempt_token = NULL,
+                    updated_at = clock_timestamp()
+                WHERE operation_key = :operation_key
+                  AND state = 'QUEUED'
+                RETURNING id::text
+                """
+            ),
+            {
+                "operation_key": operation_key.value,
+                "failure_code": failure_code,
+            },
+        ).scalar_one_or_none()
+        return updated is not None
+
     def mark_ambiguous_retry(
         self,
         session: Session,
