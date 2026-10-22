@@ -65,8 +65,11 @@ class FetchResult:
 
 
 class ResponseStream(Protocol):
-    status: int
-    headers: Mapping[str, str]
+    @property
+    def status(self) -> int: ...
+
+    @property
+    def headers(self) -> Mapping[str, str]: ...
 
     def iter_chunks(self, chunk_size: int) -> AsyncIterator[bytes]: ...
 
