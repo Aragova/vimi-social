@@ -1,5 +1,4 @@
 import os
-import sys
 
 import httpx
 
@@ -49,8 +48,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except Exception as exc:
-        print(f"Webhook configuration failed: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
+    raise SystemExit(main())
