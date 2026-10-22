@@ -10,7 +10,7 @@ def _required(name: str) -> str:
     return value
 
 
-def _telegram_request(
+def telegram_request(
     method: str,
     token: str,
     endpoint: str,
@@ -39,7 +39,7 @@ def main() -> int:
     public_host = _required("VIMI_PUBLIC_HOST")
     webhook_url = f"https://{public_host}/telegram/webhook"
 
-    response = _telegram_request(
+    response = telegram_request(
         "POST",
         token,
         "setWebhook",
@@ -53,7 +53,7 @@ def main() -> int:
     if not payload.get("ok"):
         raise RuntimeError("Telegram rejected webhook configuration")
 
-    info = _telegram_request("GET", token, "getWebhookInfo")
+    info = telegram_request("GET", token, "getWebhookInfo")
     info_payload = info.json()
     configured_url = str(info_payload.get("result", {}).get("url", ""))
     if configured_url != webhook_url:
