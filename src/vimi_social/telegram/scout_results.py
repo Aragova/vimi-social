@@ -3,7 +3,6 @@ from vimi_social.domain.source import CandidateContent, ScoutRunResult, SourceTa
 from vimi_social.i18n.catalog import MessageKey, translate
 from vimi_social.telegram.menus import InlineButton, OutgoingMessage
 
-
 _RESULT_SUMMARY_LIMIT = 80
 
 
