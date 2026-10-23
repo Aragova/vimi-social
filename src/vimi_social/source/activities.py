@@ -58,20 +58,11 @@ class ScoutActivities:
     @activity.defn(name="execute_scout_task")
     async def execute_scout_task(self, workflow_input: ScoutWorkflowInput) -> ScoutRunResult:
         task = self._authorized_task(workflow_input)
-        query_plan = await self._query_planner.plan(
-            task.user_intent,
-            task.preferred_languages,
-        )
-        request = ScoutSearchRequest(
-            intent=task.user_intent,
-            requested_sources=task.requested_sources,
-            preferred_languages=task.preferred_languages,
-            query_variants=query_plan.query_variants,
-            max_results=10,
-        )
 
+        # Route before any paid query expansion. Unsupported source requests fail
+        # without spending translation-provider credits.
         try:
-            connectors = self._registry.route(request.requested_sources)
+            connectors = self._registry.route(task.requested_sources)
         except SourceConnectorUnavailable:
             return self._fail_safe(task, "SOURCE_UNAVAILABLE", release_usage=True)
 
@@ -108,6 +99,21 @@ class ScoutActivities:
                 return self._result_for_task(session, current)
 
             self._usage_repository.commit(session, task.operation_key)
+
+        # Paid/external query expansion is fenced behind the durable Scout claim.
+        # A terminal retry returns above and an ambiguous in-flight retry becomes
+        # UNKNOWN rather than repeating translation or source-search side effects.
+        query_plan = await self._query_planner.plan(
+            task.user_intent,
+            task.preferred_languages,
+        )
+        request = ScoutSearchRequest(
+            intent=task.user_intent,
+            requested_sources=task.requested_sources,
+            preferred_languages=task.preferred_languages,
+            query_variants=query_plan.query_variants,
+            max_results=10,
+        )
 
         try:
             discovered: list[CandidateContent] = []
