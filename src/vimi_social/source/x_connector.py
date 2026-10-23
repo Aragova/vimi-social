@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import cast
 
@@ -13,6 +14,9 @@ from vimi_social.source.connectors import (
     SourceConnectorRejected,
     SourceConnectorUnavailable,
 )
+
+_PLAIN_QUERY_TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
+_X_BOOLEAN_WORDS = {"and", "or", "not"}
 
 
 class XSourceConnector:
@@ -133,19 +137,53 @@ def _normalized_query_variants(request: ScoutSearchRequest) -> tuple[str, ...]:
 def _fit_query_expression(variants: tuple[str, ...], budget: int) -> str:
     if budget < 1:
         raise ValueError("X search query has no room for intent")
+
+    full_expression = _group_query_variants(variants)
+    if len(full_expression) <= budget:
+        return full_expression
+
+    # Never slice a complete user/search expression character-by-character because
+    # that can cut quotes, parentheses, or operators and turn valid input into an
+    # invalid X query. Prefer complete variants in priority order when the full
+    # multilingual expression exceeds the endpoint budget.
+    selected: list[str] = []
+    for variant in variants:
+        candidate = _group_query_variants((*selected, variant))
+        if len(candidate) <= budget:
+            selected.append(variant)
+    if selected:
+        return _group_query_variants(tuple(selected))
+
+    # If every complete variant is individually too long, fall back to bounded
+    # plain-text tokens. This intentionally removes X query syntax so truncation
+    # cannot leave unmatched grouping/quotes or a dangling boolean operator.
+    return _safe_plaintext_fallback(variants[0], budget)
+
+
+def _group_query_variants(variants: tuple[str, ...]) -> str:
     if len(variants) == 1:
-        return variants[0][:budget].rstrip()
-
-    # Each variant is grouped and the complete OR expression is grouped again so
-    # X's trailing video/retweet filters apply to every language branch.
-    join_overhead = len(" OR ") * (len(variants) - 1) + (2 * len(variants)) + 2
-    content_budget = budget - join_overhead
-    if content_budget < len(variants):
-        raise ValueError("X search query has no room for multilingual variants")
-
-    per_variant = max(1, content_budget // len(variants))
-    parts = [f"({variant[:per_variant].rstrip()})" for variant in variants]
+        return variants[0]
+    parts = [f"({variant})" for variant in variants]
     return f"({' OR '.join(parts)})"
+
+
+def _safe_plaintext_fallback(value: str, budget: int) -> str:
+    tokens = [
+        token
+        for token in _PLAIN_QUERY_TOKEN.findall(value)
+        if token.casefold() not in _X_BOOLEAN_WORDS
+    ]
+    selected: list[str] = []
+    used = 0
+    for token in tokens:
+        extra = len(token) + (1 if selected else 0)
+        if used + extra > budget:
+            break
+        selected.append(token)
+        used += extra
+    if not selected:
+        raise ValueError("X search query has no safe searchable text within the budget")
+    return " ".join(selected)
 
 
 def _candidate_from_post(
