@@ -35,7 +35,11 @@ def build_scout_results(
     # Keep the Telegram result card intentionally compact. The source URL remains
     # available through the View button instead of being duplicated in message text,
     # which also avoids noisy automatic link previews.
-    lines = [f"🔎 {translate_result_count(locale, len(candidates))}"]
+    header = translate(MessageKey.SCOUT_RESULTS, locale).format(
+        discovered=len(candidates),
+        candidates=len(candidates),
+    ).splitlines()[0]
+    lines = [header]
     keyboard: list[tuple[InlineButton, ...]] = []
 
     for index, candidate in enumerate(candidates, start=1):
@@ -59,12 +63,6 @@ def build_scout_results(
 
     keyboard.append(search_more)
     return OutgoingMessage(text="\n".join(lines), keyboard=tuple(keyboard))
-
-
-def translate_result_count(locale: UiLocale, count: int) -> str:
-    if locale is UiLocale.RU:
-        return f"Найдено: {count}"
-    return f"Found: {count}"
 
 
 def _truncate(value: str, limit: int) -> str:
