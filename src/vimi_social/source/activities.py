@@ -25,12 +25,12 @@ from vimi_social.source.connectors import (
 )
 from vimi_social.source.repository import SourceTaskRepository
 from vimi_social.source.scout_attempts import ScoutAttemptStore
-from vimi_social.telegram.menus import build_scout_results
 from vimi_social.telegram.outgoing import (
     TelegramMessageRetryAfter,
     TelegramMessenger,
     TelegramOutgoingState,
 )
+from vimi_social.telegram.scout_results import build_scout_results
 from vimi_social.usage.repository import UsageRepository
 
 
@@ -187,7 +187,7 @@ class ScoutActivities:
                 candidates = self._source_repository.list_candidates(
                     session,
                     task.id,
-                    limit=5,
+                    limit=10,
                 )
 
         message = build_scout_results(UiLocale(task.locale), result, candidates)
