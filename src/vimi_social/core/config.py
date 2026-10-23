@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_webhook_secret: str | None = None
     x_bearer_token: str | None = None
+    search_translation_api_key: str | None = None
+    search_translation_model: str = "gpt-6-luna"
     openai_api_key: str | None = None
     visual_moderation_model: str = "omni-moderation-latest"
 
