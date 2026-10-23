@@ -20,7 +20,7 @@ _EXPLICIT_SOURCE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("telegram", re.compile(r"(?:telegram|телеграм\w*)", re.IGNORECASE)),
     ("reddit", re.compile(r"(?:reddit|реддит\w*)", re.IGNORECASE)),
 )
-_CYRILLIC = re.compile(r"[А-Яа-яЁё]")
+_CYRILLIC = re.compile(r"[\u0400-\u04FF]")
 _LATIN = re.compile(r"[A-Za-z]")
 
 
