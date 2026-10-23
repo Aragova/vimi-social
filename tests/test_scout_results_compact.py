@@ -1,7 +1,12 @@
 from uuid import uuid4
 
 from vimi_social.domain.international import UiLocale
-from vimi_social.domain.source import AdultClassification, CandidateContent, ScoutRunResult, SourceTaskState
+from vimi_social.domain.source import (
+    AdultClassification,
+    CandidateContent,
+    ScoutRunResult,
+    SourceTaskState,
+)
 from vimi_social.telegram.scout_results import build_scout_results
 
 
