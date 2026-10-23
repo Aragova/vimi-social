@@ -92,6 +92,36 @@ async def test_x_recent_search_normalizes_video_candidate_without_assuming_right
 
 
 @pytest.mark.asyncio
+async def test_x_multilingual_search_uses_one_combined_ru_en_request() -> None:
+    seen_queries: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(request.url.params["query"])
+        return httpx.Response(200, json={"data": [], "includes": {"media": []}})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = XSourceConnector("test-token", client=http_client)
+
+    candidates = await connector.search(
+        ScoutSearchRequest(
+            intent="Найди видео про ночной Бангкок",
+            requested_sources=("x",),
+            preferred_languages=("ru", "en"),
+            query_variants=("ночной Бангкок", "Bangkok night"),
+            max_results=10,
+        )
+    )
+
+    assert candidates == ()
+    assert len(seen_queries) == 1
+    assert "(ночной Бангкок) OR (Bangkok night)" in seen_queries[0]
+    assert "has:videos" in seen_queries[0]
+    assert "-is:retweet" in seen_queries[0]
+    assert "lang:" not in seen_queries[0]
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_x_recent_search_selects_video_when_photo_is_first_attachment() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(
