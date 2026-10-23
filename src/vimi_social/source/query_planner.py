@@ -5,8 +5,8 @@ from typing import Protocol, cast
 import httpx
 
 _RUSSIAN_COMMAND_PREFIX = re.compile(
-    r"^(?:найди|поищи|покажи)(?:\s+мне)?(?:\s+(?:видео|ролики?|посты?))?"
-    r"(?:\s+(?:про|о|об|на\s+тему))?\s+",
+    r"^(?:найди|поищи|покажи)(?:\s+мне)?(?:\s+(?:видео|ролики?|посты?))?"  # noqa: RUF001
+    r"(?:\s+(?:про|о|об|на\s+тему))?\s+",  # noqa: RUF001
     re.IGNORECASE,
 )
 _ENGLISH_COMMAND_PREFIX = re.compile(
@@ -14,7 +14,7 @@ _ENGLISH_COMMAND_PREFIX = re.compile(
     r"(?:\s+(?:about|on))?\s+",
     re.IGNORECASE,
 )
-_CYRILLIC = re.compile(r"[А-Яа-яЁё]")
+_CYRILLIC = re.compile(r"[\u0400-\u04FF]")
 
 
 class EnglishIntentTranslator(Protocol):
