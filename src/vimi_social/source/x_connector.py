@@ -99,7 +99,7 @@ class XSourceConnector:
 
 
 def _build_recent_search_query(request: ScoutSearchRequest) -> str:
-    intent = " ".join(request.intent.split())
+    variants = _normalized_query_variants(request)
     language_clause = ""
     if len(request.preferred_languages) == 1:
         language = request.preferred_languages[0].strip().lower()
@@ -107,11 +107,43 @@ def _build_recent_search_query(request: ScoutSearchRequest) -> str:
             language_clause = f" lang:{language.split('-', maxsplit=1)[0]}"
 
     suffix = f" has:videos -is:retweet{language_clause}"
-    max_intent_length = 512 - len(suffix)
-    trimmed_intent = intent[:max_intent_length].rstrip()
-    if not trimmed_intent:
+    expression_budget = 512 - len(suffix)
+    expression = _fit_query_expression(variants, expression_budget)
+    return f"{expression}{suffix}"
+
+
+def _normalized_query_variants(request: ScoutSearchRequest) -> tuple[str, ...]:
+    raw_variants = request.query_variants or (request.intent,)
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_variants:
+        normalized = " ".join(raw.split()).strip()
+        if not normalized:
+            continue
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(normalized)
+    if not result:
         raise ValueError("Scout intent is empty after normalization")
-    return f"{trimmed_intent}{suffix}"
+    return tuple(result[:4])
+
+
+def _fit_query_expression(variants: tuple[str, ...], budget: int) -> str:
+    if budget < 1:
+        raise ValueError("X search query has no room for intent")
+    if len(variants) == 1:
+        return variants[0][:budget].rstrip()
+
+    join_overhead = len(" OR ") * (len(variants) - 1) + (2 * len(variants))
+    content_budget = budget - join_overhead
+    if content_budget < len(variants):
+        raise ValueError("X search query has no room for multilingual variants")
+
+    per_variant = max(1, content_budget // len(variants))
+    parts = [f"({variant[:per_variant].rstrip()})" for variant in variants]
+    return " OR ".join(parts)
 
 
 def _candidate_from_post(
