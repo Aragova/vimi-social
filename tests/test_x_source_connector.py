@@ -120,6 +120,69 @@ async def test_x_multilingual_search_uses_one_combined_ru_en_request() -> None:
 
 
 @pytest.mark.asyncio
+async def test_x_multilingual_search_preserves_complete_variants_when_they_fit() -> None:
+    seen_queries: list[str] = []
+    original = "ночной Бангкок (" + ("рынок " * 40) + "центр)"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(request.url.params["query"])
+        return httpx.Response(200, json={"data": [], "includes": {"media": []}})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = XSourceConnector("test-token", client=http_client)
+
+    await connector.search(
+        ScoutSearchRequest(
+            intent=original,
+            requested_sources=("x",),
+            preferred_languages=("ru", "en"),
+            query_variants=(original, "Bangkok nightlife"),
+            max_results=10,
+        )
+    )
+
+    assert len(seen_queries) == 1
+    query = seen_queries[0]
+    assert query.startswith(f"(({original}) OR (Bangkok nightlife))")
+    assert query.count("(") == query.count(")")
+    assert len(query) <= 512
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_x_oversized_variants_use_syntax_safe_plaintext_fallback() -> None:
+    seen_queries: list[str] = []
+    original = "(" + ("ночной Бангкок " * 80) + ")"
+    translated = "(" + ("Bangkok nightlife " * 80) + ")"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_queries.append(request.url.params["query"])
+        return httpx.Response(200, json={"data": [], "includes": {"media": []}})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = XSourceConnector("test-token", client=http_client)
+
+    await connector.search(
+        ScoutSearchRequest(
+            intent=original,
+            requested_sources=("x",),
+            preferred_languages=("ru", "en"),
+            query_variants=(original, translated),
+            max_results=10,
+        )
+    )
+
+    assert len(seen_queries) == 1
+    query = seen_queries[0]
+    expression = query.removesuffix(" has:videos -is:retweet")
+    assert "(" not in expression
+    assert ")" not in expression
+    assert '"' not in expression
+    assert len(query) <= 512
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_x_recent_search_selects_video_when_photo_is_first_attachment() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(
