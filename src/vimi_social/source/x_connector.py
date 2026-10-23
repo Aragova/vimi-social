@@ -136,14 +136,16 @@ def _fit_query_expression(variants: tuple[str, ...], budget: int) -> str:
     if len(variants) == 1:
         return variants[0][:budget].rstrip()
 
-    join_overhead = len(" OR ") * (len(variants) - 1) + (2 * len(variants))
+    # Each variant is grouped and the complete OR expression is grouped again so
+    # X's trailing video/retweet filters apply to every language branch.
+    join_overhead = len(" OR ") * (len(variants) - 1) + (2 * len(variants)) + 2
     content_budget = budget - join_overhead
     if content_budget < len(variants):
         raise ValueError("X search query has no room for multilingual variants")
 
     per_variant = max(1, content_budget // len(variants))
     parts = [f"({variant[:per_variant].rstrip()})" for variant in variants]
-    return " OR ".join(parts)
+    return f"({' OR '.join(parts)})"
 
 
 def _candidate_from_post(
