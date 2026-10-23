@@ -5,7 +5,7 @@ from typing import Protocol, cast
 import httpx
 
 _RUSSIAN_COMMAND_PREFIX = re.compile(
-    r"^(?:найди|поищи|покажи)(?:\s+мне)?(?:\s+(?:видео|ролики?|посты?))?"  # noqa: RUF001
+    r"^(?:найди|поищи|покажи)(?:\s+мне)?(?:\s+(?:видео|ролики?|посты?))?"
     r"(?:\s+(?:про|о|об|на\s+тему))?\s+",  # noqa: RUF001
     re.IGNORECASE,
 )
