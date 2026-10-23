@@ -113,11 +113,9 @@ async def test_x_multilingual_search_uses_one_combined_ru_en_request() -> None:
     )
 
     assert candidates == ()
-    assert len(seen_queries) == 1
-    assert "(ночной Бангкок) OR (Bangkok night)" in seen_queries[0]
-    assert "has:videos" in seen_queries[0]
-    assert "-is:retweet" in seen_queries[0]
-    assert "lang:" not in seen_queries[0]
+    assert seen_queries == [
+        "((ночной Бангкок) OR (Bangkok night)) has:videos -is:retweet"
+    ]
     await http_client.aclose()
 
 
