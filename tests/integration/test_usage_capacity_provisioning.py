@@ -24,6 +24,8 @@ def _admin_dsn() -> str:
     dsn = environ.get("VIMI_TEST_ADMIN_DSN")
     if dsn is None:
         pytest.skip("PostgreSQL admin integration DSN is not configured")
+    if dsn.startswith("postgresql://"):
+        return "postgresql+psycopg://" + dsn.removeprefix("postgresql://")
     return dsn
 
 
