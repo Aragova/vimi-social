@@ -33,24 +33,45 @@ class UsageRepository:
     A concurrent duplicate blocks on the unique constraint and joins the winner
     instead of incrementing tenant capacity a second time.
 
+    Workspaces explicitly marked UNLIMITED remain fully metered in reservations
+    and the immutable ledger for observability, but do not consume capacity.
+
     The caller must execute methods inside the tenant-owned transaction.
     """
 
     def reserve(self, session: Session, request: ReservationRequest) -> ReservationResult:
+        tenant_id = str(request.tenant_id.value)
+        capacity_exempt = bool(
+            session.execute(
+                text("SELECT tenant_usage_is_unlimited(CAST(:tenant_id AS uuid))"),
+                {"tenant_id": tenant_id},
+            ).scalar_one()
+        )
         params = {
-            "tenant_id": str(request.tenant_id.value),
+            "tenant_id": tenant_id,
             "operation_key": request.operation_key.value,
             "metric": request.metric,
             "quantity": request.quantity,
+            "capacity_exempt": capacity_exempt,
         }
 
         reservation_id = session.execute(
             text(
                 """
                 INSERT INTO usage_reservation (
-                    tenant_id, operation_key, metric, quantity, state
+                    tenant_id,
+                    operation_key,
+                    metric,
+                    quantity,
+                    state,
+                    capacity_exempt
                 ) VALUES (
-                    :tenant_id, :operation_key, :metric, :quantity, 'RESERVED'
+                    :tenant_id,
+                    :operation_key,
+                    :metric,
+                    :quantity,
+                    'RESERVED',
+                    :capacity_exempt
                 )
                 ON CONFLICT (operation_key) DO NOTHING
                 RETURNING id::text
@@ -87,6 +108,9 @@ class UsageRepository:
                 raise OperationBindingConflict("operation_key is bound to different usage data")
             return ReservationResult(reservation_id=existing["id"], joined_existing=True)
 
+        if capacity_exempt:
+            return ReservationResult(reservation_id=reservation_id, joined_existing=False)
+
         capacity = session.execute(
             text(
                 """
@@ -114,7 +138,13 @@ class UsageRepository:
         reservation = session.execute(
             text(
                 """
-                SELECT id::text, tenant_id::text, metric, quantity, state
+                SELECT
+                    id::text,
+                    tenant_id::text,
+                    metric,
+                    quantity,
+                    state,
+                    capacity_exempt
                 FROM usage_reservation
                 WHERE operation_key = :operation_key
                 FOR UPDATE
@@ -135,26 +165,27 @@ class UsageRepository:
                 f"cannot commit usage reservation from state {state}"
             )
 
-        capacity = session.execute(
-            text(
-                """
-                UPDATE usage_capacity
-                SET reserved = reserved - :quantity,
-                    committed = committed + :quantity
-                WHERE tenant_id::text = :tenant_id
-                  AND metric = :metric
-                  AND reserved >= :quantity
-                RETURNING tenant_id
-                """
-            ),
-            {
-                "tenant_id": reservation["tenant_id"],
-                "metric": reservation["metric"],
-                "quantity": reservation["quantity"],
-            },
-        ).first()
-        if capacity is None:
-            raise ReservationStateConflict("usage capacity counters are inconsistent")
+        if not reservation["capacity_exempt"]:
+            capacity = session.execute(
+                text(
+                    """
+                    UPDATE usage_capacity
+                    SET reserved = reserved - :quantity,
+                        committed = committed + :quantity
+                    WHERE tenant_id::text = :tenant_id
+                      AND metric = :metric
+                      AND reserved >= :quantity
+                    RETURNING tenant_id
+                    """
+                ),
+                {
+                    "tenant_id": reservation["tenant_id"],
+                    "metric": reservation["metric"],
+                    "quantity": reservation["quantity"],
+                },
+            ).first()
+            if capacity is None:
+                raise ReservationStateConflict("usage capacity counters are inconsistent")
 
         session.execute(
             text(
@@ -202,7 +233,13 @@ class UsageRepository:
         reservation = session.execute(
             text(
                 """
-                SELECT id::text, tenant_id::text, metric, quantity, state
+                SELECT
+                    id::text,
+                    tenant_id::text,
+                    metric,
+                    quantity,
+                    state,
+                    capacity_exempt
                 FROM usage_reservation
                 WHERE operation_key = :operation_key
                 FOR UPDATE
@@ -223,25 +260,26 @@ class UsageRepository:
                 f"cannot release usage reservation from state {state}"
             )
 
-        capacity = session.execute(
-            text(
-                """
-                UPDATE usage_capacity
-                SET reserved = reserved - :quantity
-                WHERE tenant_id::text = :tenant_id
-                  AND metric = :metric
-                  AND reserved >= :quantity
-                RETURNING tenant_id
-                """
-            ),
-            {
-                "tenant_id": reservation["tenant_id"],
-                "metric": reservation["metric"],
-                "quantity": reservation["quantity"],
-            },
-        ).first()
-        if capacity is None:
-            raise ReservationStateConflict("usage capacity counters are inconsistent")
+        if not reservation["capacity_exempt"]:
+            capacity = session.execute(
+                text(
+                    """
+                    UPDATE usage_capacity
+                    SET reserved = reserved - :quantity
+                    WHERE tenant_id::text = :tenant_id
+                      AND metric = :metric
+                      AND reserved >= :quantity
+                    RETURNING tenant_id
+                    """
+                ),
+                {
+                    "tenant_id": reservation["tenant_id"],
+                    "metric": reservation["metric"],
+                    "quantity": reservation["quantity"],
+                },
+            ).first()
+            if capacity is None:
+                raise ReservationStateConflict("usage capacity counters are inconsistent")
 
         updated_id = session.execute(
             text(
