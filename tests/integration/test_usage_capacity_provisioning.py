@@ -20,6 +20,13 @@ def _database_dsn() -> str:
     return dsn
 
 
+def _admin_dsn() -> str:
+    dsn = environ.get("VIMI_TEST_ADMIN_DSN")
+    if dsn is None:
+        pytest.skip("PostgreSQL admin integration DSN is not configured")
+    return dsn
+
+
 def test_new_telegram_workspace_gets_default_scout_capacity() -> None:
     engine = create_engine(_database_dsn())
     session_factory = sessionmaker[Session](
@@ -66,6 +73,7 @@ def test_new_telegram_workspace_gets_default_scout_capacity() -> None:
 
 def test_superadmin_internal_workspace_bypasses_all_capacity_enforcement() -> None:
     engine = create_engine(_database_dsn())
+    admin_engine = create_engine(_admin_dsn())
     session_factory = sessionmaker[Session](
         bind=engine,
         expire_on_commit=False,
@@ -88,16 +96,18 @@ def test_superadmin_internal_workspace_bypasses_all_capacity_enforcement() -> No
                 ),
                 {"telegram_user_id": 930000202},
             ).mappings().one()
-            tenant_raw = row["resolved_tenant_id"]
-            user_raw = row["resolved_user_id"]
-            assert isinstance(tenant_raw, UUID)
-            assert isinstance(user_raw, UUID)
 
-            session.execute(
+        tenant_raw = row["resolved_tenant_id"]
+        user_raw = row["resolved_user_id"]
+        assert isinstance(tenant_raw, UUID)
+        assert isinstance(user_raw, UUID)
+
+        with admin_engine.begin() as connection:
+            connection.execute(
                 text("UPDATE app_user SET platform_role = 'SUPERADMIN' WHERE id = :user_id"),
                 {"user_id": str(user_raw)},
             )
-            session.execute(
+            connection.execute(
                 text("UPDATE tenant SET usage_policy = 'UNLIMITED' WHERE id = :tenant_id"),
                 {"tenant_id": str(tenant_raw)},
             )
@@ -167,4 +177,5 @@ def test_superadmin_internal_workspace_bypasses_all_capacity_enforcement() -> No
             ).one()
             assert after_commit == (DEFAULT_SCOUT_RUN_QUOTA, 0, 0)
     finally:
+        admin_engine.dispose()
         engine.dispose()
