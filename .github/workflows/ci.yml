@@ -117,6 +117,8 @@ jobs:
       VIMI_TELEGRAM_BOT_TOKEN: telegram_ci
       VIMI_TELEGRAM_WEBHOOK_SECRET: webhook_ci
       VIMI_X_BEARER_TOKEN: x_source_ci
+      VIMI_SEARCH_TRANSLATION_API_KEY: search_translation_ci
+      VIMI_SEARCH_TRANSLATION_MODEL: gpt-6-luna
       VIMI_OPENAI_API_KEY: openai_ci
       VIMI_DEST_X_PRIMARY_TOKEN: x_destination_ci
     steps:
@@ -192,6 +194,7 @@ jobs:
               "telegram_ci": {"bot", "worker"},
               "webhook_ci": {"bot"},
               "x_source_ci": {"worker"},
+              "search_translation_ci": {"worker"},
               "openai_ci": {"media-worker"},
               "x_destination_ci": {"destination-worker"},
           }

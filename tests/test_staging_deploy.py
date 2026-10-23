@@ -9,6 +9,7 @@ def _run_staging_deploy_validation(
     tmp_path: pathlib.Path,
     *,
     openai_api_key: str = "",
+    search_translation_api_key: str = "",
     x_bearer_token: str = "x-source-test",
 ) -> subprocess.CompletedProcess[str]:
     env_file = tmp_path / ".env.staging"
@@ -22,6 +23,8 @@ def _run_staging_deploy_validation(
                 "VIMI_TELEGRAM_BOT_TOKEN=telegram-test",
                 "VIMI_TELEGRAM_WEBHOOK_SECRET=webhook-test",
                 f"VIMI_X_BEARER_TOKEN={x_bearer_token}",
+                f"VIMI_SEARCH_TRANSLATION_API_KEY={search_translation_api_key}",
+                "VIMI_SEARCH_TRANSLATION_MODEL=gpt-6-luna",
                 f"VIMI_OPENAI_API_KEY={openai_api_key}",
                 "VIMI_VISUAL_MODERATION_MODEL=omni-moderation-latest",
                 "VIMI_DEST_X_PRIMARY_TOKEN=x-destination-test",
@@ -58,6 +61,17 @@ def test_staging_deploy_allows_openai_key_to_be_empty(tmp_path: pathlib.Path) ->
     assert completed.returncode == 0, completed.stderr
 
 
+def test_staging_deploy_allows_search_translation_key_to_be_empty(
+    tmp_path: pathlib.Path,
+) -> None:
+    completed = _run_staging_deploy_validation(
+        tmp_path,
+        search_translation_api_key="",
+    )
+
+    assert completed.returncode == 0, completed.stderr
+
+
 def test_staging_deploy_still_rejects_empty_required_secret(tmp_path: pathlib.Path) -> None:
     completed = _run_staging_deploy_validation(tmp_path, x_bearer_token="")
 
@@ -65,8 +79,10 @@ def test_staging_deploy_still_rejects_empty_required_secret(tmp_path: pathlib.Pa
     assert "Missing required staging value: VIMI_X_BEARER_TOKEN" in completed.stderr
 
 
-def test_staging_compose_treats_openai_key_as_optional() -> None:
+def test_staging_compose_treats_optional_ai_keys_as_optional() -> None:
     compose = (REPO_ROOT / "infra/docker/docker-compose.staging.yml").read_text()
 
+    assert "VIMI_SEARCH_TRANSLATION_API_KEY: ${VIMI_SEARCH_TRANSLATION_API_KEY:-}" in compose
+    assert "VIMI_SEARCH_TRANSLATION_API_KEY is required" not in compose
     assert "VIMI_OPENAI_API_KEY: ${VIMI_OPENAI_API_KEY:-}" in compose
     assert "VIMI_OPENAI_API_KEY is required" not in compose

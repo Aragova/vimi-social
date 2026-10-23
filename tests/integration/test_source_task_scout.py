@@ -13,6 +13,7 @@ from vimi_social.domain.source import (
 )
 from vimi_social.source.activities import ScoutActivities
 from vimi_social.source.connectors import SourceConnectorRegistry
+from vimi_social.source.query_planner import MultilingualQueryPlanner
 from vimi_social.source.repository import SourceTaskRepository
 from vimi_social.source.service import SourceTaskService
 from vimi_social.telegram.identity import TelegramIdentityResolver, TelegramUpdateGuard
@@ -57,6 +58,16 @@ class FakeXConnector:
                 connector_metadata={"media_key": "7_1"},
             ),
         )
+
+
+class CountingTranslator:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def translate_to_english(self, intent: str) -> str | None:
+        self.calls += 1
+        assert intent == "ночной Бангкок"
+        return "Bangkok night"
 
 
 @pytest.mark.asyncio
@@ -106,7 +117,7 @@ async def test_ai_search_task_is_durable_metered_and_activity_retry_is_idempoten
             update_id=update_id,
             message_id=message_id,
             chat_id=chat_id,
-            intent="fresh fitness video",
+            intent="Найди видео про ночной Бангкок",
         )
         assert task is not None
 
@@ -115,16 +126,18 @@ async def test_ai_search_task_is_durable_metered_and_activity_retry_is_idempoten
             update_id=update_id,
             message_id=message_id,
             chat_id=chat_id,
-            intent="fresh fitness video",
+            intent="Найди видео про ночной Бангкок",
         )
         assert duplicate is not None
         assert duplicate.id == task.id
 
         connector = FakeXConnector()
+        translator = CountingTranslator()
         activities = ScoutActivities(
             session_factory,
             SourceConnectorRegistry([connector]),
             messenger=None,
+            query_planner=MultilingualQueryPlanner(translator),
         )
         workflow_input = ScoutWorkflowInput(
             operation_key=task.operation_key.value,
@@ -136,6 +149,7 @@ async def test_ai_search_task_is_durable_metered_and_activity_retry_is_idempoten
         assert first_result.candidate_count == 1
         assert second_result.candidate_count == 1
         assert connector.calls == 1
+        assert translator.calls == 1
 
         repository = SourceTaskRepository()
         with (

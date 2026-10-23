@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import cast
 
@@ -13,6 +14,9 @@ from vimi_social.source.connectors import (
     SourceConnectorRejected,
     SourceConnectorUnavailable,
 )
+
+_PLAIN_QUERY_TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
+_X_BOOLEAN_WORDS = {"and", "or", "not"}
 
 
 class XSourceConnector:
@@ -99,7 +103,7 @@ class XSourceConnector:
 
 
 def _build_recent_search_query(request: ScoutSearchRequest) -> str:
-    intent = " ".join(request.intent.split())
+    variants = _normalized_query_variants(request)
     language_clause = ""
     if len(request.preferred_languages) == 1:
         language = request.preferred_languages[0].strip().lower()
@@ -107,11 +111,79 @@ def _build_recent_search_query(request: ScoutSearchRequest) -> str:
             language_clause = f" lang:{language.split('-', maxsplit=1)[0]}"
 
     suffix = f" has:videos -is:retweet{language_clause}"
-    max_intent_length = 512 - len(suffix)
-    trimmed_intent = intent[:max_intent_length].rstrip()
-    if not trimmed_intent:
+    expression_budget = 512 - len(suffix)
+    expression = _fit_query_expression(variants, expression_budget)
+    return f"{expression}{suffix}"
+
+
+def _normalized_query_variants(request: ScoutSearchRequest) -> tuple[str, ...]:
+    raw_variants = request.query_variants or (request.intent,)
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in raw_variants:
+        normalized = " ".join(raw.split()).strip()
+        if not normalized:
+            continue
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(normalized)
+    if not result:
         raise ValueError("Scout intent is empty after normalization")
-    return f"{trimmed_intent}{suffix}"
+    return tuple(result[:4])
+
+
+def _fit_query_expression(variants: tuple[str, ...], budget: int) -> str:
+    if budget < 1:
+        raise ValueError("X search query has no room for intent")
+
+    full_expression = _group_query_variants(variants)
+    if len(full_expression) <= budget:
+        return full_expression
+
+    # Never slice a complete user/search expression character-by-character because
+    # that can cut quotes, parentheses, or operators and turn valid input into an
+    # invalid X query. Prefer complete variants in priority order when the full
+    # multilingual expression exceeds the endpoint budget.
+    selected: list[str] = []
+    for variant in variants:
+        candidate = _group_query_variants((*selected, variant))
+        if len(candidate) <= budget:
+            selected.append(variant)
+    if selected:
+        return _group_query_variants(tuple(selected))
+
+    # If every complete variant is individually too long, fall back to bounded
+    # plain-text tokens. This intentionally removes X query syntax so truncation
+    # cannot leave unmatched grouping/quotes or a dangling boolean operator.
+    return _safe_plaintext_fallback(variants[0], budget)
+
+
+def _group_query_variants(variants: tuple[str, ...]) -> str:
+    if len(variants) == 1:
+        return variants[0]
+    parts = [f"({variant})" for variant in variants]
+    return f"({' OR '.join(parts)})"
+
+
+def _safe_plaintext_fallback(value: str, budget: int) -> str:
+    tokens = [
+        token
+        for token in _PLAIN_QUERY_TOKEN.findall(value)
+        if token.casefold() not in _X_BOOLEAN_WORDS
+    ]
+    selected: list[str] = []
+    used = 0
+    for token in tokens:
+        extra = len(token) + (1 if selected else 0)
+        if used + extra > budget:
+            break
+        selected.append(token)
+        used += extra
+    if not selected:
+        raise ValueError("X search query has no safe searchable text within the budget")
+    return " ".join(selected)
 
 
 def _candidate_from_post(

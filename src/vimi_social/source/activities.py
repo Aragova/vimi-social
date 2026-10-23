@@ -23,6 +23,7 @@ from vimi_social.source.connectors import (
     SourceConnectorRejected,
     SourceConnectorUnavailable,
 )
+from vimi_social.source.query_planner import MultilingualQueryPlanner
 from vimi_social.source.repository import SourceTaskRepository
 from vimi_social.source.scout_attempts import ScoutAttemptStore
 from vimi_social.telegram.outgoing import (
@@ -44,6 +45,7 @@ class ScoutActivities:
         source_repository: SourceTaskRepository | None = None,
         usage_repository: UsageRepository | None = None,
         attempt_store: ScoutAttemptStore | None = None,
+        query_planner: MultilingualQueryPlanner | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._registry = registry
@@ -51,19 +53,16 @@ class ScoutActivities:
         self._source_repository = source_repository or SourceTaskRepository()
         self._usage_repository = usage_repository or UsageRepository()
         self._attempt_store = attempt_store or ScoutAttemptStore()
+        self._query_planner = query_planner or MultilingualQueryPlanner()
 
     @activity.defn(name="execute_scout_task")
     async def execute_scout_task(self, workflow_input: ScoutWorkflowInput) -> ScoutRunResult:
         task = self._authorized_task(workflow_input)
-        request = ScoutSearchRequest(
-            intent=task.user_intent,
-            requested_sources=task.requested_sources,
-            preferred_languages=task.preferred_languages,
-            max_results=10,
-        )
 
+        # Route before any paid query expansion. Unsupported source requests fail
+        # without spending translation-provider credits.
         try:
-            connectors = self._registry.route(request.requested_sources)
+            connectors = self._registry.route(task.requested_sources)
         except SourceConnectorUnavailable:
             return self._fail_safe(task, "SOURCE_UNAVAILABLE", release_usage=True)
 
@@ -100,6 +99,21 @@ class ScoutActivities:
                 return self._result_for_task(session, current)
 
             self._usage_repository.commit(session, task.operation_key)
+
+        # Paid/external query expansion is fenced behind the durable Scout claim.
+        # A terminal retry returns above and an ambiguous in-flight retry becomes
+        # UNKNOWN rather than repeating translation or source-search side effects.
+        query_plan = await self._query_planner.plan(
+            task.user_intent,
+            task.preferred_languages,
+        )
+        request = ScoutSearchRequest(
+            intent=task.user_intent,
+            requested_sources=task.requested_sources,
+            preferred_languages=task.preferred_languages,
+            query_variants=query_plan.query_variants,
+            max_results=10,
+        )
 
         try:
             discovered: list[CandidateContent] = []

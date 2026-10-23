@@ -12,6 +12,10 @@ from vimi_social.publication.delivery import PublicationDeliveryActivities
 from vimi_social.publication.preview import PublicationPreviewActivities
 from vimi_social.source.activities import ScoutActivities
 from vimi_social.source.connectors import SourceConnectorRegistry
+from vimi_social.source.query_planner import (
+    MultilingualQueryPlanner,
+    OpenAIEnglishIntentTranslator,
+)
 from vimi_social.source.x_connector import XSourceConnector
 from vimi_social.telegram.client import TelegramBotApiClient
 from vimi_social.telegram.outgoing import TelegramMessenger, TelegramOutgoingStore
@@ -40,6 +44,14 @@ async def run() -> None:
         x_connector = XSourceConnector(settings.x_bearer_token)
         registry.register(x_connector)
 
+    translation_client: OpenAIEnglishIntentTranslator | None = None
+    if settings.search_translation_api_key:
+        translation_client = OpenAIEnglishIntentTranslator(
+            settings.search_translation_api_key,
+            model=settings.search_translation_model,
+        )
+    query_planner = MultilingualQueryPlanner(translation_client)
+
     messenger: TelegramMessenger | None = None
     if settings.telegram_bot_token:
         messenger = TelegramMessenger(
@@ -47,7 +59,12 @@ async def run() -> None:
             TelegramBotApiClient(settings.telegram_bot_token),
         )
 
-    scout_activities = ScoutActivities(session_factory, registry, messenger)
+    scout_activities = ScoutActivities(
+        session_factory,
+        registry,
+        messenger,
+        query_planner=query_planner,
+    )
     media_delivery = MediaPreparationDeliveryActivities(
         session_factory,
         messenger,
@@ -75,6 +92,8 @@ async def run() -> None:
     try:
         await worker.run()
     finally:
+        if translation_client is not None:
+            await translation_client.aclose()
         if x_connector is not None:
             await x_connector.aclose()
         if messenger is not None:

@@ -160,6 +160,8 @@ services:
       <<: *runtime-environment
       VIMI_TELEGRAM_BOT_TOKEN: ${VIMI_TELEGRAM_BOT_TOKEN:?VIMI_TELEGRAM_BOT_TOKEN is required}
       VIMI_X_BEARER_TOKEN: ${VIMI_X_BEARER_TOKEN:?VIMI_X_BEARER_TOKEN is required}
+      VIMI_SEARCH_TRANSLATION_API_KEY: ${VIMI_SEARCH_TRANSLATION_API_KEY:-}
+      VIMI_SEARCH_TRANSLATION_MODEL: ${VIMI_SEARCH_TRANSLATION_MODEL:-gpt-6-luna}
     command: ["python", "apps/worker/main.py"]
     volumes:
       - media-data:/var/lib/vimi/media:ro
