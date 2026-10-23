@@ -20,6 +20,8 @@ _EXPLICIT_SOURCE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("telegram", re.compile(r"(?:telegram|телеграм\w*)", re.IGNORECASE)),
     ("reddit", re.compile(r"(?:reddit|реддит\w*)", re.IGNORECASE)),
 )
+_CYRILLIC = re.compile(r"[А-Яа-яЁё]")
+_LATIN = re.compile(r"[A-Za-z]")
 
 
 class SourceTaskIntentTooLong(ValueError):
@@ -74,6 +76,7 @@ class SourceTaskService:
 
         operation_key = OperationKey(f"source-task:telegram:{chat_id}:{message_id}")
         requested_sources = infer_requested_sources(normalized_intent)
+        preferred_languages = infer_preferred_languages(normalized_intent)
 
         with (
             self._session_factory() as session,
@@ -105,7 +108,7 @@ class SourceTaskService:
                     operation_key=operation_key,
                     user_intent=normalized_intent,
                     requested_sources=requested_sources,
-                    preferred_languages=(),
+                    preferred_languages=preferred_languages,
                     telegram_update_id=update_id,
                     telegram_message_id=message_id,
                     telegram_chat_id=chat_id,
@@ -151,3 +154,16 @@ def infer_requested_sources(intent: str) -> tuple[str, ...]:
         if pattern.search(intent):
             found.append(source)
     return tuple(found)
+
+
+def infer_preferred_languages(intent: str) -> tuple[str, ...]:
+    """Infer search languages from the intent rather than the Telegram UI locale.
+
+    Russian/Cyrillic intents deliberately request both Russian and English discovery.
+    Latin-script intents default to English. Unknown scripts remain unrestricted.
+    """
+    if _CYRILLIC.search(intent):
+        return ("ru", "en")
+    if _LATIN.search(intent):
+        return ("en",)
+    return ()
