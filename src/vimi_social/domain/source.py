@@ -73,6 +73,7 @@ class ScoutSearchRequest:
     intent: str
     requested_sources: tuple[str, ...]
     preferred_languages: tuple[str, ...]
+    query_variants: tuple[str, ...] = ()
     max_results: int = 10
 
     def __post_init__(self) -> None:
@@ -80,6 +81,8 @@ class ScoutSearchRequest:
             raise ValueError("Scout intent must not be empty")
         if self.max_results < 1 or self.max_results > 100:
             raise ValueError("Scout max_results must be between 1 and 100")
+        if any(not query.strip() for query in self.query_variants):
+            raise ValueError("Scout query variants must not contain empty values")
 
 
 @dataclass(frozen=True, slots=True)
