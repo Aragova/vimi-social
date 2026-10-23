@@ -43,7 +43,7 @@ async def test_multilingual_planner_keeps_ru_and_adds_en_variant() -> None:
 
 
 @pytest.mark.asyncio
-async def test_multilingual_planner_falls_back_to_original_when_translation_is_unavailable() -> None:
+async def test_multilingual_planner_falls_back_when_translation_unavailable() -> None:
     translator = FakeTranslator(None)
     planner = MultilingualQueryPlanner(translator)
 
