@@ -1,5 +1,9 @@
 from vimi_social.domain.international import UiLocale
-from vimi_social.domain.source import CandidateContent, ScoutRunResult, SourceTaskState
+from vimi_social.domain.source import (
+    CandidateContent,
+    ScoutRunResult,
+    SourceTaskState,
+)
 from vimi_social.i18n.catalog import MessageKey, translate
 from vimi_social.telegram.menus import InlineButton, OutgoingMessage
 
