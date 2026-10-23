@@ -9,6 +9,7 @@ from vimi_social.domain.international import AgeEligibility, IanaTimezone, UiLoc
 from vimi_social.source.service import (
     SourceTaskIntentTooLong,
     SourceTaskService,
+    infer_preferred_languages,
     infer_requested_sources,
 )
 from vimi_social.telegram.identity import TelegramPrincipal
@@ -26,6 +27,18 @@ def test_explicit_x_source_is_detected() -> None:
 def test_explicit_unavailable_source_is_preserved_for_fail_closed_routing() -> None:
     assert infer_requested_sources("Найди это в Telegram") == ("telegram",)
     assert infer_requested_sources("Search Reddit for this topic") == ("reddit",)
+
+
+def test_cyrillic_intent_requests_russian_and_english_discovery() -> None:
+    assert infer_preferred_languages("Найди видео про ночной Бангкок") == ("ru", "en")
+
+
+def test_latin_intent_defaults_to_english_discovery() -> None:
+    assert infer_preferred_languages("Bangkok at night") == ("en",)
+
+
+def test_unknown_script_keeps_search_language_unrestricted() -> None:
+    assert infer_preferred_languages("กรุงเทพ") == ()
 
 
 def test_oversized_intent_is_rejected_before_opening_database_session() -> None:
