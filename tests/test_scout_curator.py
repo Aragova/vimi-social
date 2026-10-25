@@ -148,12 +148,58 @@ def test_curator_visual_evidence_can_break_equal_text_relevance() -> None:
 
     assert [candidate.source_id for candidate in ranked] == ["city", "event"]
     assert _score(ranked[0], "curator_visual_raw_score") == 0.8
-    assert _score(ranked[0], "curator_visual_relevance_score") == 0.8
+    assert _score(ranked[0], "curator_visual_relevance_score") == 1.0
+    assert _score(ranked[1], "curator_visual_relevance_score") == 0.0
     assert _score(ranked[0], "curator_text_relevance_score") == _score(
         ranked[1], "curator_text_relevance_score"
     )
     assert _score(ranked[0], "curator_relevance_score") > _score(
         ranked[1], "curator_relevance_score"
+    )
+
+
+def test_curator_calibrates_compressed_visual_cosines_relative_to_task() -> None:
+    low = _candidate("low", "Bangkok at night", likes=10)
+    middle = _candidate("middle", "Bangkok at night", likes=10)
+    high = _candidate("high", "Bangkok at night", likes=10)
+
+    ranked = CandidateCurator().rank(
+        (low, middle, high),
+        query_variants=("Bangkok at night",),
+        preferred_languages=("en",),
+        limit=10,
+        semantic_scores=(0.84, 0.84, 0.84),
+        visual_scores=(0.013, 0.048, 0.064),
+        visual_weight=0.15,
+        minimum_relevance=0.18,
+    )
+
+    assert [candidate.source_id for candidate in ranked] == ["high", "middle", "low"]
+    assert _score(ranked[0], "curator_visual_relevance_score") == 1.0
+    assert _score(ranked[1], "curator_visual_relevance_score") == 0.5
+    assert _score(ranked[2], "curator_visual_relevance_score") == 0.0
+
+
+def test_curator_equal_visual_cosines_leave_text_ranking_unchanged() -> None:
+    first = _candidate("first", "Bangkok at night", likes=20)
+    second = _candidate("second", "Bangkok at night", likes=10)
+
+    ranked = CandidateCurator().rank(
+        (first, second),
+        query_variants=("Bangkok at night",),
+        preferred_languages=("en",),
+        limit=10,
+        semantic_scores=(0.84, 0.84),
+        visual_scores=(0.048, 0.048),
+        visual_weight=0.25,
+        minimum_relevance=0.18,
+    )
+
+    assert [candidate.source_id for candidate in ranked] == ["first", "second"]
+    assert _score(ranked[0], "curator_visual_raw_score") == 0.048
+    assert "curator_visual_relevance_score" not in ranked[0].connector_metadata
+    assert _score(ranked[0], "curator_relevance_score") == _score(
+        ranked[0], "curator_text_relevance_score"
     )
 
 
