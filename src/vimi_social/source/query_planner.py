@@ -10,7 +10,8 @@ _RUSSIAN_COMMAND_PREFIX = re.compile(
     re.IGNORECASE,
 )
 _ENGLISH_COMMAND_PREFIX = re.compile(
-    r"^(?:find|search(?:\s+for)?|show(?:\s+me)?)(?:\s+(?:videos?|clips?|posts?))?"
+    r"^(?:find|search(?:\s+for)?|show(?:\s+me)?)"
+    r"(?:\s+(?:(?:a|the)\s+)?(?:videos?|clips?|posts?))?"
     r"(?:\s+(?:about|on|of))?\s+",
     re.IGNORECASE,
 )
