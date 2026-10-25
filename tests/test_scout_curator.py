@@ -1,5 +1,5 @@
 from vimi_social.domain.source import AdultClassification, CandidateContent
-from vimi_social.source.curator import CandidateCurator
+from vimi_social.source.curator import CandidateCurator, restore_curator_order
 
 
 def _candidate(
@@ -68,6 +68,7 @@ def test_curator_prioritizes_relevance_over_popularity() -> None:
     assert _score(ranked[0], "curator_relevance_score") > _score(
         ranked[1], "curator_relevance_score"
     )
+    assert [candidate.connector_metadata["curator_rank"] for candidate in ranked] == [1, 2]
 
 
 def test_curator_uses_quality_to_break_equal_relevance() -> None:
@@ -116,3 +117,24 @@ def test_curator_enforces_final_result_budget() -> None:
 
     assert len(ranked) == 10
     assert all("curator_total_score" in candidate.connector_metadata for candidate in ranked)
+    assert [candidate.connector_metadata["curator_rank"] for candidate in ranked] == list(
+        range(1, 11)
+    )
+
+
+def test_restore_curator_order_recovers_rank_after_reload_shuffle() -> None:
+    ranked = CandidateCurator().rank(
+        (
+            _candidate("noise", "Beach workout compilation", likes=100_000),
+            _candidate("best", "Bangkok nightlife Sukhumvit", likes=10),
+            _candidate("good", "Bangkok night market", likes=5),
+        ),
+        query_variants=("Bangkok nightlife", "Bangkok night"),
+        preferred_languages=("en",),
+        limit=10,
+    )
+
+    reloaded = (ranked[2], ranked[0], ranked[1])
+    restored = restore_curator_order(reloaded)
+
+    assert restored == ranked
