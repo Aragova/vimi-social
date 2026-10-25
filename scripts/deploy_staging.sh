@@ -1,51 +1,51 @@
 #!/bin/sh
 set -eu
 
-ENV_FILE="${VIMI_STAGING_ENV_FILE:-.env.staging}"
-COMPOSE_FILE="infra/docker/docker-compose.staging.yml"
-COHOST_COMPOSE_FILE="infra/docker/docker-compose.staging.cohost.yml"
-COHOST_MODE="${VIMI_STAGING_COHOST:-false}"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+ENV_FILE=${VIMI_STAGING_ENV_FILE:-"$REPO_ROOT/.env.staging"}
+COMPOSE_FILE="$REPO_ROOT/infra/docker/docker-compose.staging.yml"
+COHOST_COMPOSE_FILE="$REPO_ROOT/infra/docker/docker-compose.staging.cohost.yml"
+COHOST_MODE=${VIMI_STAGING_COHOST:-false}
 
 if [ ! -f "$ENV_FILE" ]; then
   echo "Missing staging environment file: $ENV_FILE" >&2
-  echo "Copy .env.staging.example and fill real staging values first." >&2
   exit 1
 fi
 
-if grep -Eq '^[A-Z0-9_]+=CHANGE_ME.*$' "$ENV_FILE"; then
-  echo "Staging environment still contains CHANGE_ME values." >&2
-  exit 1
-fi
+required_vars='VIMI_PUBLIC_HOST
+VIMI_POSTGRES_BOOTSTRAP_PASSWORD
+VIMI_APP_DB_PASSWORD
+VIMI_MIGRATOR_DB_PASSWORD
+VIMI_TELEGRAM_BOT_TOKEN
+VIMI_TELEGRAM_WEBHOOK_SECRET
+VIMI_X_BEARER_TOKEN
+VIMI_DEST_X_PRIMARY_TOKEN'
 
-require_env_value() {
+read_env_value() {
   key="$1"
-  value="$(sed -n "s/^${key}=//p" "$ENV_FILE" | head -n 1)"
-  if [ -z "$value" ]; then
-    echo "Missing required staging value: $key" >&2
-    exit 1
-  fi
+  sed -n "s/^${key}=//p" "$ENV_FILE" | tail -n 1
 }
 
-for key in \
-  VIMI_PUBLIC_HOST \
-  VIMI_POSTGRES_BOOTSTRAP_PASSWORD \
-  VIMI_APP_DB_PASSWORD \
-  VIMI_MIGRATOR_DB_PASSWORD \
-  VIMI_TELEGRAM_BOT_TOKEN \
-  VIMI_TELEGRAM_WEBHOOK_SECRET \
-  VIMI_X_BEARER_TOKEN \
-  VIMI_DEST_X_PRIMARY_TOKEN
-do
-  require_env_value "$key"
+printf '%s\n' "$required_vars" | while IFS= read -r key; do
+  value=$(read_env_value "$key")
+  case "$value" in
+    ''|CHANGE_ME*)
+      echo "Missing required staging value: $key" >&2
+      exit 1
+      ;;
+  esac
 done
 
 case "$COHOST_MODE" in
   true|false) ;;
   *)
-    echo "VIMI_STAGING_COHOST must be 'true' or 'false'." >&2
+    echo "VIMI_STAGING_COHOST must be true or false" >&2
     exit 1
     ;;
 esac
+
+cd "$REPO_ROOT"
 
 compose() {
   if [ "$COHOST_MODE" = "true" ]; then
@@ -70,8 +70,10 @@ run_one_shot() {
 }
 
 compose config --quiet
-# All Python services share the same image tag, so one build is sufficient.
-compose build bot
+# Most Python services share the main runtime image. Local AI deliberately uses
+# its own dependency-heavy image, so both images must be rebuilt for every
+# staging revision to prevent worker code from talking to stale inference code.
+compose build bot local-ai
 
 # Database authority first. PostgreSQL stays private on the internal network.
 compose up -d --wait postgres
