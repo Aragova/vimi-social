@@ -150,7 +150,7 @@ class LocalModels:
                 return self._embedder
 
             fastembed_module = cast(Any, import_module("fastembed"))
-            embedding_factory = cast(Any, fastembed_module.TextEmbedding)
+            embedding_factory = fastembed_module.TextEmbedding
             self._register_default_embedding_model(embedding_factory)
             self._embedder = embedding_factory(
                 model_name=self._embedding_model_name,
@@ -163,10 +163,12 @@ class LocalModels:
         if self._embedding_model_name != _DEFAULT_EMBEDDING_MODEL:
             return
 
-        supported_models = embedding_factory.list_supported_models()
+        supported_models = cast(
+            list[dict[str, object]],
+            embedding_factory.list_supported_models(),
+        )
         if any(
-            isinstance(model, dict)
-            and str(model.get("model", "")).lower() == self._embedding_model_name.lower()
+            str(model.get("model", "")).lower() == self._embedding_model_name.lower()
             for model in supported_models
         ):
             return
