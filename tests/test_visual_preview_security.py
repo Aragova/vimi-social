@@ -3,8 +3,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-
 from apps.local_ai.visual import SiglipPreviewScorer
+
 from vimi_social.media.secure_ingest.addressing import DestinationPolicy
 from vimi_social.media.secure_ingest.errors import UnsafeAddressError
 from vimi_social.media.secure_ingest.models import FetchTimeouts, ResolvedTarget
