@@ -42,7 +42,7 @@ class LocalModels:
         )
         self._embedding_model_name = os.getenv(
             "VIMI_LOCAL_EMBEDDING_MODEL",
-            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+            "intfloat/multilingual-e5-small",
         )
         self._translation_lock = Lock()
         self._embedding_lock = Lock()
