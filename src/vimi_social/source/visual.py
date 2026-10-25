@@ -8,7 +8,7 @@ class VisualRelevanceUnavailable(RuntimeError):
 
 
 class VisualRelevanceScorer(Protocol):
-    async def score_candidates(
+    async def score_preview_candidates(
         self,
         query_variants: tuple[str, ...],
         candidates: tuple[CandidateContent, ...],
