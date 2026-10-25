@@ -104,22 +104,24 @@ class SiglipPreviewScorer:
             session_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
             session_options.enable_mem_pattern = False
 
-            self._text_session = ort.InferenceSession(
+            text_session = ort.InferenceSession(
                 str(model_path / "onnx" / "text_model_quantized.onnx"),
                 sess_options=session_options,
                 providers=["CPUExecutionProvider"],
             )
-            self._vision_session = ort.InferenceSession(
+            vision_session = ort.InferenceSession(
                 str(model_path / "onnx" / "vision_model_quantized.onnx"),
                 sess_options=session_options,
                 providers=["CPUExecutionProvider"],
             )
-            self._tokenizer = tokenizers_module.Tokenizer.from_file(
-                str(model_path / "tokenizer.json")
-            )
-            self._tokenizer.enable_truncation(max_length=64)
-            self._tokenizer.enable_padding(length=64, pad_id=1, pad_token="</s>")
-            return self._text_session, self._vision_session, self._tokenizer
+            tokenizer = tokenizers_module.Tokenizer.from_file(str(model_path / "tokenizer.json"))
+            tokenizer.enable_truncation(max_length=64)
+            tokenizer.enable_padding(length=64, pad_id=1, pad_token="</s>")
+
+            self._text_session = text_session
+            self._vision_session = vision_session
+            self._tokenizer = tokenizer
+            return text_session, vision_session, tokenizer
 
     def _text_embeddings(
         self,
