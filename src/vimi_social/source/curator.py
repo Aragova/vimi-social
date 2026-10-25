@@ -67,7 +67,10 @@ def _relevance_score(
         matched = sum(
             1
             for query_token in query_tokens
-            if any(_token_matches(query_token, candidate_token) for candidate_token in candidate_tokens)
+            if any(
+                _token_matches(query_token, candidate_token)
+                for candidate_token in candidate_tokens
+            )
         )
         coverage = matched / len(query_tokens)
         phrase_bonus = 0.12 if len(query_tokens) > 1 and normalized_variant in searchable else 0.0
