@@ -105,17 +105,14 @@ class LocalModels:
             ):
                 return self._translator, self._source_sp, self._target_sp
 
-            translator_factory = cast(
-                Callable[..., Any],
-                getattr(import_module("ctranslate2"), "Translator"),
-            )
-            snapshot_download = cast(
-                Callable[..., str],
-                getattr(import_module("huggingface_hub"), "snapshot_download"),
-            )
+            ctranslate2_module = cast(Any, import_module("ctranslate2"))
+            huggingface_module = cast(Any, import_module("huggingface_hub"))
+            sentencepiece_module = cast(Any, import_module("sentencepiece"))
+            translator_factory = cast(Callable[..., Any], ctranslate2_module.Translator)
+            snapshot_download = cast(Callable[..., str], huggingface_module.snapshot_download)
             sentencepiece_factory = cast(
                 Callable[..., Any],
-                getattr(import_module("sentencepiece"), "SentencePieceProcessor"),
+                sentencepiece_module.SentencePieceProcessor,
             )
 
             model_path = Path(
@@ -150,10 +147,8 @@ class LocalModels:
             if self._embedder is not None:
                 return self._embedder
 
-            embedding_factory = cast(
-                Callable[..., Any],
-                getattr(import_module("fastembed"), "TextEmbedding"),
-            )
+            fastembed_module = cast(Any, import_module("fastembed"))
+            embedding_factory = cast(Callable[..., Any], fastembed_module.TextEmbedding)
             self._embedder = embedding_factory(
                 model_name=self._embedding_model_name,
                 cache_dir=str(self._cache_dir / "fastembed"),
