@@ -3,7 +3,6 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-
 from apps.local_ai import main as local_ai_main
 
 
