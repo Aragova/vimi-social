@@ -33,6 +33,12 @@ class CandidateCurator:
         if visual_scores is not None and len(visual_scores) != len(candidates):
             raise ValueError("visual score count must match candidate count")
 
+        visual_relevances = (
+            _calibrate_siglip_relevances(visual_scores)
+            if visual_scores is not None
+            else None
+        )
+
         scored: list[tuple[float, float, float, int, CandidateContent]] = []
         for index, candidate in enumerate(candidates):
             lexical_relevance = _relevance_score(
@@ -52,9 +58,7 @@ class CandidateCurator:
 
             visual_raw = visual_scores[index] if visual_scores is not None else None
             visual_relevance = (
-                _calibrate_siglip_relevance(visual_raw)
-                if visual_raw is not None
-                else None
+                visual_relevances[index] if visual_relevances is not None else None
             )
             relevance = _fused_visual_relevance(
                 text_relevance,
@@ -70,9 +74,10 @@ class CandidateCurator:
                 metadata["curator_semantic_relevance_score"] = semantic_relevance
                 metadata["curator_semantic_raw_score"] = round(semantic_raw, 6)
             metadata["curator_text_relevance_score"] = text_relevance
-            if visual_relevance is not None and visual_raw is not None:
-                metadata["curator_visual_relevance_score"] = visual_relevance
+            if visual_raw is not None:
                 metadata["curator_visual_raw_score"] = round(visual_raw, 6)
+            if visual_relevance is not None:
+                metadata["curator_visual_relevance_score"] = visual_relevance
             metadata["curator_relevance_score"] = relevance
             metadata["curator_quality_score"] = quality
             metadata["curator_total_score"] = round(total, 6)
@@ -133,10 +138,34 @@ def _calibrate_e5_relevance(value: float) -> float:
     return round(calibrated, 6)
 
 
-def _calibrate_siglip_relevance(value: float) -> float:
-    """Use positive normalized image-text cosine as conservative visual evidence."""
+def _calibrate_siglip_relevances(
+    values: tuple[float | None, ...],
+) -> tuple[float | None, ...]:
+    """Convert compressed SigLIP cosine scores into task-relative rerank evidence.
 
-    return round(max(0.0, min(1.0, value)), 6)
+    Scout uses visual evidence only to rerank candidates that already passed the
+    text relevance gate. Absolute cosine magnitudes vary by query and checkpoint,
+    so rank the distinct available scores within the current task instead of
+    treating the raw cosine as a probability. If the batch contains no visual
+    discrimination, return no calibrated evidence and leave text ranking intact.
+    """
+
+    bounded_values = tuple(
+        None if value is None else max(-1.0, min(1.0, value)) for value in values
+    )
+    distinct = sorted({value for value in bounded_values if value is not None})
+    if len(distinct) < 2:
+        return tuple(None for _ in values)
+
+    denominator = len(distinct) - 1
+    calibration = {
+        value: round(index / denominator, 6)
+        for index, value in enumerate(distinct)
+    }
+    return tuple(
+        None if value is None else calibration[value]
+        for value in bounded_values
+    )
 
 
 def _relevance_score(
