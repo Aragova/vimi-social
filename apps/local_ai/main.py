@@ -6,10 +6,9 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, cast
 
+from apps.local_ai.visual import SiglipPreviewScorer
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-
-from apps.local_ai.visual import SiglipPreviewScorer
 
 _DEFAULT_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
 
