@@ -23,7 +23,7 @@ from vimi_social.source.connectors import (
     SourceConnectorRejected,
     SourceConnectorUnavailable,
 )
-from vimi_social.source.curator import CandidateCurator
+from vimi_social.source.curator import CandidateCurator, restore_curator_order
 from vimi_social.source.query_planner import MultilingualQueryPlanner
 from vimi_social.source.repository import SourceTaskRepository
 from vimi_social.source.scout_attempts import ScoutAttemptStore
@@ -207,10 +207,12 @@ class ScoutActivities:
         candidates: tuple[CandidateContent, ...] = ()
         if result.state is SourceTaskState.COMPLETED:
             with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
-                candidates = self._source_repository.list_candidates(
-                    session,
-                    task.id,
-                    limit=10,
+                candidates = restore_curator_order(
+                    self._source_repository.list_candidates(
+                        session,
+                        task.id,
+                        limit=10,
+                    )
                 )
 
         message = build_scout_results(UiLocale(task.locale), result, candidates)
