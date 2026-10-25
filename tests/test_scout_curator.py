@@ -131,6 +131,54 @@ def test_curator_semantic_evidence_can_override_lexical_noise() -> None:
     )
 
 
+def test_curator_visual_evidence_can_break_equal_text_relevance() -> None:
+    event = _candidate("event", "Bangkok at night", likes=10)
+    city = _candidate("city", "Bangkok at night", likes=10)
+
+    ranked = CandidateCurator().rank(
+        (event, city),
+        query_variants=("Bangkok at night",),
+        preferred_languages=("en",),
+        limit=10,
+        semantic_scores=(0.84, 0.84),
+        visual_scores=(0.10, 0.80),
+        visual_weight=0.25,
+        minimum_relevance=0.18,
+    )
+
+    assert [candidate.source_id for candidate in ranked] == ["city", "event"]
+    assert _score(ranked[0], "curator_visual_raw_score") == 0.8
+    assert _score(ranked[0], "curator_visual_relevance_score") == 0.8
+    assert _score(ranked[0], "curator_text_relevance_score") == _score(
+        ranked[1], "curator_text_relevance_score"
+    )
+    assert _score(ranked[0], "curator_relevance_score") > _score(
+        ranked[1], "curator_relevance_score"
+    )
+
+
+def test_curator_missing_visual_evidence_does_not_penalize_candidate() -> None:
+    first = _candidate("first", "Bangkok at night", likes=10)
+    second = _candidate("second", "Bangkok at night", likes=10)
+
+    ranked = CandidateCurator().rank(
+        (first, second),
+        query_variants=("Bangkok at night",),
+        preferred_languages=("en",),
+        limit=10,
+        semantic_scores=(0.84, 0.84),
+        visual_scores=(None, None),
+        visual_weight=0.25,
+        minimum_relevance=0.18,
+    )
+
+    assert [candidate.source_id for candidate in ranked] == ["first", "second"]
+    assert "curator_visual_raw_score" not in ranked[0].connector_metadata
+    assert _score(ranked[0], "curator_relevance_score") == _score(
+        ranked[0], "curator_text_relevance_score"
+    )
+
+
 def test_curator_filters_low_semantic_relevance_when_enabled() -> None:
     relevant = _candidate("relevant", "Bangkok skyline after sunset")
     noise = _candidate("noise", "Seoul technology conference keynote")
