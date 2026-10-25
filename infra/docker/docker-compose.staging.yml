@@ -127,7 +127,7 @@ services:
     environment:
       VIMI_LOCAL_AI_CACHE: /var/lib/vimi/ai-models
       VIMI_LOCAL_TRANSLATION_MODEL: ${VIMI_LOCAL_TRANSLATION_MODEL:-gaudi/opus-mt-ru-en-ctranslate2}
-      VIMI_LOCAL_EMBEDDING_MODEL: ${VIMI_LOCAL_EMBEDDING_MODEL:-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2}
+      VIMI_LOCAL_EMBEDDING_MODEL: ${VIMI_LOCAL_EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
     volumes:
       - ai-model-cache:/var/lib/vimi/ai-models
     expose:
