@@ -33,11 +33,18 @@ class CandidateCurator:
             metadata["curator_relevance_score"] = relevance
             metadata["curator_quality_score"] = quality
             metadata["curator_total_score"] = round(total, 6)
-            ranked = replace(candidate, connector_metadata=metadata)
-            scored.append((total, relevance, quality, -index, ranked))
+            scored_candidate = replace(candidate, connector_metadata=metadata)
+            scored.append((total, relevance, quality, -index, scored_candidate))
 
         scored.sort(key=lambda item: item[:4], reverse=True)
-        return tuple(item[4] for item in scored[:limit])
+
+        ranked: list[CandidateContent] = []
+        for rank, item in enumerate(scored[:limit], start=1):
+            candidate = item[4]
+            metadata = dict(candidate.connector_metadata)
+            metadata["curator_rank"] = rank
+            ranked.append(replace(candidate, connector_metadata=metadata))
+        return tuple(ranked)
 
 
 def _relevance_score(
