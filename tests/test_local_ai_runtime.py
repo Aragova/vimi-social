@@ -27,6 +27,32 @@ class _FakeTextEmbedding:
         self.kwargs = dict(kwargs)
 
 
+def test_local_ai_routes_huggingface_cache_to_writable_model_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    cache_dir = tmp_path / "ai-models"
+    monkeypatch.setenv("VIMI_LOCAL_AI_CACHE", str(cache_dir))
+    for variable in ("XDG_CACHE_HOME", "HF_HOME", "HF_HUB_CACHE", "HF_XET_CACHE"):
+        monkeypatch.delenv(variable, raising=False)
+
+    models = local_ai_main.LocalModels()
+    configure_cache = cast(
+        Callable[[local_ai_main.LocalModels], None],
+        local_ai_main.LocalModels.__dict__["_configure_cache_environment"],
+    )
+    configure_cache(models)
+
+    assert local_ai_main.os.environ["XDG_CACHE_HOME"] == str(cache_dir / "xdg")
+    assert local_ai_main.os.environ["HF_HOME"] == str(cache_dir / "huggingface")
+    assert local_ai_main.os.environ["HF_HUB_CACHE"] == str(
+        cache_dir / "huggingface" / "hub"
+    )
+    assert local_ai_main.os.environ["HF_XET_CACHE"] == str(
+        cache_dir / "huggingface" / "xet"
+    )
+
+
 def test_default_e5_model_is_registered_before_fastembed_construction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
