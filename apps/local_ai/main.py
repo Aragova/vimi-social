@@ -63,7 +63,7 @@ class LocalModels:
 
     def translate_ru_to_en(self, text: str) -> str:
         translator, source_sp, target_sp = self._ensure_translation()
-        source_tokens = source_sp.encode(text, out_type=str)
+        source_tokens = [*source_sp.encode(text, out_type=str), "</s>"]
         results = translator.translate_batch(
             [source_tokens],
             beam_size=1,
