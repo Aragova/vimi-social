@@ -9,6 +9,8 @@ from typing import Any, cast
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+_DEFAULT_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
+
 
 class TranslateRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
@@ -42,7 +44,7 @@ class LocalModels:
         )
         self._embedding_model_name = os.getenv(
             "VIMI_LOCAL_EMBEDDING_MODEL",
-            "intfloat/multilingual-e5-small",
+            _DEFAULT_EMBEDDING_MODEL,
         )
         self._translation_lock = Lock()
         self._embedding_lock = Lock()
@@ -148,13 +150,40 @@ class LocalModels:
                 return self._embedder
 
             fastembed_module = cast(Any, import_module("fastembed"))
-            embedding_factory = cast(Callable[..., Any], fastembed_module.TextEmbedding)
+            embedding_factory = cast(Any, fastembed_module.TextEmbedding)
+            self._register_default_embedding_model(embedding_factory)
             self._embedder = embedding_factory(
                 model_name=self._embedding_model_name,
                 cache_dir=str(self._cache_dir / "fastembed"),
                 threads=max(1, min(2, os.cpu_count() or 1)),
             )
             return self._embedder
+
+    def _register_default_embedding_model(self, embedding_factory: Any) -> None:
+        if self._embedding_model_name != _DEFAULT_EMBEDDING_MODEL:
+            return
+
+        supported_models = embedding_factory.list_supported_models()
+        if any(
+            isinstance(model, dict)
+            and str(model.get("model", "")).lower() == self._embedding_model_name.lower()
+            for model in supported_models
+        ):
+            return
+
+        description_module = cast(
+            Any,
+            import_module("fastembed.common.model_description"),
+        )
+        model_source_factory = cast(Callable[..., Any], description_module.ModelSource)
+        embedding_factory.add_custom_model(
+            model=self._embedding_model_name,
+            pooling=description_module.PoolingType.MEAN,
+            normalization=True,
+            sources=model_source_factory(hf=self._embedding_model_name),
+            dim=384,
+            model_file="onnx/model.onnx",
+        )
 
     @staticmethod
     def _numpy() -> Any:
