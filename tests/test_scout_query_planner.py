@@ -4,6 +4,7 @@ import httpx
 import pytest
 
 from vimi_social.source.query_planner import (
+    FallbackEnglishIntentTranslator,
     MultilingualQueryPlanner,
     OpenAIEnglishIntentTranslator,
     normalize_search_intent,
@@ -50,6 +51,31 @@ async def test_multilingual_planner_falls_back_when_translation_unavailable() ->
     plan = await planner.plan("Найди видео про ночной Бангкок", ("ru", "en"))
 
     assert plan.query_variants == ("ночной Бангкок",)
+
+
+@pytest.mark.asyncio
+async def test_translation_chain_uses_second_provider_only_when_first_fails() -> None:
+    local = FakeTranslator(None)
+    fallback = FakeTranslator("Bangkok at night")
+    translator = FallbackEnglishIntentTranslator((local, fallback))
+
+    result = await translator.translate_to_english("ночной Бангкок")
+
+    assert result == "Bangkok at night"
+    assert local.calls == ["ночной Бангкок"]
+    assert fallback.calls == ["ночной Бангкок"]
+
+
+@pytest.mark.asyncio
+async def test_translation_chain_stops_after_local_success() -> None:
+    local = FakeTranslator("Bangkok at night")
+    fallback = FakeTranslator("should not be charged")
+    translator = FallbackEnglishIntentTranslator((local, fallback))
+
+    result = await translator.translate_to_english("ночной Бангкок")
+
+    assert result == "Bangkok at night"
+    assert fallback.calls == []
 
 
 @pytest.mark.asyncio
