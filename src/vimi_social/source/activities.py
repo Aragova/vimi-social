@@ -23,6 +23,7 @@ from vimi_social.source.connectors import (
     SourceConnectorRejected,
     SourceConnectorUnavailable,
 )
+from vimi_social.source.curator import CandidateCurator, restore_curator_order
 from vimi_social.source.query_planner import MultilingualQueryPlanner
 from vimi_social.source.repository import SourceTaskRepository
 from vimi_social.source.scout_attempts import ScoutAttemptStore
@@ -46,6 +47,7 @@ class ScoutActivities:
         usage_repository: UsageRepository | None = None,
         attempt_store: ScoutAttemptStore | None = None,
         query_planner: MultilingualQueryPlanner | None = None,
+        curator: CandidateCurator | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._registry = registry
@@ -54,6 +56,7 @@ class ScoutActivities:
         self._usage_repository = usage_repository or UsageRepository()
         self._attempt_store = attempt_store or ScoutAttemptStore()
         self._query_planner = query_planner or MultilingualQueryPlanner()
+        self._curator = curator or CandidateCurator()
 
     @activity.defn(name="execute_scout_task")
     async def execute_scout_task(self, workflow_input: ScoutWorkflowInput) -> ScoutRunResult:
@@ -139,6 +142,12 @@ class ScoutActivities:
             )
 
         normalized = _deduplicate(discovered)
+        curated = self._curator.rank(
+            normalized,
+            query_variants=query_plan.query_variants,
+            preferred_languages=task.preferred_languages,
+            limit=request.max_results,
+        )
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
             if not self._attempt_store.lock_owned_attempt(
                 session,
@@ -157,7 +166,7 @@ class ScoutActivities:
                 session,
                 task_id=task.id,
                 tenant_id=task.tenant_id,
-                candidates=normalized,
+                candidates=curated,
             )
             if not self._attempt_store.finish_owned_attempt(
                 session,
@@ -198,10 +207,12 @@ class ScoutActivities:
         candidates: tuple[CandidateContent, ...] = ()
         if result.state is SourceTaskState.COMPLETED:
             with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
-                candidates = self._source_repository.list_candidates(
-                    session,
-                    task.id,
-                    limit=10,
+                candidates = restore_curator_order(
+                    self._source_repository.list_candidates(
+                        session,
+                        task.id,
+                        limit=10,
+                    )
                 )
 
         message = build_scout_results(UiLocale(task.locale), result, candidates)
