@@ -8,6 +8,7 @@ _TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
 _URL = re.compile(r"https?://\S+", re.IGNORECASE)
 _HASHTAG = re.compile(r"(?<!\w)#[^\s#]+", re.UNICODE)
 _REPEATED_PUNCTUATION = re.compile(r"[!?]{4,}")
+_E5_SIMILARITY_FLOOR = 0.70
 
 
 class CandidateCurator:
@@ -37,7 +38,7 @@ class CandidateCurator:
             )
             semantic_raw = semantic_scores[index] if semantic_scores is not None else None
             semantic_relevance = (
-                _bounded_semantic_score(semantic_raw)
+                _calibrate_e5_relevance(semantic_raw)
                 if semantic_raw is not None
                 else None
             )
@@ -92,10 +93,17 @@ def _fused_relevance(lexical: float, semantic: float | None) -> float:
     return round(min(1.0, (0.35 * lexical) + (0.65 * semantic)), 6)
 
 
-def _bounded_semantic_score(value: float) -> float:
-    # Cosine similarity may be negative. For relevance ranking negative evidence
-    # is equivalent to zero relevance; positive cosine remains directly observable.
-    return round(max(0.0, min(1.0, value)), 6)
+def _calibrate_e5_relevance(value: float) -> float:
+    """Map multilingual-E5's compressed cosine range into useful relevance space.
+
+    The model authors document cosine scores clustering around 0.7..1.0 because
+    of the low-temperature contrastive objective. Preserve the raw score in
+    metadata, but map that documented range to 0..1 before Curator fusion.
+    """
+
+    bounded = max(_E5_SIMILARITY_FLOOR, min(1.0, value))
+    calibrated = (bounded - _E5_SIMILARITY_FLOOR) / (1.0 - _E5_SIMILARITY_FLOOR)
+    return round(calibrated, 6)
 
 
 def _relevance_score(
