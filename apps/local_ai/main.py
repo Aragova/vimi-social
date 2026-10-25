@@ -90,7 +90,11 @@ class LocalModels:
         return [round(float(max(-1.0, min(1.0, score))), 6) for score in best.tolist()]
 
     def _ensure_translation(self) -> tuple[Any, Any, Any]:
-        if self._translator is not None and self._source_sp is not None and self._target_sp is not None:
+        if (
+            self._translator is not None
+            and self._source_sp is not None
+            and self._target_sp is not None
+        ):
             return self._translator, self._source_sp, self._target_sp
 
         with self._translation_lock:
