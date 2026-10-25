@@ -35,9 +35,10 @@ class CandidateCurator:
                 query_variants,
                 preferred_languages,
             )
+            semantic_raw = semantic_scores[index] if semantic_scores is not None else None
             semantic_relevance = (
-                _bounded_semantic_score(semantic_scores[index])
-                if semantic_scores is not None
+                _bounded_semantic_score(semantic_raw)
+                if semantic_raw is not None
                 else None
             )
             relevance = _fused_relevance(lexical_relevance, semantic_relevance)
@@ -48,9 +49,9 @@ class CandidateCurator:
             total = (0.82 * relevance) + (0.18 * quality)
             metadata = dict(candidate.connector_metadata)
             metadata["curator_lexical_relevance_score"] = lexical_relevance
-            if semantic_relevance is not None:
+            if semantic_relevance is not None and semantic_raw is not None:
                 metadata["curator_semantic_relevance_score"] = semantic_relevance
-                metadata["curator_semantic_raw_score"] = round(semantic_scores[index], 6)
+                metadata["curator_semantic_raw_score"] = round(semantic_raw, 6)
             metadata["curator_relevance_score"] = relevance
             metadata["curator_quality_score"] = quality
             metadata["curator_total_score"] = round(total, 6)
