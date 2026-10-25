@@ -10,8 +10,9 @@ _RUSSIAN_COMMAND_PREFIX = re.compile(
     re.IGNORECASE,
 )
 _ENGLISH_COMMAND_PREFIX = re.compile(
-    r"^(?:find|search(?:\s+for)?|show(?:\s+me)?)(?:\s+(?:videos?|clips?|posts?))?"
-    r"(?:\s+(?:about|on))?\s+",
+    r"^(?:find|search(?:\s+for)?|show(?:\s+me)?)"
+    r"(?:\s+(?:(?:a|the)\s+)?(?:videos?|clips?|posts?))?"
+    r"(?:\s+(?:about|on|of))?\s+",
     re.IGNORECASE,
 )
 _CYRILLIC = re.compile(r"[\u0400-\u04FF]")
@@ -40,7 +41,7 @@ class MultilingualQueryPlanner:
 
         wants_english = "en" in {language.lower() for language in preferred_languages}
         if self._translator is not None and wants_english and _CYRILLIC.search(primary):
-            translated = await self._translator.translate_to_english(primary)
+            translated = await self._translator.translate_to_english(intent)
             if translated is not None:
                 normalized = normalize_search_intent(translated)
                 if normalized and normalized.casefold() != primary.casefold():

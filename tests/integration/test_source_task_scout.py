@@ -66,7 +66,7 @@ class CountingTranslator:
 
     async def translate_to_english(self, intent: str) -> str | None:
         self.calls += 1
-        assert intent == "ночной Бангкок"
+        assert intent == "Найди видео про ночной Бангкок"
         return "Bangkok night"
 
 
