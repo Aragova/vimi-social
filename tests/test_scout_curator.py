@@ -119,12 +119,13 @@ def test_curator_semantic_evidence_can_override_lexical_noise() -> None:
         query_variants=("Bangkok city at night",),
         preferred_languages=("en",),
         limit=10,
-        semantic_scores=(0.22, 0.88),
+        semantic_scores=(0.74, 0.91),
         minimum_relevance=0.18,
     )
 
     assert [candidate.source_id for candidate in ranked] == ["match", "trap"]
-    assert _score(ranked[0], "curator_semantic_relevance_score") == 0.88
+    assert _score(ranked[0], "curator_semantic_raw_score") == 0.91
+    assert _score(ranked[0], "curator_semantic_relevance_score") == 0.7
     assert _score(ranked[0], "curator_relevance_score") > _score(
         ranked[1], "curator_relevance_score"
     )
@@ -139,7 +140,7 @@ def test_curator_filters_low_semantic_relevance_when_enabled() -> None:
         query_variants=("Bangkok at night",),
         preferred_languages=("en",),
         limit=10,
-        semantic_scores=(0.02, 0.78),
+        semantic_scores=(0.71, 0.90),
         minimum_relevance=0.18,
     )
 
