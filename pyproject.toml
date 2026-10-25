@@ -33,7 +33,7 @@ local-ai = [
 ]
 dev = [
   "pytest>=8.3,<9",
-  "pytest-asyncio>=0.24,<1",
+  "pytest-asyncio<1,>=0.24",
   "ruff>=0.8,<1",
   "pyright>=1.1.390,<2",
 ]
@@ -57,5 +57,5 @@ reportMissingTypeStubs = false
 
 [tool.pytest.ini_options]
 addopts = "-q"
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 asyncio_mode = "auto"
