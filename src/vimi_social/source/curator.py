@@ -11,7 +11,7 @@ _REPEATED_PUNCTUATION = re.compile(r"[!?]{4,}")
 
 
 class CandidateCurator:
-    """Deterministic, provider-free ranking for normalized Scout candidates."""
+    """Deterministic ranking with optional local semantic relevance evidence."""
 
     def rank(
         self,
@@ -20,16 +20,37 @@ class CandidateCurator:
         query_variants: tuple[str, ...],
         preferred_languages: tuple[str, ...],
         limit: int,
+        semantic_scores: tuple[float, ...] | None = None,
+        minimum_relevance: float = 0.0,
     ) -> tuple[CandidateContent, ...]:
         if limit < 1:
             return ()
+        if semantic_scores is not None and len(semantic_scores) != len(candidates):
+            raise ValueError("semantic score count must match candidate count")
 
         scored: list[tuple[float, float, float, int, CandidateContent]] = []
         for index, candidate in enumerate(candidates):
-            relevance = _relevance_score(candidate, query_variants, preferred_languages)
+            lexical_relevance = _relevance_score(
+                candidate,
+                query_variants,
+                preferred_languages,
+            )
+            semantic_relevance = (
+                _bounded_semantic_score(semantic_scores[index])
+                if semantic_scores is not None
+                else None
+            )
+            relevance = _fused_relevance(lexical_relevance, semantic_relevance)
+            if semantic_relevance is not None and relevance < minimum_relevance:
+                continue
+
             quality = _quality_score(candidate)
-            total = (0.78 * relevance) + (0.22 * quality)
+            total = (0.82 * relevance) + (0.18 * quality)
             metadata = dict(candidate.connector_metadata)
+            metadata["curator_lexical_relevance_score"] = lexical_relevance
+            if semantic_relevance is not None:
+                metadata["curator_semantic_relevance_score"] = semantic_relevance
+                metadata["curator_semantic_raw_score"] = round(semantic_scores[index], 6)
             metadata["curator_relevance_score"] = relevance
             metadata["curator_quality_score"] = quality
             metadata["curator_total_score"] = round(total, 6)
@@ -62,6 +83,18 @@ def restore_curator_order(
         return (1, index, index)
 
     return tuple(candidate for _, candidate in sorted(indexed, key=key))
+
+
+def _fused_relevance(lexical: float, semantic: float | None) -> float:
+    if semantic is None:
+        return lexical
+    return round(min(1.0, (0.35 * lexical) + (0.65 * semantic)), 6)
+
+
+def _bounded_semantic_score(value: float) -> float:
+    # Cosine similarity may be negative. For relevance ranking negative evidence
+    # is equivalent to zero relevance; positive cosine remains directly observable.
+    return round(max(0.0, min(1.0, value)), 6)
 
 
 def _relevance_score(
@@ -98,11 +131,16 @@ def _relevance_score(
         )
         coverage = matched / len(query_tokens)
         phrase_bonus = 0.12 if len(query_tokens) > 1 and normalized_variant in searchable else 0.0
-        title_bonus = 0.08 if title and any(
-            _token_matches(query_token, title_token)
-            for query_token in query_tokens
-            for title_token in _tokens(title)
-        ) else 0.0
+        title_bonus = (
+            0.08
+            if title
+            and any(
+                _token_matches(query_token, title_token)
+                for query_token in query_tokens
+                for title_token in _tokens(title)
+            )
+            else 0.0
+        )
         best = max(best, min(1.0, coverage + phrase_bonus + title_bonus))
 
     language = candidate.connector_metadata.get("language")
