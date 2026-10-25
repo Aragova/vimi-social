@@ -33,7 +33,11 @@ class SiglipPreviewScorer:
     def model(self) -> str:
         return self._model_repo
 
-    def score(self, query_variants: list[str], preview_image_urls: list[str]) -> list[float | None]:
+    def score(
+        self,
+        query_variants: list[str],
+        preview_image_urls: list[str],
+    ) -> list[float | None]:
         text_session, vision_session, tokenizer = self._ensure_models()
         np = cast(Any, import_module("numpy"))
         text_embeddings = self._text_embeddings(text_session, tokenizer, query_variants, np)
@@ -53,6 +57,13 @@ class SiglipPreviewScorer:
                     scores.append(None)
         return scores
 
+    def _configure_cache_environment(self) -> None:
+        huggingface_home = self._cache_dir / "huggingface"
+        os.environ.setdefault("XDG_CACHE_HOME", str(self._cache_dir / "xdg"))
+        os.environ.setdefault("HF_HOME", str(huggingface_home))
+        os.environ.setdefault("HF_HUB_CACHE", str(huggingface_home / "hub"))
+        os.environ.setdefault("HF_XET_CACHE", str(huggingface_home / "xet"))
+
     def _ensure_models(self) -> tuple[Any, Any, Any]:
         if (
             self._text_session is not None
@@ -69,6 +80,7 @@ class SiglipPreviewScorer:
             ):
                 return self._text_session, self._vision_session, self._tokenizer
 
+            self._configure_cache_environment()
             huggingface_module = cast(Any, import_module("huggingface_hub"))
             ort = cast(Any, import_module("onnxruntime"))
             tokenizers_module = cast(Any, import_module("tokenizers"))
