@@ -27,6 +27,62 @@ class _FakeTextEmbedding:
         self.kwargs = dict(kwargs)
 
 
+class _FakeSourceSentencePiece:
+    def encode(self, text: str, *, out_type: type[str]) -> list[str]:
+        assert text == "Найди видео про ночной Бангкок"
+        assert out_type is str
+        return ["▁Найди", "▁видео", "▁Бангкок"]
+
+
+class _FakeTranslator:
+    def __init__(self) -> None:
+        self.batch: list[list[str]] | None = None
+
+    def translate_batch(
+        self,
+        batch: list[list[str]],
+        *,
+        beam_size: int,
+        max_decoding_length: int,
+    ) -> list[SimpleNamespace]:
+        self.batch = batch
+        assert beam_size == 1
+        assert max_decoding_length == 128
+        return [SimpleNamespace(hypotheses=[["▁Bangkok", "▁at", "▁night"]])]
+
+
+class _FakeTargetSentencePiece:
+    def decode(self, tokens: list[str]) -> str:
+        assert tokens == ["▁Bangkok", "▁at", "▁night"]
+        return "Bangkok at night"
+
+
+def test_local_translation_appends_source_eos_before_inference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    translator = _FakeTranslator()
+    source_sp = _FakeSourceSentencePiece()
+    target_sp = _FakeTargetSentencePiece()
+
+    def fake_ensure_translation(
+        self: local_ai_main.LocalModels,
+    ) -> tuple[_FakeTranslator, _FakeSourceSentencePiece, _FakeTargetSentencePiece]:
+        del self
+        return translator, source_sp, target_sp
+
+    monkeypatch.setattr(
+        local_ai_main.LocalModels,
+        "_ensure_translation",
+        fake_ensure_translation,
+    )
+
+    models = local_ai_main.LocalModels()
+    translated = models.translate_ru_to_en("Найди видео про ночной Бангкок")
+
+    assert translated == "Bangkok at night"
+    assert translator.batch == [["▁Найди", "▁видео", "▁Бангкок", "</s>"]]
+
+
 def test_local_ai_routes_huggingface_cache_to_writable_model_cache(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
