@@ -17,6 +17,9 @@ services:
   media-init:
     mem_limit: 128m
 
+  local-ai:
+    mem_limit: 768m
+
   bot:
     mem_limit: 256m
     ports:
