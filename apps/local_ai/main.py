@@ -91,6 +91,13 @@ class LocalModels:
         best = similarities.max(axis=1)
         return [round(float(max(-1.0, min(1.0, score))), 6) for score in best.tolist()]
 
+    def _configure_cache_environment(self) -> None:
+        huggingface_home = self._cache_dir / "huggingface"
+        os.environ.setdefault("XDG_CACHE_HOME", str(self._cache_dir / "xdg"))
+        os.environ.setdefault("HF_HOME", str(huggingface_home))
+        os.environ.setdefault("HF_HUB_CACHE", str(huggingface_home / "hub"))
+        os.environ.setdefault("HF_XET_CACHE", str(huggingface_home / "xet"))
+
     def _ensure_translation(self) -> tuple[Any, Any, Any]:
         if (
             self._translator is not None
@@ -107,6 +114,7 @@ class LocalModels:
             ):
                 return self._translator, self._source_sp, self._target_sp
 
+            self._configure_cache_environment()
             ctranslate2_module = cast(Any, import_module("ctranslate2"))
             huggingface_module = cast(Any, import_module("huggingface_hub"))
             sentencepiece_module = cast(Any, import_module("sentencepiece"))
@@ -149,6 +157,7 @@ class LocalModels:
             if self._embedder is not None:
                 return self._embedder
 
+            self._configure_cache_environment()
             fastembed_module = cast(Any, import_module("fastembed"))
             embedding_factory = fastembed_module.TextEmbedding
             self._register_default_embedding_model(embedding_factory)
