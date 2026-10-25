@@ -254,11 +254,11 @@ jobs:
           --env-file .env.staging
           -f infra/docker/docker-compose.staging.yml
           up -d worker media-worker destination-worker
-      - name: Verify background workers remain running
+      - name: Verify background workers and local AI remain running
         run: |
           sleep 10
           running="$(docker compose --env-file .env.staging -f infra/docker/docker-compose.staging.yml ps --status running --services)"
-          for service in worker media-worker destination-worker; do
+          for service in worker media-worker destination-worker local-ai visual-ai; do
             echo "$running" | grep -Fx "$service"
           done
       - name: Show staging smoke logs on failure
@@ -268,7 +268,7 @@ jobs:
           --env-file .env.staging
           -f infra/docker/docker-compose.staging.yml
           logs --no-color --tail=200
-          postgres temporal bot worker media-worker destination-worker api
+          postgres temporal bot worker media-worker destination-worker api local-ai visual-ai
       - name: Clean compose smoke resources
         if: always()
         run: >-
