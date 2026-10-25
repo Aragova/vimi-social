@@ -10,6 +10,11 @@ from vimi_social.media.secure_ingest.errors import UnsafeAddressError
 from vimi_social.media.secure_ingest.models import FetchTimeouts, ResolvedTarget
 
 
+class TestableSiglipPreviewScorer(SiglipPreviewScorer):
+    async def download_preview(self, url: str) -> bytes:
+        return await self._download_preview(url)
+
+
 @dataclass
 class FakeResolver:
     answers: Mapping[str, Sequence[str]]
@@ -56,7 +61,7 @@ class FakeTransport:
 @pytest.mark.asyncio
 async def test_visual_preview_rejects_private_dns_before_transport(tmp_path: Path) -> None:
     transport = FakeTransport(FakeResponse())
-    scorer = SiglipPreviewScorer(
+    scorer = TestableSiglipPreviewScorer(
         tmp_path,
         destination_policy=DestinationPolicy(
             FakeResolver({"pbs.twimg.com": ["8.8.8.8", "127.0.0.1"]})
@@ -65,7 +70,7 @@ async def test_visual_preview_rejects_private_dns_before_transport(tmp_path: Pat
     )
 
     with pytest.raises(UnsafeAddressError):
-        await scorer._download_preview("https://pbs.twimg.com/media/example.jpg")
+        await scorer.download_preview("https://pbs.twimg.com/media/example.jpg")
 
     assert transport.targets == []
 
@@ -76,13 +81,13 @@ async def test_visual_preview_passes_validated_pinned_target_to_transport(
 ) -> None:
     response = FakeResponse()
     transport = FakeTransport(response)
-    scorer = SiglipPreviewScorer(
+    scorer = TestableSiglipPreviewScorer(
         tmp_path,
         destination_policy=DestinationPolicy(FakeResolver({"pbs.twimg.com": ["8.8.8.8"]})),
         transport=transport,
     )
 
-    payload = await scorer._download_preview("https://pbs.twimg.com/media/example.jpg")
+    payload = await scorer.download_preview("https://pbs.twimg.com/media/example.jpg")
 
     assert payload == b"preview-bytes"
     assert len(transport.targets) == 1
