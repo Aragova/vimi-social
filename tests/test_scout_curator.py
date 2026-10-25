@@ -102,6 +102,50 @@ def test_curator_uses_quality_to_break_equal_relevance() -> None:
     )
 
 
+def test_curator_semantic_evidence_can_override_lexical_noise() -> None:
+    lexical_trap = _candidate(
+        "trap",
+        "Bangkok at night: unrelated conference commentary",
+        likes=50_000,
+    )
+    semantic_match = _candidate(
+        "match",
+        "City lights, skyline and traffic after sunset in Thailand",
+        likes=5,
+    )
+
+    ranked = CandidateCurator().rank(
+        (lexical_trap, semantic_match),
+        query_variants=("Bangkok city at night",),
+        preferred_languages=("en",),
+        limit=10,
+        semantic_scores=(0.22, 0.88),
+        minimum_relevance=0.18,
+    )
+
+    assert [candidate.source_id for candidate in ranked] == ["match", "trap"]
+    assert _score(ranked[0], "curator_semantic_relevance_score") == 0.88
+    assert _score(ranked[0], "curator_relevance_score") > _score(
+        ranked[1], "curator_relevance_score"
+    )
+
+
+def test_curator_filters_low_semantic_relevance_when_enabled() -> None:
+    relevant = _candidate("relevant", "Bangkok skyline after sunset")
+    noise = _candidate("noise", "Seoul technology conference keynote")
+
+    ranked = CandidateCurator().rank(
+        (noise, relevant),
+        query_variants=("Bangkok at night",),
+        preferred_languages=("en",),
+        limit=10,
+        semantic_scores=(0.02, 0.78),
+        minimum_relevance=0.18,
+    )
+
+    assert [candidate.source_id for candidate in ranked] == ["relevant"]
+
+
 def test_curator_enforces_final_result_budget() -> None:
     candidates = tuple(
         _candidate(str(index), f"Bangkok nightlife clip {index}")
