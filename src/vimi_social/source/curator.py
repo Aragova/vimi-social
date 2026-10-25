@@ -47,6 +47,23 @@ class CandidateCurator:
         return tuple(ranked)
 
 
+def restore_curator_order(
+    candidates: tuple[CandidateContent, ...],
+) -> tuple[CandidateContent, ...]:
+    """Restore persisted curator order while keeping unranked legacy rows stable."""
+
+    indexed = tuple(enumerate(candidates))
+
+    def key(item: tuple[int, CandidateContent]) -> tuple[int, int, int]:
+        index, candidate = item
+        rank = candidate.connector_metadata.get("curator_rank")
+        if isinstance(rank, int) and not isinstance(rank, bool) and rank > 0:
+            return (0, rank, index)
+        return (1, index, index)
+
+    return tuple(candidate for _, candidate in sorted(indexed, key=key))
+
+
 def _relevance_score(
     candidate: CandidateContent,
     query_variants: tuple[str, ...],
