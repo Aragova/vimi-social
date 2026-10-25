@@ -29,6 +29,13 @@ def test_normalize_search_intent_removes_english_command_wrapper() -> None:
     assert normalize_search_intent("Find videos about Bangkok at night") == "Bangkok at night"
 
 
+def test_normalize_search_intent_removes_translated_video_of_wrapper() -> None:
+    assert (
+        normalize_search_intent("Find a video of the night Bangkok")
+        == "the night Bangkok"
+    )
+
+
 @pytest.mark.asyncio
 async def test_multilingual_planner_keeps_ru_and_adds_en_variant() -> None:
     translator = FakeTranslator("Bangkok night")
@@ -39,8 +46,21 @@ async def test_multilingual_planner_keeps_ru_and_adds_en_variant() -> None:
         ("ru", "en"),
     )
 
-    assert translator.calls == ["ночной Бангкок"]
+    assert translator.calls == ["Найди видео про ночной Бангкок"]
     assert plan.query_variants == ("ночной Бангкок", "Bangkok night")
+
+
+@pytest.mark.asyncio
+async def test_multilingual_planner_normalizes_local_full_intent_translation() -> None:
+    translator = FakeTranslator("Find a video of the night Bangkok")
+    planner = MultilingualQueryPlanner(translator)
+
+    plan = await planner.plan(
+        "Найди видео про ночной Бангкок",
+        ("ru", "en"),
+    )
+
+    assert plan.query_variants == ("ночной Бангкок", "the night Bangkok")
 
 
 @pytest.mark.asyncio
