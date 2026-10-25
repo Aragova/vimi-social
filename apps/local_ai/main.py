@@ -1,7 +1,7 @@
-# pyright: reportMissingImports=false
-
 import asyncio
 import os
+from collections.abc import Callable
+from importlib import import_module
 from pathlib import Path
 from threading import Lock
 from typing import Any, cast
@@ -105,9 +105,18 @@ class LocalModels:
             ):
                 return self._translator, self._source_sp, self._target_sp
 
-            from ctranslate2 import Translator
-            from huggingface_hub import snapshot_download
-            from sentencepiece import SentencePieceProcessor
+            translator_factory = cast(
+                Callable[..., Any],
+                getattr(import_module("ctranslate2"), "Translator"),
+            )
+            snapshot_download = cast(
+                Callable[..., str],
+                getattr(import_module("huggingface_hub"), "snapshot_download"),
+            )
+            sentencepiece_factory = cast(
+                Callable[..., Any],
+                getattr(import_module("sentencepiece"), "SentencePieceProcessor"),
+            )
 
             model_path = Path(
                 snapshot_download(
@@ -122,15 +131,15 @@ class LocalModels:
                     ],
                 )
             )
-            self._translator = Translator(
+            self._translator = translator_factory(
                 str(model_path),
                 device="cpu",
                 compute_type="int8",
                 inter_threads=1,
                 intra_threads=max(1, min(2, os.cpu_count() or 1)),
             )
-            self._source_sp = SentencePieceProcessor(model_file=str(model_path / "source.spm"))
-            self._target_sp = SentencePieceProcessor(model_file=str(model_path / "target.spm"))
+            self._source_sp = sentencepiece_factory(model_file=str(model_path / "source.spm"))
+            self._target_sp = sentencepiece_factory(model_file=str(model_path / "target.spm"))
             return self._translator, self._source_sp, self._target_sp
 
     def _ensure_embedder(self) -> Any:
@@ -141,9 +150,11 @@ class LocalModels:
             if self._embedder is not None:
                 return self._embedder
 
-            from fastembed import TextEmbedding
-
-            self._embedder = TextEmbedding(
+            embedding_factory = cast(
+                Callable[..., Any],
+                getattr(import_module("fastembed"), "TextEmbedding"),
+            )
+            self._embedder = embedding_factory(
                 model_name=self._embedding_model_name,
                 cache_dir=str(self._cache_dir / "fastembed"),
                 threads=max(1, min(2, os.cpu_count() or 1)),
@@ -152,9 +163,7 @@ class LocalModels:
 
     @staticmethod
     def _numpy() -> Any:
-        import numpy
-
-        return cast(Any, numpy)
+        return cast(Any, import_module("numpy"))
 
     @staticmethod
     def _normalize_rows(matrix: Any, np: Any) -> Any:
