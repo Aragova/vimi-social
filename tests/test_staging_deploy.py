@@ -110,3 +110,9 @@ def test_local_ai_is_internal_only() -> None:
     assert "expose:" in local_ai
     assert '      - "8090"' in local_ai
     assert "ports:" not in local_ai
+
+
+def test_staging_deploy_rebuilds_local_ai_image() -> None:
+    deploy = (REPO_ROOT / "scripts/deploy_staging.sh").read_text()
+
+    assert "compose build bot local-ai" in deploy
