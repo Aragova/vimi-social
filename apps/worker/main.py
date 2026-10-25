@@ -56,6 +56,13 @@ async def run() -> None:
         )
         translators.append(local_ai_client)
 
+    visual_ai_client: LocalAiClient | None = None
+    if settings.visual_ai_url:
+        visual_ai_client = LocalAiClient(
+            settings.visual_ai_url,
+            timeout_seconds=settings.visual_ai_timeout_seconds,
+        )
+
     paid_translation_client: OpenAIEnglishIntentTranslator | None = None
     if settings.allow_paid_ai_fallback and settings.search_translation_api_key:
         paid_translation_client = OpenAIEnglishIntentTranslator(
@@ -87,6 +94,8 @@ async def run() -> None:
         messenger,
         query_planner=query_planner,
         semantic_scorer=local_ai_client,
+        visual_scorer=visual_ai_client,
+        visual_relevance_weight=settings.visual_relevance_weight,
         semantic_minimum_relevance=settings.semantic_relevance_min_score,
     )
     media_delivery = MediaPreparationDeliveryActivities(
@@ -118,6 +127,8 @@ async def run() -> None:
     finally:
         if paid_translation_client is not None:
             await paid_translation_client.aclose()
+        if visual_ai_client is not None:
+            await visual_ai_client.aclose()
         if local_ai_client is not None:
             await local_ai_client.aclose()
         if x_connector is not None:

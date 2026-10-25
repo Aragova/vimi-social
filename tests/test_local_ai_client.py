@@ -4,9 +4,18 @@ import pytest
 from vimi_social.ai.client import LocalAiClient
 from vimi_social.domain.source import AdultClassification, CandidateContent
 from vimi_social.source.semantic import SemanticRelevanceUnavailable
+from vimi_social.source.visual import VisualRelevanceUnavailable
 
 
-def _candidate(source_id: str, caption: str | None) -> CandidateContent:
+def _candidate(
+    source_id: str,
+    caption: str | None,
+    *,
+    preview_image_url: str | None = None,
+) -> CandidateContent:
+    metadata: dict[str, object] = {}
+    if preview_image_url is not None:
+        metadata["preview_image_url"] = preview_image_url
     return CandidateContent(
         id=None,
         source="x",
@@ -26,7 +35,7 @@ def _candidate(source_id: str, caption: str | None) -> CandidateContent:
         explicitness_score=None,
         provenance_hint="PUBLIC_X_POST_REUSE_RIGHTS_NOT_ESTABLISHED",
         availability="DISCOVERED_METADATA_ONLY",
-        connector_metadata={},
+        connector_metadata=metadata,
     )
 
 
@@ -66,6 +75,35 @@ async def test_local_ai_semantic_scores_preserve_candidate_alignment() -> None:
 
 
 @pytest.mark.asyncio
+async def test_local_ai_visual_scores_preserve_preview_candidate_alignment() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/visual-score"
+        assert request.content
+        return httpx.Response(200, json={"scores": [0.42, None]})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = LocalAiClient("http://visual-ai:8090", client=http_client)
+    candidates = (
+        _candidate(
+            "night-city",
+            "Bangkok skyline at night",
+            preview_image_url="https://pbs.twimg.com/night-city.jpg",
+        ),
+        _candidate("missing-preview", "Bangkok conference"),
+        _candidate(
+            "bad-preview",
+            "Bangkok event",
+            preview_image_url="https://pbs.twimg.com/bad-preview.jpg",
+        ),
+    )
+
+    scores = await client.score_preview_candidates(("Bangkok at night",), candidates)
+
+    assert scores == (0.42, None, None)
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_local_ai_semantic_failure_is_explicit_for_fail_open_scout() -> None:
     http_client = httpx.AsyncClient(
         transport=httpx.MockTransport(lambda _: httpx.Response(503))
@@ -76,6 +114,28 @@ async def test_local_ai_semantic_failure_is_explicit_for_fail_open_scout() -> No
         await client.score_candidates(
             ("Bangkok at night",),
             (_candidate("candidate", "Bangkok skyline"),),
+        )
+
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_local_ai_visual_failure_is_explicit_for_fail_open_scout() -> None:
+    http_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(503))
+    )
+    client = LocalAiClient("http://visual-ai:8090", client=http_client)
+
+    with pytest.raises(VisualRelevanceUnavailable):
+        await client.score_preview_candidates(
+            ("Bangkok at night",),
+            (
+                _candidate(
+                    "candidate",
+                    "Bangkok skyline",
+                    preview_image_url="https://pbs.twimg.com/candidate.jpg",
+                ),
+            ),
         )
 
     await http_client.aclose()

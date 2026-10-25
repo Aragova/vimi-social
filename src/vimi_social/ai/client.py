@@ -4,6 +4,7 @@ import httpx
 
 from vimi_social.domain.source import CandidateContent
 from vimi_social.source.semantic import SemanticRelevanceUnavailable
+from vimi_social.source.visual import VisualRelevanceUnavailable
 
 
 class LocalAiClient:
@@ -103,6 +104,66 @@ class LocalAiClient:
         for index, raw_score in zip(active_indices, values, strict=True):
             if not isinstance(raw_score, int | float) or isinstance(raw_score, bool):
                 raise SemanticRelevanceUnavailable("local semantic AI returned non-numeric score")
+            scores[index] = max(-1.0, min(1.0, float(raw_score)))
+        return tuple(scores)
+
+    async def score_preview_candidates(
+        self,
+        query_variants: tuple[str, ...],
+        candidates: tuple[CandidateContent, ...],
+    ) -> tuple[float | None, ...]:
+        if not candidates:
+            return ()
+
+        active_indices: list[int] = []
+        preview_urls: list[str] = []
+        scores: list[float | None] = [None] * len(candidates)
+        for index, candidate in enumerate(candidates):
+            raw_url = candidate.connector_metadata.get("preview_image_url")
+            if not isinstance(raw_url, str):
+                continue
+            preview_url = raw_url.strip()
+            if not preview_url:
+                continue
+            active_indices.append(index)
+            preview_urls.append(preview_url)
+
+        if not preview_urls:
+            return tuple(scores)
+
+        try:
+            response = await self._client.post(
+                f"{self._base_url}/v1/visual-score",
+                json={
+                    "query_variants": list(query_variants),
+                    "preview_image_urls": preview_urls,
+                },
+            )
+        except httpx.HTTPError as error:
+            raise VisualRelevanceUnavailable("local visual AI transport failed") from error
+        if response.status_code >= 400:
+            raise VisualRelevanceUnavailable(
+                f"local visual AI failed with HTTP {response.status_code}"
+            )
+        try:
+            payload_obj: object = response.json()
+        except ValueError as error:
+            raise VisualRelevanceUnavailable("local visual AI returned invalid JSON") from error
+        if not isinstance(payload_obj, dict):
+            raise VisualRelevanceUnavailable("local visual AI returned invalid response shape")
+        payload = cast(dict[str, object], payload_obj)
+        raw_scores = payload.get("scores")
+        if not isinstance(raw_scores, list):
+            raise VisualRelevanceUnavailable("local visual AI omitted scores")
+        values = cast(list[object], raw_scores)
+        if len(values) != len(active_indices):
+            raise VisualRelevanceUnavailable("local visual AI returned wrong score count")
+
+        for index, raw_score in zip(active_indices, values, strict=True):
+            if raw_score is None:
+                continue
+            if not isinstance(raw_score, int | float) or isinstance(raw_score, bool):
+                raise VisualRelevanceUnavailable("local visual AI returned non-numeric score")
             scores[index] = max(-1.0, min(1.0, float(raw_score)))
         return tuple(scores)
 

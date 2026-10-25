@@ -29,7 +29,10 @@ local-ai = [
   "fastembed>=0.9,<1",
   "huggingface-hub>=0.35,<2",
   "numpy>=1.26,<3",
+  "onnxruntime>=1.20,<2",
+  "pillow>=11,<13",
   "sentencepiece>=0.2,<1",
+  "tokenizers>=0.21,<1",
 ]
 dev = [
   "pytest>=8.3,<9",

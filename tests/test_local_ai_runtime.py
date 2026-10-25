@@ -4,6 +4,7 @@ from typing import Any, cast
 
 import pytest
 from apps.local_ai import main as local_ai_main
+from apps.local_ai import visual as local_ai_visual
 
 
 class _FakeModelSource:
@@ -105,6 +106,31 @@ def test_local_ai_routes_huggingface_cache_to_writable_model_cache(
         cache_dir / "huggingface" / "hub"
     )
     assert local_ai_main.os.environ["HF_XET_CACHE"] == str(
+        cache_dir / "huggingface" / "xet"
+    )
+
+
+def test_visual_ai_routes_huggingface_cache_to_writable_model_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    cache_dir = tmp_path / "visual-models"
+    for variable in ("XDG_CACHE_HOME", "HF_HOME", "HF_HUB_CACHE", "HF_XET_CACHE"):
+        monkeypatch.delenv(variable, raising=False)
+
+    scorer = local_ai_visual.SiglipPreviewScorer(cache_dir)
+    configure_cache = cast(
+        Callable[[local_ai_visual.SiglipPreviewScorer], None],
+        local_ai_visual.SiglipPreviewScorer.__dict__["_configure_cache_environment"],
+    )
+    configure_cache(scorer)
+
+    assert local_ai_visual.os.environ["XDG_CACHE_HOME"] == str(cache_dir / "xdg")
+    assert local_ai_visual.os.environ["HF_HOME"] == str(cache_dir / "huggingface")
+    assert local_ai_visual.os.environ["HF_HUB_CACHE"] == str(
+        cache_dir / "huggingface" / "hub"
+    )
+    assert local_ai_visual.os.environ["HF_XET_CACHE"] == str(
         cache_dir / "huggingface" / "xet"
     )
 

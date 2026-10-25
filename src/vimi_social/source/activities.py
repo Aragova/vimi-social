@@ -31,6 +31,10 @@ from vimi_social.source.semantic import (
     SemanticRelevanceScorer,
     SemanticRelevanceUnavailable,
 )
+from vimi_social.source.visual import (
+    VisualRelevanceScorer,
+    VisualRelevanceUnavailable,
+)
 from vimi_social.telegram.outgoing import (
     TelegramMessageRetryAfter,
     TelegramMessenger,
@@ -53,6 +57,8 @@ class ScoutActivities:
         query_planner: MultilingualQueryPlanner | None = None,
         curator: CandidateCurator | None = None,
         semantic_scorer: SemanticRelevanceScorer | None = None,
+        visual_scorer: VisualRelevanceScorer | None = None,
+        visual_relevance_weight: float = 0.15,
         semantic_minimum_relevance: float = 0.0,
     ) -> None:
         self._session_factory = session_factory
@@ -64,6 +70,8 @@ class ScoutActivities:
         self._query_planner = query_planner or MultilingualQueryPlanner()
         self._curator = curator or CandidateCurator()
         self._semantic_scorer = semantic_scorer
+        self._visual_scorer = visual_scorer
+        self._visual_relevance_weight = max(0.0, min(0.40, visual_relevance_weight))
         self._semantic_minimum_relevance = max(0.0, min(1.0, semantic_minimum_relevance))
 
     @activity.defn(name="execute_scout_task")
@@ -160,12 +168,24 @@ class ScoutActivities:
             except SemanticRelevanceUnavailable:
                 semantic_scores = None
 
+        visual_scores: tuple[float | None, ...] | None = None
+        if self._visual_scorer is not None and normalized:
+            try:
+                visual_scores = await self._visual_scorer.score_preview_candidates(
+                    query_plan.query_variants,
+                    normalized,
+                )
+            except VisualRelevanceUnavailable:
+                visual_scores = None
+
         curated = self._curator.rank(
             normalized,
             query_variants=query_plan.query_variants,
             preferred_languages=task.preferred_languages,
             limit=request.max_results,
             semantic_scores=semantic_scores,
+            visual_scores=visual_scores,
+            visual_weight=self._visual_relevance_weight,
             minimum_relevance=self._semantic_minimum_relevance,
         )
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):

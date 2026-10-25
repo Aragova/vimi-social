@@ -6,6 +6,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, cast
 
+from apps.local_ai.visual import SiglipPreviewScorer
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -35,6 +36,17 @@ class SemanticScoreResponse(BaseModel):
     model: str
 
 
+class VisualScoreRequest(BaseModel):
+    query_variants: list[str] = Field(min_length=1, max_length=4)
+    preview_image_urls: list[str] = Field(min_length=1, max_length=100)
+
+
+class VisualScoreResponse(BaseModel):
+    scores: list[float | None]
+    provider: str
+    model: str
+
+
 class LocalModels:
     def __init__(self) -> None:
         self._cache_dir = Path(os.getenv("VIMI_LOCAL_AI_CACHE", "/var/lib/vimi/ai-models"))
@@ -52,6 +64,10 @@ class LocalModels:
         self._source_sp: Any | None = None
         self._target_sp: Any | None = None
         self._embedder: Any | None = None
+
+    @property
+    def cache_dir(self) -> Path:
+        return self._cache_dir
 
     @property
     def translation_model(self) -> str:
@@ -207,6 +223,7 @@ class LocalModels:
 
 
 models = LocalModels()
+visual_models = SiglipPreviewScorer(models.cache_dir)
 app = FastAPI(title="ViMi Local AI", docs_url=None, redoc_url=None)
 
 
@@ -227,6 +244,12 @@ async def model_manifest() -> dict[str, object]:
             "provider": "local-fastembed",
             "model": models.embedding_model,
             "requires_paid_api": False,
+        },
+        "visual_preview": {
+            "provider": "local-onnxruntime",
+            "model": visual_models.model,
+            "requires_paid_api": False,
+            "input_scope": "official_connector_preview_only",
         },
     }
 
@@ -262,4 +285,21 @@ async def semantic_score(request: SemanticScoreRequest) -> SemanticScoreResponse
         scores=scores,
         provider="local-fastembed",
         model=models.embedding_model,
+    )
+
+
+@app.post("/v1/visual-score", response_model=VisualScoreResponse)
+async def visual_score(request: VisualScoreRequest) -> VisualScoreResponse:
+    try:
+        scores = await asyncio.to_thread(
+            visual_models.score,
+            request.query_variants,
+            request.preview_image_urls,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="local visual model unavailable") from error
+    return VisualScoreResponse(
+        scores=scores,
+        provider="local-onnxruntime",
+        model=visual_models.model,
     )
