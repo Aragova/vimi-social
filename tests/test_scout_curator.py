@@ -39,6 +39,12 @@ def _candidate(
     )
 
 
+def _score(candidate: CandidateContent, key: str) -> float:
+    value = candidate.connector_metadata[key]
+    assert isinstance(value, float)
+    return value
+
+
 def test_curator_prioritizes_relevance_over_popularity() -> None:
     relevant = _candidate(
         "relevant",
@@ -59,9 +65,9 @@ def test_curator_prioritizes_relevance_over_popularity() -> None:
     )
 
     assert [candidate.source_id for candidate in ranked] == ["relevant", "noise"]
-    assert ranked[0].connector_metadata["curator_relevance_score"] > ranked[1].connector_metadata[
-        "curator_relevance_score"
-    ]
+    assert _score(ranked[0], "curator_relevance_score") > _score(
+        ranked[1], "curator_relevance_score"
+    )
 
 
 def test_curator_uses_quality_to_break_equal_relevance() -> None:
@@ -90,9 +96,9 @@ def test_curator_uses_quality_to_break_equal_relevance() -> None:
     )
 
     assert [candidate.source_id for candidate in ranked] == ["high", "low"]
-    assert ranked[0].connector_metadata["curator_quality_score"] > ranked[1].connector_metadata[
-        "curator_quality_score"
-    ]
+    assert _score(ranked[0], "curator_quality_score") > _score(
+        ranked[1], "curator_quality_score"
+    )
 
 
 def test_curator_enforces_final_result_budget() -> None:
