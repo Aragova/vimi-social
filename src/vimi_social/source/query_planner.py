@@ -49,6 +49,20 @@ class MultilingualQueryPlanner:
         return ScoutQueryPlan(query_variants=tuple(dict.fromkeys(variants)))
 
 
+class FallbackEnglishIntentTranslator:
+    """Try translators in order; paid providers belong only in an explicit fallback slot."""
+
+    def __init__(self, translators: tuple[EnglishIntentTranslator, ...]) -> None:
+        self._translators = translators
+
+    async def translate_to_english(self, intent: str) -> str | None:
+        for translator in self._translators:
+            translated = await translator.translate_to_english(intent)
+            if translated is not None:
+                return translated
+        return None
+
+
 class OpenAIEnglishIntentTranslator:
     def __init__(
         self,

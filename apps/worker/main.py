@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from temporalio.client import Client
 from temporalio.worker import Worker
 
+from vimi_social.ai.client import LocalAiClient
 from vimi_social.core.config import get_settings
 from vimi_social.db.base import build_engine
 from vimi_social.media.delivery import MediaPreparationDeliveryActivities
@@ -13,6 +14,8 @@ from vimi_social.publication.preview import PublicationPreviewActivities
 from vimi_social.source.activities import ScoutActivities
 from vimi_social.source.connectors import SourceConnectorRegistry
 from vimi_social.source.query_planner import (
+    EnglishIntentTranslator,
+    FallbackEnglishIntentTranslator,
     MultilingualQueryPlanner,
     OpenAIEnglishIntentTranslator,
 )
@@ -44,13 +47,32 @@ async def run() -> None:
         x_connector = XSourceConnector(settings.x_bearer_token)
         registry.register(x_connector)
 
-    translation_client: OpenAIEnglishIntentTranslator | None = None
-    if settings.search_translation_api_key:
-        translation_client = OpenAIEnglishIntentTranslator(
+    local_ai_client: LocalAiClient | None = None
+    translators: list[EnglishIntentTranslator] = []
+    if settings.local_ai_url:
+        local_ai_client = LocalAiClient(
+            settings.local_ai_url,
+            timeout_seconds=settings.local_ai_timeout_seconds,
+        )
+        translators.append(local_ai_client)
+
+    paid_translation_client: OpenAIEnglishIntentTranslator | None = None
+    if settings.allow_paid_ai_fallback and settings.search_translation_api_key:
+        paid_translation_client = OpenAIEnglishIntentTranslator(
             settings.search_translation_api_key,
             model=settings.search_translation_model,
         )
-    query_planner = MultilingualQueryPlanner(translation_client)
+        translators.append(paid_translation_client)
+
+    if len(translators) > 1:
+        translator: EnglishIntentTranslator | None = FallbackEnglishIntentTranslator(
+            tuple(translators)
+        )
+    elif translators:
+        translator = translators[0]
+    else:
+        translator = None
+    query_planner = MultilingualQueryPlanner(translator)
 
     messenger: TelegramMessenger | None = None
     if settings.telegram_bot_token:
@@ -64,6 +86,8 @@ async def run() -> None:
         registry,
         messenger,
         query_planner=query_planner,
+        semantic_scorer=local_ai_client,
+        semantic_minimum_relevance=settings.semantic_relevance_min_score,
     )
     media_delivery = MediaPreparationDeliveryActivities(
         session_factory,
@@ -92,8 +116,10 @@ async def run() -> None:
     try:
         await worker.run()
     finally:
-        if translation_client is not None:
-            await translation_client.aclose()
+        if paid_translation_client is not None:
+            await paid_translation_client.aclose()
+        if local_ai_client is not None:
+            await local_ai_client.aclose()
         if x_connector is not None:
             await x_connector.aclose()
         if messenger is not None:

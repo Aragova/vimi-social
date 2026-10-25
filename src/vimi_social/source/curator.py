@@ -8,10 +8,11 @@ _TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
 _URL = re.compile(r"https?://\S+", re.IGNORECASE)
 _HASHTAG = re.compile(r"(?<!\w)#[^\s#]+", re.UNICODE)
 _REPEATED_PUNCTUATION = re.compile(r"[!?]{4,}")
+_E5_SIMILARITY_FLOOR = 0.70
 
 
 class CandidateCurator:
-    """Deterministic, provider-free ranking for normalized Scout candidates."""
+    """Deterministic ranking with optional local semantic relevance evidence."""
 
     def rank(
         self,
@@ -20,16 +21,38 @@ class CandidateCurator:
         query_variants: tuple[str, ...],
         preferred_languages: tuple[str, ...],
         limit: int,
+        semantic_scores: tuple[float, ...] | None = None,
+        minimum_relevance: float = 0.0,
     ) -> tuple[CandidateContent, ...]:
         if limit < 1:
             return ()
+        if semantic_scores is not None and len(semantic_scores) != len(candidates):
+            raise ValueError("semantic score count must match candidate count")
 
         scored: list[tuple[float, float, float, int, CandidateContent]] = []
         for index, candidate in enumerate(candidates):
-            relevance = _relevance_score(candidate, query_variants, preferred_languages)
+            lexical_relevance = _relevance_score(
+                candidate,
+                query_variants,
+                preferred_languages,
+            )
+            semantic_raw = semantic_scores[index] if semantic_scores is not None else None
+            semantic_relevance = (
+                _calibrate_e5_relevance(semantic_raw)
+                if semantic_raw is not None
+                else None
+            )
+            relevance = _fused_relevance(lexical_relevance, semantic_relevance)
+            if semantic_relevance is not None and relevance < minimum_relevance:
+                continue
+
             quality = _quality_score(candidate)
-            total = (0.78 * relevance) + (0.22 * quality)
+            total = (0.82 * relevance) + (0.18 * quality)
             metadata = dict(candidate.connector_metadata)
+            metadata["curator_lexical_relevance_score"] = lexical_relevance
+            if semantic_relevance is not None and semantic_raw is not None:
+                metadata["curator_semantic_relevance_score"] = semantic_relevance
+                metadata["curator_semantic_raw_score"] = round(semantic_raw, 6)
             metadata["curator_relevance_score"] = relevance
             metadata["curator_quality_score"] = quality
             metadata["curator_total_score"] = round(total, 6)
@@ -62,6 +85,25 @@ def restore_curator_order(
         return (1, index, index)
 
     return tuple(candidate for _, candidate in sorted(indexed, key=key))
+
+
+def _fused_relevance(lexical: float, semantic: float | None) -> float:
+    if semantic is None:
+        return lexical
+    return round(min(1.0, (0.35 * lexical) + (0.65 * semantic)), 6)
+
+
+def _calibrate_e5_relevance(value: float) -> float:
+    """Map multilingual-E5's compressed cosine range into useful relevance space.
+
+    The model authors document cosine scores clustering around 0.7..1.0 because
+    of the low-temperature contrastive objective. Preserve the raw score in
+    metadata, but map that documented range to 0..1 before Curator fusion.
+    """
+
+    bounded = max(_E5_SIMILARITY_FLOOR, min(1.0, value))
+    calibrated = (bounded - _E5_SIMILARITY_FLOOR) / (1.0 - _E5_SIMILARITY_FLOOR)
+    return round(calibrated, 6)
 
 
 def _relevance_score(
@@ -98,11 +140,16 @@ def _relevance_score(
         )
         coverage = matched / len(query_tokens)
         phrase_bonus = 0.12 if len(query_tokens) > 1 and normalized_variant in searchable else 0.0
-        title_bonus = 0.08 if title and any(
-            _token_matches(query_token, title_token)
-            for query_token in query_tokens
-            for title_token in _tokens(title)
-        ) else 0.0
+        title_bonus = (
+            0.08
+            if title
+            and any(
+                _token_matches(query_token, title_token)
+                for query_token in query_tokens
+                for title_token in _tokens(title)
+            )
+            else 0.0
+        )
         best = max(best, min(1.0, coverage + phrase_bonus + title_bonus))
 
     language = candidate.connector_metadata.get("language")
