@@ -96,7 +96,10 @@ def test_curator_uses_quality_to_break_equal_relevance() -> None:
 
 
 def test_curator_enforces_final_result_budget() -> None:
-    candidates = tuple(_candidate(str(index), f"Bangkok nightlife clip {index}") for index in range(15))
+    candidates = tuple(
+        _candidate(str(index), f"Bangkok nightlife clip {index}")
+        for index in range(15)
+    )
 
     ranked = CandidateCurator().rank(
         candidates,
