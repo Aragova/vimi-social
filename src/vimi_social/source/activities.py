@@ -142,6 +142,7 @@ class ScoutActivities:
             task.preferred_languages,
         )
         discovered: list[CandidateContent] = []
+        retrieval_spent = 0
 
         async for search_round in self._query_planner.search_rounds(
             query_plan,
@@ -150,18 +151,21 @@ class ScoutActivities:
         ):
             source_failure_code: str | None = None
             for connector in connectors:
-                normalized_so_far = _deduplicate(discovered)
-                remaining_budget = self._retrieval_budget - len(normalized_so_far)
+                remaining_budget = self._retrieval_budget - retrieval_spent
                 if remaining_budget <= 0:
                     break
 
+                request_limit = min(remaining_budget, self._retrieval_round_limit)
                 request = ScoutSearchRequest(
                     intent=task.user_intent,
                     requested_sources=task.requested_sources,
                     preferred_languages=search_round.preferred_languages,
                     query_variants=search_round.query_variants,
-                    max_results=min(remaining_budget, self._retrieval_round_limit),
+                    max_results=request_limit,
                 )
+                # Reserve the external-read budget before the request. Even a
+                # partial/failed paginated call may already have consumed provider reads.
+                retrieval_spent += request_limit
                 try:
                     round_candidates = await connector.search(request)
                     discovered.extend(
@@ -186,7 +190,7 @@ class ScoutActivities:
                 )
             if source_failure_code is not None:
                 break
-            if len(_deduplicate(discovered)) >= self._retrieval_budget:
+            if retrieval_spent >= self._retrieval_budget:
                 break
 
         normalized = _deduplicate(discovered)
