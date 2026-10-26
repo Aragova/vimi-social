@@ -131,18 +131,51 @@ class ScoutActivities:
             task.user_intent,
             task.preferred_languages,
         )
-        request = ScoutSearchRequest(
-            intent=task.user_intent,
-            requested_sources=task.requested_sources,
-            preferred_languages=task.preferred_languages,
-            query_variants=query_plan.query_variants,
-            max_results=10,
-        )
+        max_results = 10
+        discovered: list[CandidateContent] = []
+        normalized: tuple[CandidateContent, ...] = ()
+        semantic_scores: tuple[float, ...] | None = None
 
         try:
-            discovered: list[CandidateContent] = []
-            for connector in connectors:
-                discovered.extend(await connector.search(request))
+            async for search_round in self._query_planner.search_rounds(
+                query_plan,
+                task.user_intent,
+                task.preferred_languages,
+            ):
+                request = ScoutSearchRequest(
+                    intent=task.user_intent,
+                    requested_sources=task.requested_sources,
+                    preferred_languages=search_round.preferred_languages,
+                    query_variants=search_round.query_variants,
+                    max_results=max_results,
+                )
+                for connector in connectors:
+                    discovered.extend(await connector.search(request))
+
+                normalized = _deduplicate(discovered)
+                semantic_scores = None
+                if self._semantic_scorer is not None and normalized:
+                    try:
+                        semantic_scores = await self._semantic_scorer.score_candidates(
+                            query_plan.query_variants,
+                            normalized,
+                        )
+                    except SemanticRelevanceUnavailable:
+                        semantic_scores = None
+
+                # Recall broadening is driven by the original full intent, not by
+                # the relaxed source query. Expensive preview evidence runs only
+                # once after retrieval stops.
+                provisional = self._curator.rank(
+                    normalized,
+                    query_variants=query_plan.query_variants,
+                    preferred_languages=task.preferred_languages,
+                    limit=max_results,
+                    semantic_scores=semantic_scores,
+                    minimum_relevance=self._semantic_minimum_relevance,
+                )
+                if len(provisional) >= max_results:
+                    break
         except SourceConnectorRateLimited:
             return self._fail_safe(
                 task,
@@ -161,17 +194,6 @@ class ScoutActivities:
                 "SOURCE_UNAVAILABLE",
                 attempt_token=attempt_token,
             )
-
-        normalized = _deduplicate(discovered)
-        semantic_scores: tuple[float, ...] | None = None
-        if self._semantic_scorer is not None and normalized:
-            try:
-                semantic_scores = await self._semantic_scorer.score_candidates(
-                    query_plan.query_variants,
-                    normalized,
-                )
-            except SemanticRelevanceUnavailable:
-                semantic_scores = None
 
         visual_scores: tuple[float | None, ...] | None = None
         if self._visual_scorer is not None and normalized:
@@ -210,7 +232,7 @@ class ScoutActivities:
             normalized,
             query_variants=query_plan.query_variants,
             preferred_languages=task.preferred_languages,
-            limit=request.max_results,
+            limit=max_results,
             semantic_scores=semantic_scores,
             visual_scores=visual_scores,
             preview_ocr_texts=preview_ocr_texts,
