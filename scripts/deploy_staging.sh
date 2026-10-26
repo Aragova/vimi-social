@@ -88,12 +88,16 @@ run_one_shot media-init
 # Temporal may take a short period to become ready; durable workers are configured
 # with restart policies and will reconnect rather than requiring external mutation retries.
 compose up -d temporal
-if [ "$COHOST_MODE" = "true" ]; then
-  # Existing host ingress owns 80/443. The co-host override publishes only the
-  # bot on loopback for nginx and deliberately leaves Caddy stopped.
-  compose up -d bot worker media-worker destination-worker api
-else
-  compose up -d bot worker media-worker destination-worker api caddy
+
+# Rebuilding a shared image tag does not guarantee Compose will replace sibling
+# containers that were created from the previous image ID. Recreate only the
+# services that consume rebuilt application images, without touching PostgreSQL
+# or Temporal dependencies.
+compose up -d --wait --no-deps --force-recreate local-ai visual-ai
+compose up -d --no-deps --force-recreate bot worker media-worker destination-worker api
+
+if [ "$COHOST_MODE" != "true" ]; then
+  compose up -d caddy
 fi
 
 compose ps
