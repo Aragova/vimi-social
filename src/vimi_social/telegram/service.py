@@ -3,6 +3,7 @@ from uuid import UUID
 
 from vimi_social.domain.media import MediaPreparationWorkflowInput
 from vimi_social.domain.publication import PublicationWorkflowInput
+from vimi_social.domain.source import ScoutContinuationWorkflowInput
 from vimi_social.media.service import MediaPreparationService
 from vimi_social.publication.service import PublicationService
 from vimi_social.source.service import SourceTaskIntentTooLong, SourceTaskService
@@ -36,6 +37,11 @@ from vimi_social.usage.repository import CapacityExceeded
 
 class ScoutWorkflowStarter(Protocol):
     async def start(self, operation_key: str, execution_token: str) -> None: ...
+
+    async def start_continuation(
+        self,
+        workflow_input: ScoutContinuationWorkflowInput,
+    ) -> None: ...
 
 
 class MediaWorkflowStarter(Protocol):
@@ -212,6 +218,26 @@ class TelegramBotService:
                 outgoing,
             )
             return
+        elif callback.data.startswith("scout:more:"):
+            task_id = _parse_uuid_suffix(callback.data, "scout:more:")
+            if task_id is None:
+                return
+            try:
+                continuation_input = self._source_tasks.prepare_ai_search_continuation(
+                    principal,
+                    task_id=task_id,
+                    update_id=update_id,
+                    message_id=callback.message.message_id,
+                    chat_id=callback.message.chat.id,
+                )
+            except CapacityExceeded:
+                action = f"scout-more-quota:{task_id}"
+                outgoing = build_scout_quota_exceeded(principal.locale)
+            else:
+                if continuation_input is None:
+                    return
+                await self._scout_starter.start_continuation(continuation_input)
+                return
         elif callback.data.startswith("candidate:select:"):
             candidate_id = _parse_uuid_suffix(callback.data, "candidate:select:")
             if candidate_id is None:
