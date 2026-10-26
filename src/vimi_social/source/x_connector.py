@@ -43,20 +43,62 @@ class XSourceConnector:
         self._owns_client = client is None
 
     async def search(self, request: ScoutSearchRequest) -> tuple[CandidateContent, ...]:
+        target = max(1, request.max_results)
         query = _build_recent_search_query(request)
-        params = {
-            "query": query,
-            "max_results": str(max(10, min(request.max_results, 100))),
-            "tweet.fields": (
-                "attachments,author_id,created_at,lang,possibly_sensitive,public_metrics"
-            ),
-            "expansions": "attachments.media_keys",
-            "media.fields": (
-                "alt_text,duration_ms,height,media_key,preview_image_url,type,url,variants,width"
-            ),
-        }
         headers = {"Authorization": f"Bearer {self._token}"}
+        candidates: list[CandidateContent] = []
+        seen_posts: set[str] = set()
+        seen_tokens: set[str] = set()
+        next_token: str | None = None
 
+        while len(candidates) < target:
+            remaining = target - len(candidates)
+            params = {
+                "query": query,
+                "max_results": str(max(10, min(remaining, 100))),
+                "tweet.fields": (
+                    "attachments,author_id,created_at,lang,possibly_sensitive,public_metrics"
+                ),
+                "expansions": "attachments.media_keys",
+                "media.fields": (
+                    "alt_text,duration_ms,height,media_key,preview_image_url,type,url,variants,width"
+                ),
+            }
+            if next_token is not None:
+                params["next_token"] = next_token
+
+            payload = await self._fetch_page(params, headers)
+            data = _object_list(payload.get("data"))
+            includes_obj = payload.get("includes")
+            includes = (
+                cast(dict[str, object], includes_obj)
+                if isinstance(includes_obj, dict)
+                else {}
+            )
+            media = _media_by_key(_object_list(includes.get("media")))
+
+            for item in data:
+                candidate = _candidate_from_post(item, media)
+                if candidate is None or candidate.source_id in seen_posts:
+                    continue
+                seen_posts.add(candidate.source_id)
+                candidates.append(candidate)
+                if len(candidates) >= target:
+                    break
+
+            token = _next_token(payload)
+            if token is None or token in seen_tokens:
+                break
+            seen_tokens.add(token)
+            next_token = token
+
+        return tuple(candidates[:target])
+
+    async def _fetch_page(
+        self,
+        params: dict[str, str],
+        headers: dict[str, str],
+    ) -> dict[str, object]:
         try:
             response = await self._client.get(
                 "https://api.x.com/2/tweets/search/recent",
@@ -83,19 +125,7 @@ class XSourceConnector:
             raise SourceConnectorUnavailable("X API returned invalid JSON") from None
         if not isinstance(payload_obj, dict):
             raise SourceConnectorUnavailable("X API returned an invalid response shape")
-
-        payload = cast(dict[str, object], payload_obj)
-        data = _object_list(payload.get("data"))
-        includes_obj = payload.get("includes")
-        includes = cast(dict[str, object], includes_obj) if isinstance(includes_obj, dict) else {}
-        media = _media_by_key(_object_list(includes.get("media")))
-
-        candidates: list[CandidateContent] = []
-        for item in data:
-            candidate = _candidate_from_post(item, media)
-            if candidate is not None:
-                candidates.append(candidate)
-        return tuple(candidates[: request.max_results])
+        return cast(dict[str, object], payload_obj)
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -308,6 +338,15 @@ def _media_by_key(items: list[dict[str, object]]) -> dict[str, dict[str, object]
         if isinstance(key, str):
             result[key] = item
     return result
+
+
+def _next_token(payload: dict[str, object]) -> str | None:
+    meta_obj = payload.get("meta")
+    if not isinstance(meta_obj, dict):
+        return None
+    meta = cast(dict[object, object], meta_obj)
+    token = meta.get("next_token")
+    return token if isinstance(token, str) and token else None
 
 
 def _public_metrics(value: object) -> dict[str, int]:
