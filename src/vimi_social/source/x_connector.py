@@ -91,12 +91,19 @@ class XSourceConnector:
                     headers,
                     scope=scope,
                 )
-            except (
-                SourceConnectorRateLimited,
-                SourceConnectorRejected,
-                SourceConnectorUnavailable,
-            ):
+            except SourceConnectorUnavailable:
                 if candidates:
+                    # A transport/5xx failure is ambiguous: the provider may have
+                    # processed this page even though its response was lost. Keep
+                    # already-returned candidates but never expose the failed page's
+                    # token for a blind paid retry.
+                    continuation_token = None
+                    break
+                raise
+            except (SourceConnectorRateLimited, SourceConnectorRejected):
+                if candidates:
+                    # 429/401/403 are definitive no-data responses. The current
+                    # page token remains safe to retry manually later.
                     continuation_token = page_token
                     break
                 raise
