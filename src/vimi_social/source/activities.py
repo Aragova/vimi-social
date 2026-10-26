@@ -44,6 +44,8 @@ from vimi_social.telegram.outgoing import (
 from vimi_social.telegram.scout_results import build_scout_results
 from vimi_social.usage.repository import UsageRepository
 
+_LOCAL_AI_BATCH_LIMIT = 100
+
 
 class ScoutActivities:
     def __init__(
@@ -131,52 +133,70 @@ class ScoutActivities:
             task.user_intent,
             task.preferred_languages,
         )
-        request = ScoutSearchRequest(
-            intent=task.user_intent,
-            requested_sources=task.requested_sources,
-            preferred_languages=task.preferred_languages,
-            query_variants=query_plan.query_variants,
-            max_results=10,
-        )
-
-        try:
-            discovered: list[CandidateContent] = []
-            for connector in connectors:
-                discovered.extend(await connector.search(request))
-        except SourceConnectorRateLimited:
-            return self._fail_safe(
-                task,
-                "SOURCE_RATE_LIMITED",
-                attempt_token=attempt_token,
-            )
-        except SourceConnectorRejected:
-            return self._fail_safe(
-                task,
-                "SOURCE_ACCESS_REJECTED",
-                attempt_token=attempt_token,
-            )
-        except SourceConnectorUnavailable:
-            return self._fail_safe(
-                task,
-                "SOURCE_UNAVAILABLE",
-                attempt_token=attempt_token,
-            )
-
-        normalized = _deduplicate(discovered)
+        max_results = 10
+        discovered: list[CandidateContent] = []
+        normalized: tuple[CandidateContent, ...] = ()
         semantic_scores: tuple[float, ...] | None = None
-        if self._semantic_scorer is not None and normalized:
+
+        async for search_round in self._query_planner.search_rounds(
+            query_plan,
+            task.user_intent,
+            task.preferred_languages,
+        ):
+            request = ScoutSearchRequest(
+                intent=task.user_intent,
+                requested_sources=task.requested_sources,
+                preferred_languages=search_round.preferred_languages,
+                query_variants=search_round.query_variants,
+                max_results=max_results,
+            )
+            source_failure_code: str | None = None
             try:
-                semantic_scores = await self._semantic_scorer.score_candidates(
-                    query_plan.query_variants,
-                    normalized,
+                for connector in connectors:
+                    discovered.extend(await connector.search(request))
+            except SourceConnectorRateLimited:
+                source_failure_code = "SOURCE_RATE_LIMITED"
+            except SourceConnectorRejected:
+                source_failure_code = "SOURCE_ACCESS_REJECTED"
+            except SourceConnectorUnavailable:
+                source_failure_code = "SOURCE_UNAVAILABLE"
+
+            if source_failure_code is not None and not discovered:
+                return self._fail_safe(
+                    task,
+                    source_failure_code,
+                    attempt_token=attempt_token,
                 )
-            except SemanticRelevanceUnavailable:
-                semantic_scores = None
+
+            normalized = _deduplicate(discovered)
+            semantic_scores = None
+            if self._semantic_scorer is not None and normalized:
+                try:
+                    semantic_scores = await self._score_semantic_candidates(
+                        query_plan.query_variants,
+                        normalized,
+                    )
+                except SemanticRelevanceUnavailable:
+                    semantic_scores = None
+
+            # Recall broadening is driven by the original full intent, not by
+            # the relaxed source query. Expensive preview evidence runs only
+            # once after retrieval stops.
+            provisional = self._curator.rank(
+                normalized,
+                query_variants=query_plan.query_variants,
+                preferred_languages=task.preferred_languages,
+                limit=max_results,
+                semantic_scores=semantic_scores,
+                minimum_relevance=self._semantic_minimum_relevance,
+            )
+            if source_failure_code is not None or len(provisional) >= max_results:
+                break
 
         visual_scores: tuple[float | None, ...] | None = None
         if self._visual_scorer is not None and normalized:
             try:
-                visual_scores = await self._visual_scorer.score_preview_candidates(
+                visual_scores = await self._score_visual_candidates(
                     query_plan.query_variants,
                     normalized,
                 )
@@ -187,9 +207,7 @@ class ScoutActivities:
         preview_ocr_semantic_scores: tuple[float | None, ...] | None = None
         if self._preview_ocr_extractor is not None and normalized:
             try:
-                preview_ocr_texts = await self._preview_ocr_extractor.extract_preview_texts(
-                    normalized
-                )
+                preview_ocr_texts = await self._extract_preview_ocr_texts(normalized)
             except PreviewOcrUnavailable:
                 preview_ocr_texts = None
 
@@ -199,7 +217,7 @@ class ScoutActivities:
             and any(text for text in preview_ocr_texts)
         ):
             try:
-                preview_ocr_semantic_scores = await self._semantic_scorer.score_texts(
+                preview_ocr_semantic_scores = await self._score_semantic_texts(
                     query_plan.query_variants,
                     preview_ocr_texts,
                 )
@@ -210,7 +228,7 @@ class ScoutActivities:
             normalized,
             query_variants=query_plan.query_variants,
             preferred_languages=task.preferred_languages,
-            limit=request.max_results,
+            limit=max_results,
             semantic_scores=semantic_scores,
             visual_scores=visual_scores,
             preview_ocr_texts=preview_ocr_texts,
@@ -253,6 +271,80 @@ class ScoutActivities:
             discovered_count=len(discovered),
             candidate_count=len(persisted),
         )
+
+    async def _score_semantic_candidates(
+        self,
+        query_variants: tuple[str, ...],
+        candidates: tuple[CandidateContent, ...],
+    ) -> tuple[float, ...]:
+        scorer = self._semantic_scorer
+        if scorer is None:
+            return ()
+
+        scores: list[float] = []
+        for start in range(0, len(candidates), _LOCAL_AI_BATCH_LIMIT):
+            batch = candidates[start : start + _LOCAL_AI_BATCH_LIMIT]
+            batch_scores = await scorer.score_candidates(query_variants, batch)
+            if len(batch_scores) != len(batch):
+                raise SemanticRelevanceUnavailable("semantic batch alignment mismatch")
+            scores.extend(batch_scores)
+        return tuple(scores)
+
+    async def _score_visual_candidates(
+        self,
+        query_variants: tuple[str, ...],
+        candidates: tuple[CandidateContent, ...],
+    ) -> tuple[float | None, ...]:
+        scorer = self._visual_scorer
+        if scorer is None:
+            return ()
+
+        scores: list[float | None] = []
+        for start in range(0, len(candidates), _LOCAL_AI_BATCH_LIMIT):
+            batch = candidates[start : start + _LOCAL_AI_BATCH_LIMIT]
+            batch_scores = await scorer.score_preview_candidates(query_variants, batch)
+            if len(batch_scores) != len(batch):
+                raise VisualRelevanceUnavailable("visual batch alignment mismatch")
+            scores.extend(batch_scores)
+        return tuple(scores)
+
+    async def _extract_preview_ocr_texts(
+        self,
+        candidates: tuple[CandidateContent, ...],
+    ) -> tuple[str | None, ...]:
+        extractor = self._preview_ocr_extractor
+        if extractor is None:
+            return ()
+
+        texts: list[str | None] = []
+        for start in range(0, len(candidates), _LOCAL_AI_BATCH_LIMIT):
+            batch = candidates[start : start + _LOCAL_AI_BATCH_LIMIT]
+            batch_texts = await extractor.extract_preview_texts(batch)
+            if len(batch_texts) != len(batch):
+                raise PreviewOcrUnavailable("OCR batch alignment mismatch")
+            texts.extend(batch_texts)
+        return tuple(texts)
+
+    async def _score_semantic_texts(
+        self,
+        query_variants: tuple[str, ...],
+        texts: tuple[str | None, ...],
+    ) -> tuple[float | None, ...]:
+        scorer = self._semantic_scorer
+        if scorer is None:
+            return ()
+
+        scores: list[float | None] = []
+        for start in range(0, len(texts), _LOCAL_AI_BATCH_LIMIT):
+            batch = texts[start : start + _LOCAL_AI_BATCH_LIMIT]
+            if not any(text for text in batch):
+                scores.extend(None for _ in batch)
+                continue
+            batch_scores = await scorer.score_texts(query_variants, batch)
+            if len(batch_scores) != len(batch):
+                raise SemanticRelevanceUnavailable("semantic text batch alignment mismatch")
+            scores.extend(batch_scores)
+        return tuple(scores)
 
     @activity.defn(name="deliver_scout_results")
     async def deliver_scout_results(
