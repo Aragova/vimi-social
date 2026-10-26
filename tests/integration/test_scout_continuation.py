@@ -16,7 +16,7 @@ from vimi_social.source.connectors import SourceConnectorRegistry
 from vimi_social.source.continuation import ScoutContinuationActivities
 from vimi_social.source.continuation_state import find_scout_continuation_state
 from vimi_social.source.service import SourceTaskService
-from vimi_social.telegram.identity import TelegramIdentityResolver
+from vimi_social.telegram.identity import TelegramIdentityResolver, TelegramUpdateGuard
 from vimi_social.telegram.models import TelegramUser
 
 
@@ -86,9 +86,11 @@ async def test_scout_continuation_reuses_token_once_and_appends_results() -> Non
         language_code="en",
     )
     chat_id = 920000201
+    initial_update_id = 820000201
 
     try:
         principal = TelegramIdentityResolver(session_factory).resolve(telegram_user)
+        TelegramUpdateGuard(session_factory).claim(initial_update_id, telegram_user.id)
         with (
             session_factory() as session,
             tenant_transaction(session, principal.context.tenant_id),
@@ -109,7 +111,7 @@ async def test_scout_continuation_reuses_token_once_and_appends_results() -> Non
         service.begin_ai_search(principal, chat_id=chat_id)
         task = service.submit_ai_search_intent(
             principal,
-            update_id=820000201,
+            update_id=initial_update_id,
             message_id=201,
             chat_id=chat_id,
             intent="bangkok night market video",
