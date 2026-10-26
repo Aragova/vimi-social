@@ -17,6 +17,7 @@ _ENGLISH_COMMAND_PREFIX = re.compile(
     re.IGNORECASE,
 )
 _CYRILLIC = re.compile(r"[\u0400-\u04FF]")
+_RELAXATION_TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
 _MAX_RELAXATION_LEVELS = 8
 
 
@@ -220,14 +221,25 @@ def normalize_search_intent(intent: str) -> str:
 
 
 def _progressive_prefixes(value: str) -> tuple[str, ...]:
-    tokens = tuple(value.split())
-    if not tokens:
+    normalized = " ".join(value.split()).strip()
+    if not normalized:
         return ()
+
+    tokens = tuple(_RELAXATION_TOKEN.findall(normalized))
+    if not tokens:
+        return (normalized,)
+
     if len(tokens) <= _MAX_RELAXATION_LEVELS:
-        lengths = range(len(tokens), 0, -1)
+        lengths = range(len(tokens) - 1, 0, -1)
     else:
-        lengths = (len(tokens), *range(_MAX_RELAXATION_LEVELS - 1, 0, -1))
-    return tuple(" ".join(tokens[:length]) for length in lengths)
+        lengths = range(_MAX_RELAXATION_LEVELS - 1, 0, -1)
+
+    result = [normalized]
+    for length in lengths:
+        relaxed = " ".join(tokens[:length])
+        if relaxed and relaxed.casefold() != result[-1].casefold():
+            result.append(relaxed)
+    return tuple(result)
 
 
 def _response_output_text(payload: dict[str, object]) -> str | None:
