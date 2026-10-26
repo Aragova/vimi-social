@@ -1,3 +1,4 @@
+import hashlib
 import re
 from collections.abc import Callable
 from uuid import UUID
@@ -7,7 +8,12 @@ from sqlalchemy.orm import Session
 
 from vimi_social.db.tenant import tenant_transaction
 from vimi_social.domain.identity import OperationKey
-from vimi_social.domain.source import CandidateContent, SourceTask
+from vimi_social.domain.source import (
+    CandidateContent,
+    ScoutContinuationWorkflowInput,
+    SourceTask,
+)
+from vimi_social.source.continuation_state import find_scout_continuation_state
 from vimi_social.source.conversation_state import consume_ai_search_conversation
 from vimi_social.source.curator import restore_curator_order
 from vimi_social.source.repository import SourceTaskRepository
@@ -16,7 +22,7 @@ from vimi_social.usage.models import ReservationRequest
 from vimi_social.usage.repository import UsageRepository
 
 _MAX_SOURCE_TASK_INTENT_LENGTH = 4000
-_MAX_PAGED_SCOUT_CANDIDATES = 1000
+_MAX_PAGED_SCOUT_CANDIDATES = 100_000
 
 _EXPLICIT_SOURCE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("x", re.compile(r"(?:^|\W)(?:x|twitter|твиттер\w*)(?:\W|$)", re.IGNORECASE)),
@@ -128,6 +134,74 @@ class SourceTaskService:
                 ),
             )
             return task
+
+    def prepare_ai_search_continuation(
+        self,
+        principal: TelegramPrincipal,
+        *,
+        task_id: UUID,
+        update_id: int,
+        message_id: int,
+        chat_id: int,
+    ) -> ScoutContinuationWorkflowInput | None:
+        with (
+            self._session_factory() as session,
+            tenant_transaction(session, principal.context.tenant_id),
+        ):
+            row = session.execute(
+                text(
+                    """
+                    SELECT operation_key, execution_token::text
+                    FROM source_task
+                    WHERE id = :task_id
+                      AND actor_user_id = :actor_user_id
+                      AND telegram_chat_id = :chat_id
+                      AND state = 'COMPLETED'
+                    """
+                ),
+                {
+                    "task_id": str(task_id),
+                    "actor_user_id": str(principal.user_id),
+                    "chat_id": chat_id,
+                },
+            ).mappings().one_or_none()
+            if row is None:
+                return None
+
+            candidates = restore_curator_order(
+                self._repository.list_candidates(
+                    session,
+                    task_id,
+                    limit=_MAX_PAGED_SCOUT_CANDIDATES,
+                )
+            )
+            continuation = find_scout_continuation_state(candidates)
+            if continuation is None:
+                return None
+
+            token_fingerprint = hashlib.sha256(
+                continuation.next_token.encode("utf-8")
+            ).hexdigest()[:16]
+            request_key = OperationKey(
+                f"source-task-more:{task_id}:{token_fingerprint}"
+            )
+            self._usage_repository.reserve(
+                session,
+                ReservationRequest(
+                    tenant_id=principal.context.tenant_id,
+                    operation_key=request_key,
+                    metric="scout_run",
+                    quantity=1,
+                ),
+            )
+            return ScoutContinuationWorkflowInput(
+                operation_key=str(row["operation_key"]),
+                execution_token=str(row["execution_token"]),
+                request_key=request_key.value,
+                telegram_update_id=update_id,
+                telegram_message_id=message_id,
+                telegram_chat_id=chat_id,
+            )
 
     def get_ai_search_candidates(
         self,
