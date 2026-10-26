@@ -70,7 +70,11 @@ class XSourceConnector:
 
             try:
                 payload = await self._fetch_page(params, headers)
-            except (SourceConnectorRateLimited, SourceConnectorRejected, SourceConnectorUnavailable):
+            except (
+                SourceConnectorRateLimited,
+                SourceConnectorRejected,
+                SourceConnectorUnavailable,
+            ):
                 if candidates:
                     break
                 raise
