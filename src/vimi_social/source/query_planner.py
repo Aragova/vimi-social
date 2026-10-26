@@ -86,6 +86,7 @@ class MultilingualQueryPlanner:
         )
         wants_english = "en" in normalized_languages
         wants_russian = "ru" in normalized_languages
+        translation_available = len(plan.query_variants) > 1
 
         for index, query in enumerate(plan.relaxation_queries):
             is_cyrillic = _CYRILLIC.search(query) is not None
@@ -95,18 +96,22 @@ class MultilingualQueryPlanner:
                     preferred_languages=("ru",),
                 )
 
-            if is_cyrillic and wants_english and self._translator is not None:
+            if (
+                is_cyrillic
+                and wants_english
+                and self._translator is not None
+                and translation_available
+            ):
                 if index == 0:
                     bilingual_variants = plan.query_variants
                 else:
                     translated = await self._translator.translate_to_english(
                         f"Найди видео про {query}"
                     )
-                    normalized_translation = (
-                        normalize_search_intent(translated)
-                        if translated is not None
-                        else ""
-                    )
+                    if translated is None:
+                        translation_available = False
+                        continue
+                    normalized_translation = normalize_search_intent(translated)
                     bilingual_variants = tuple(
                         dict.fromkeys(
                             variant
