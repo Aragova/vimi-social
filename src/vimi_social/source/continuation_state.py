@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import cast
 
 from vimi_social.domain.source import CandidateContent
 
@@ -63,8 +64,11 @@ def find_scout_continuation_state(
         raw_variants = metadata.get("retrieval_query_variants")
         if not isinstance(raw_variants, list):
             continue
+        variant_values = cast(list[object], raw_variants)
         query_variants = tuple(
-            value for value in raw_variants if isinstance(value, str) and value.strip()
+            value
+            for value in variant_values
+            if isinstance(value, str) and value.strip()
         )
         if not query_variants:
             continue
@@ -79,7 +83,7 @@ def find_scout_continuation_state(
         if not isinstance(raw_specificity, int | float) or isinstance(raw_specificity, bool):
             continue
         search_scope = metadata.get("x_search_scope")
-        if search_scope not in {"recent", "all"}:
+        if not isinstance(search_scope, str) or search_scope not in {"recent", "all"}:
             continue
 
         return ScoutContinuationState(
