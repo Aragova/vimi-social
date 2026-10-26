@@ -18,6 +18,7 @@ _ENGLISH_COMMAND_PREFIX = re.compile(
 )
 _CYRILLIC = re.compile(r"[\u0400-\u04FF]")
 _RELAXATION_TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
+_X_BOOLEAN_WORDS = {"and", "or", "not"}
 _MAX_RELAXATION_LEVELS = 8
 
 
@@ -225,7 +226,11 @@ def _progressive_prefixes(value: str) -> tuple[str, ...]:
     if not normalized:
         return ()
 
-    tokens = tuple(_RELAXATION_TOKEN.findall(normalized))
+    tokens = tuple(
+        token
+        for token in _RELAXATION_TOKEN.findall(normalized)
+        if token.casefold() not in _X_BOOLEAN_WORDS
+    )
     if not tokens:
         return (normalized,)
 
