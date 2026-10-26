@@ -1,4 +1,5 @@
 import os
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -15,6 +16,7 @@ from vimi_social.source.activities import ScoutActivities
 from vimi_social.source.connectors import SourceConnectorRegistry
 from vimi_social.source.continuation import ScoutContinuationActivities
 from vimi_social.source.continuation_state import find_scout_continuation_state
+from vimi_social.source.scout_attempts import ScoutAttemptStore
 from vimi_social.source.service import SourceTaskService
 from vimi_social.telegram.identity import TelegramIdentityResolver, TelegramUpdateGuard
 from vimi_social.telegram.models import TelegramUser
@@ -189,5 +191,29 @@ async def test_scout_continuation_reuses_token_once_and_appends_results() -> Non
         )
         assert third_click is not None
         assert third_click.request_key != first_click.request_key
+
+        # Simulate a worker that crossed the paid-I/O fence and then disappeared
+        # before persisting page 3. A later attempt must retire the token without
+        # issuing another X request.
+        abandoned_attempt = uuid4()
+        attempt_store = ScoutAttemptStore()
+        with (
+            session_factory() as session,
+            tenant_transaction(session, principal.context.tenant_id),
+        ):
+            assert attempt_store.claim_completed_continuation(
+                session,
+                operation_key=task.operation_key,
+                attempt_token=abandoned_attempt,
+            )
+
+        before_retry = list(connector.tokens)
+        ambiguous = await continuation.continue_scout_results(third_click)
+        assert ambiguous.failure_code == "CONTINUATION_ATTEMPT_AMBIGUOUS"
+        assert connector.tokens == before_retry
+
+        after_ambiguous = service.get_ai_search_candidates(principal, task.id)
+        assert after_ambiguous is not None
+        assert find_scout_continuation_state(after_ambiguous) is None
     finally:
         engine.dispose()
