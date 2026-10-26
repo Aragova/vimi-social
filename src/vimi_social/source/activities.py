@@ -46,6 +46,8 @@ from vimi_social.telegram.scout_results import build_scout_results
 from vimi_social.usage.repository import UsageRepository
 
 _LOCAL_AI_BATCH_LIMIT = 100
+_SCOUT_RELEVANT_TARGET = 10
+_X_MIN_PAGE_SIZE = 10
 
 
 class ScoutActivities:
@@ -84,9 +86,9 @@ class ScoutActivities:
         self._visual_relevance_weight = max(0.0, min(0.40, visual_relevance_weight))
         self._preview_ocr_weight = max(0.0, min(0.25, preview_ocr_weight))
         self._semantic_minimum_relevance = max(0.0, min(1.0, semantic_minimum_relevance))
-        self._retrieval_budget = max(1, min(1000, retrieval_budget))
+        self._retrieval_budget = max(_X_MIN_PAGE_SIZE, min(1000, retrieval_budget))
         self._retrieval_round_limit = max(
-            1,
+            _X_MIN_PAGE_SIZE,
             min(retrieval_round_limit, self._retrieval_budget),
         )
         self._preview_evidence_limit = max(
@@ -152,7 +154,7 @@ class ScoutActivities:
             source_failure_code: str | None = None
             for connector in connectors:
                 remaining_budget = self._retrieval_budget - retrieval_spent
-                if remaining_budget <= 0:
+                if remaining_budget < _X_MIN_PAGE_SIZE:
                     break
 
                 request_limit = min(remaining_budget, self._retrieval_round_limit)
@@ -189,6 +191,33 @@ class ScoutActivities:
                     attempt_token=attempt_token,
                 )
             if source_failure_code is not None:
+                break
+
+            # A cascade round is paid for once it reaches the provider. Before
+            # broadening the query again, cheaply evaluate the whole accumulated
+            # pool against the original full intent. Ten relevant candidates are
+            # a STOP target, not a display cap: every relevant candidate already
+            # returned by this and earlier paid rounds is kept for final ranking.
+            round_normalized = _deduplicate(discovered)
+            round_semantic_scores: tuple[float, ...] | None = None
+            if self._semantic_scorer is not None and round_normalized:
+                try:
+                    round_semantic_scores = await self._score_semantic_candidates(
+                        query_plan.query_variants,
+                        round_normalized,
+                    )
+                except SemanticRelevanceUnavailable:
+                    round_semantic_scores = None
+
+            round_relevant = self._curator.rank(
+                round_normalized,
+                query_variants=query_plan.query_variants,
+                preferred_languages=task.preferred_languages,
+                limit=max(1, len(round_normalized)),
+                semantic_scores=round_semantic_scores,
+                minimum_relevance=self._semantic_minimum_relevance,
+            )
+            if len(round_relevant) >= _SCOUT_RELEVANT_TARGET:
                 break
             if retrieval_spent >= self._retrieval_budget:
                 break
@@ -405,7 +434,7 @@ class ScoutActivities:
                     self._source_repository.list_candidates(
                         session,
                         task.id,
-                        limit=None,
+                        limit=self._retrieval_budget,
                     )
                 )
 
@@ -500,7 +529,7 @@ class ScoutActivities:
             candidates = self._source_repository.list_candidates(
                 session,
                 task.id,
-                limit=None,
+                limit=self._retrieval_budget,
             )
             return ScoutRunResult(
                 operation_key=task.operation_key.value,
