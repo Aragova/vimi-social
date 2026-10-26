@@ -30,6 +30,8 @@ class EnglishIntentTranslator(Protocol):
 class ScoutQueryRound:
     query_variants: tuple[str, ...]
     preferred_languages: tuple[str, ...]
+    relaxation_level: int
+    specificity: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,13 +89,17 @@ class MultilingualQueryPlanner:
         wants_english = "en" in normalized_languages
         wants_russian = "ru" in normalized_languages
         translation_available = len(plan.query_variants) > 1
+        full_query = plan.relaxation_queries[0] if plan.relaxation_queries else ""
 
         for index, query in enumerate(plan.relaxation_queries):
             is_cyrillic = _CYRILLIC.search(query) is not None
+            specificity = _query_specificity(query, full_query)
             if is_cyrillic and wants_russian:
                 yield ScoutQueryRound(
                     query_variants=(query,),
                     preferred_languages=("ru",),
+                    relaxation_level=index,
+                    specificity=specificity,
                 )
 
             if (
@@ -123,11 +129,15 @@ class MultilingualQueryPlanner:
                     yield ScoutQueryRound(
                         query_variants=bilingual_variants,
                         preferred_languages=("ru", "en"),
+                        relaxation_level=index,
+                        specificity=specificity,
                     )
                 elif not wants_russian:
                     yield ScoutQueryRound(
                         query_variants=(query,),
                         preferred_languages=normalized_languages,
+                        relaxation_level=index,
+                        specificity=specificity,
                     )
                 continue
 
@@ -135,6 +145,8 @@ class MultilingualQueryPlanner:
                 yield ScoutQueryRound(
                     query_variants=(query,),
                     preferred_languages=normalized_languages,
+                    relaxation_level=index,
+                    specificity=specificity,
                 )
 
 
@@ -226,16 +238,28 @@ def normalize_search_intent(intent: str) -> str:
     return normalized
 
 
+def _relaxation_tokens(value: str) -> tuple[str, ...]:
+    return tuple(
+        token
+        for token in _RELAXATION_TOKEN.findall(value)
+        if token.casefold() not in _X_BOOLEAN_WORDS
+    )
+
+
+def _query_specificity(query: str, full_query: str) -> float:
+    full_tokens = _relaxation_tokens(full_query)
+    if not full_tokens:
+        return 1.0
+    query_tokens = _relaxation_tokens(query)
+    return round(min(1.0, len(query_tokens) / len(full_tokens)), 6)
+
+
 def _progressive_prefixes(value: str) -> tuple[str, ...]:
     normalized = " ".join(value.split()).strip()
     if not normalized:
         return ()
 
-    tokens = tuple(
-        token
-        for token in _RELAXATION_TOKEN.findall(normalized)
-        if token.casefold() not in _X_BOOLEAN_WORDS
-    )
+    tokens = _relaxation_tokens(normalized)
     if not tokens:
         return (normalized,)
 

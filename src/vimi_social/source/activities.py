@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import timedelta
 from uuid import UUID, uuid4
 
@@ -25,7 +26,7 @@ from vimi_social.source.connectors import (
 )
 from vimi_social.source.curator import CandidateCurator, restore_curator_order
 from vimi_social.source.ocr import PreviewOcrExtractor, PreviewOcrUnavailable
-from vimi_social.source.query_planner import MultilingualQueryPlanner
+from vimi_social.source.query_planner import MultilingualQueryPlanner, ScoutQueryRound
 from vimi_social.source.repository import SourceTaskRepository
 from vimi_social.source.scout_attempts import ScoutAttemptStore
 from vimi_social.source.semantic import (
@@ -153,7 +154,11 @@ class ScoutActivities:
             source_failure_code: str | None = None
             try:
                 for connector in connectors:
-                    discovered.extend(await connector.search(request))
+                    round_candidates = await connector.search(request)
+                    discovered.extend(
+                        _with_retrieval_provenance(candidate, search_round)
+                        for candidate in round_candidates
+                    )
             except SourceConnectorRateLimited:
                 source_failure_code = "SOURCE_RATE_LIMITED"
             except SourceConnectorRejected:
@@ -485,6 +490,19 @@ class ScoutActivities:
                 failure_code=task.failure_code or "SCOUT_ATTEMPT_AMBIGUOUS",
             )
         raise RuntimeError(f"source task is not terminal: {task.state.value}")
+
+
+def _with_retrieval_provenance(
+    candidate: CandidateContent,
+    search_round: ScoutQueryRound,
+) -> CandidateContent:
+    metadata = dict(candidate.connector_metadata)
+    metadata["retrieval_query"] = search_round.query_variants[0]
+    metadata["retrieval_query_variants"] = list(search_round.query_variants)
+    metadata["retrieval_relaxation_level"] = search_round.relaxation_level
+    metadata["retrieval_specificity"] = search_round.specificity
+    metadata["retrieval_language_mode"] = "+".join(search_round.preferred_languages)
+    return replace(candidate, connector_metadata=metadata)
 
 
 def _deduplicate(candidates: list[CandidateContent]) -> tuple[CandidateContent, ...]:
