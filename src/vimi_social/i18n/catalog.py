@@ -22,6 +22,7 @@ class MessageKey(StrEnum):
     AI_SEARCH_STARTED = "ai_search_started"
     AI_SEARCH_INTENT_TOO_LONG = "ai_search_intent_too_long"
     SCOUT_RESULTS = "scout_results"
+    SCOUT_PAGE = "scout_page"
     SCOUT_EMPTY = "scout_empty"
     SCOUT_FAILED = "scout_failed"
     SCOUT_UNKNOWN = "scout_unknown"
@@ -88,6 +89,7 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
             "⚠️ Запрос слишком длинный. Сократите его до 4000 символов и отправьте снова."
         ),
         MessageKey.SCOUT_RESULTS: "🔎 Найдено: {discovered}\nПосле нормализации: {candidates}",
+        MessageKey.SCOUT_PAGE: "Страница {current}/{total}",
         MessageKey.SCOUT_EMPTY: (
             "🔎 По этому запросу подходящих видео пока не найдено. "
             "Можно уточнить запрос и поискать ещё."
@@ -187,6 +189,7 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
             "⚠️ The request is too long. Shorten it to 4000 characters and send it again."
         ),
         MessageKey.SCOUT_RESULTS: "🔎 Found: {discovered}\nNormalized: {candidates}",
+        MessageKey.SCOUT_PAGE: "Page {current}/{total}",
         MessageKey.SCOUT_EMPTY: (
             "🔎 No suitable videos were found for this query yet. "
             "Refine the request and search again."
