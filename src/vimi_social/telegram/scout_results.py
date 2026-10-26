@@ -37,8 +37,6 @@ def build_scout_results(
             text=translate(MessageKey.SCOUT_EMPTY, locale),
             keyboard=(search_more,),
         )
-    if task_id is None:
-        task_id = UUID(int=0)
 
     return build_scout_result_page(
         locale,
@@ -52,7 +50,7 @@ def build_scout_result_page(
     locale: UiLocale,
     candidates: tuple[CandidateContent, ...],
     *,
-    task_id: UUID,
+    task_id: UUID | None,
     page: int,
 ) -> OutgoingMessage:
     if not candidates:
@@ -73,10 +71,9 @@ def build_scout_result_page(
         discovered=total,
         candidates=total,
     ).splitlines()[0]
-    page_label = (
-        f"Страница {current_page + 1}/{page_count}"
-        if locale is UiLocale.RU
-        else f"Page {current_page + 1}/{page_count}"
+    page_label = translate(MessageKey.SCOUT_PAGE, locale).format(
+        current=current_page + 1,
+        total=page_count,
     )
     lines = [header, page_label] if page_count > 1 else [header]
     keyboard: list[tuple[InlineButton, ...]] = []
@@ -103,14 +100,15 @@ def build_scout_result_page(
         keyboard.append(tuple(buttons))
 
     navigation: list[InlineButton] = []
-    if current_page > 0:
-        navigation.append(
-            InlineButton("⬅️", f"scout:page:{task_id}:{current_page - 1}")
-        )
-    if current_page + 1 < page_count:
-        navigation.append(
-            InlineButton("➡️", f"scout:page:{task_id}:{current_page + 1}")
-        )
+    if task_id is not None:
+        if current_page > 0:
+            navigation.append(
+                InlineButton("⬅️", f"scout:page:{task_id}:{current_page - 1}")
+            )
+        if current_page + 1 < page_count:
+            navigation.append(
+                InlineButton("➡️", f"scout:page:{task_id}:{current_page + 1}")
+            )
     if navigation:
         keyboard.append(tuple(navigation))
 
