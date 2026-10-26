@@ -83,8 +83,11 @@ class ScoutActivities:
         self._visual_relevance_weight = max(0.0, min(0.40, visual_relevance_weight))
         self._preview_ocr_weight = max(0.0, min(0.25, preview_ocr_weight))
         self._semantic_minimum_relevance = max(0.0, min(1.0, semantic_minimum_relevance))
-        self._retrieval_budget = max(1, retrieval_budget)
-        self._preview_evidence_limit = max(0, preview_evidence_limit)
+        self._retrieval_budget = max(1, min(1000, retrieval_budget))
+        self._preview_evidence_limit = max(
+            0,
+            min(preview_evidence_limit, self._retrieval_budget),
+        )
 
     @activity.defn(name="execute_scout_task")
     async def execute_scout_task(self, workflow_input: ScoutWorkflowInput) -> ScoutRunResult:
@@ -401,7 +404,7 @@ class ScoutActivities:
                     self._source_repository.list_candidates(
                         session,
                         task.id,
-                        limit=None,
+                        limit=self._retrieval_budget,
                     )
                 )
 
@@ -493,7 +496,11 @@ class ScoutActivities:
 
     def _result_for_task(self, session: Session, task: SourceTask) -> ScoutRunResult:
         if task.state is SourceTaskState.COMPLETED:
-            candidates = self._source_repository.list_candidates(session, task.id, limit=None)
+            candidates = self._source_repository.list_candidates(
+                session,
+                task.id,
+                limit=self._retrieval_budget,
+            )
             return ScoutRunResult(
                 operation_key=task.operation_key.value,
                 state=SourceTaskState.COMPLETED,
