@@ -156,6 +156,36 @@ async def test_shorter_translations_are_lazy_until_relaxation_is_reached() -> No
 
 
 @pytest.mark.asyncio
+async def test_relaxed_translation_failure_disables_later_translation_attempts() -> None:
+    intent = "Найди видео про Бангкок ночной рынок"
+    translator = MappingTranslator(
+        {
+            intent: "Bangkok night market",
+            "Найди видео про Бангкок ночной": None,
+            "Найди видео про Бангкок": "Bangkok",
+        }
+    )
+    planner = MultilingualQueryPlanner(translator)
+    plan = await planner.plan(intent, ("ru", "en"))
+
+    rounds = [
+        round_item
+        async for round_item in planner.search_rounds(plan, intent, ("ru", "en"))
+    ]
+
+    assert [item.query_variants for item in rounds] == [
+        ("Бангкок ночной рынок",),
+        ("Бангкок ночной рынок", "Bangkok night market"),
+        ("Бангкок ночной",),
+        ("Бангкок",),
+    ]
+    assert translator.calls == [
+        intent,
+        "Найди видео про Бангкок ночной",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_multilingual_planner_falls_back_when_translation_unavailable() -> None:
     translator = FakeTranslator(None)
     planner = MultilingualQueryPlanner(translator)
