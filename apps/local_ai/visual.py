@@ -278,10 +278,17 @@ class SiglipPreviewScorer:
 
     @staticmethod
     def _ocr_lines(result: Any) -> tuple[str, ...]:
-        raw_texts = getattr(result, "txts", None)
-        raw_scores = getattr(result, "scores", None)
-        if not isinstance(raw_texts, (list, tuple)):
+        raw_texts_obj = getattr(result, "txts", None)
+        raw_scores_obj = getattr(result, "scores", None)
+        if not isinstance(raw_texts_obj, (list, tuple)):
             return ()
+
+        raw_texts = cast(list[object] | tuple[object, ...], raw_texts_obj)
+        raw_scores = (
+            cast(list[object] | tuple[object, ...], raw_scores_obj)
+            if isinstance(raw_scores_obj, (list, tuple))
+            else None
+        )
 
         lines: list[str] = []
         for index, raw_text in enumerate(raw_texts):
@@ -289,7 +296,7 @@ class SiglipPreviewScorer:
             if not text:
                 continue
             confidence = 1.0
-            if isinstance(raw_scores, (list, tuple)) and index < len(raw_scores):
+            if raw_scores is not None and index < len(raw_scores):
                 try:
                     confidence = float(raw_scores[index])
                 except (TypeError, ValueError):
