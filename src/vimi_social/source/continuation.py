@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
 from temporalio import activity
@@ -26,18 +26,20 @@ from vimi_social.source.connectors import (
 )
 from vimi_social.source.continuation_state import (
     ScoutContinuationState,
+    continuation_request_key,
     find_scout_continuation_state,
 )
 from vimi_social.source.curator import CandidateCurator, restore_curator_order
 from vimi_social.source.query_planner import MultilingualQueryPlanner
 from vimi_social.source.repository import SourceTaskRepository
+from vimi_social.source.scout_attempts import ScoutAttemptStore
 from vimi_social.source.semantic import (
     SemanticRelevanceScorer,
     SemanticRelevanceUnavailable,
 )
 from vimi_social.telegram.outgoing import TelegramMessageRetryAfter, TelegramMessenger
 from vimi_social.telegram.scout_results import build_scout_result_page
-from vimi_social.usage.repository import UsageRepository
+from vimi_social.usage.repository import ReservationStateConflict, UsageRepository
 
 _LOCAL_AI_BATCH_LIMIT = 100
 _MAX_CONTINUATION_CANDIDATES = 100_000
@@ -54,6 +56,7 @@ class ScoutContinuationActivities:
         *,
         source_repository: SourceTaskRepository | None = None,
         usage_repository: UsageRepository | None = None,
+        attempt_store: ScoutAttemptStore | None = None,
         query_planner: MultilingualQueryPlanner | None = None,
         curator: CandidateCurator | None = None,
         semantic_scorer: SemanticRelevanceScorer | None = None,
@@ -65,6 +68,7 @@ class ScoutContinuationActivities:
         self._messenger = messenger
         self._source_repository = source_repository or SourceTaskRepository()
         self._usage_repository = usage_repository or UsageRepository()
+        self._attempt_store = attempt_store or ScoutAttemptStore()
         self._query_planner = query_planner or MultilingualQueryPlanner()
         self._curator = curator or CandidateCurator()
         self._semantic_scorer = semantic_scorer
@@ -85,13 +89,33 @@ class ScoutContinuationActivities:
         existing = self._load_candidates(task)
         continuation = find_scout_continuation_state(existing)
         if continuation is None:
-            self._release_usage(task, request_key)
+            self._release_usage_if_reserved(task, request_key)
             return self._result(task, existing, failure_code="NO_MORE_RESULTS")
+
+        expected_key = continuation_request_key(task.id, continuation.next_token)
+        if request_key != expected_key:
+            # A previous execution already advanced to another token. This is a
+            # stale replay of an older workflow, not permission to read the new page.
+            return self._result(task, existing, failure_code="STALE_CONTINUATION")
+
+        attempt_token = uuid4()
+        if not self._claim_attempt(task, attempt_token):
+            # An earlier owner reached the paid-I/O boundary and disappeared before
+            # clearing the fence. The provider outcome is ambiguous, so never repeat
+            # this token. Retire it and clear the stale fence atomically.
+            self._retire_ambiguous_continuation(task, continuation)
+            refreshed = self._load_candidates(task)
+            return self._result(
+                task,
+                refreshed,
+                failure_code="CONTINUATION_ATTEMPT_AMBIGUOUS",
+            )
 
         try:
             connector = self._registry.route(("x",))[0]
         except SourceConnectorUnavailable:
-            self._release_usage(task, request_key)
+            self._clear_owned_attempt(task, attempt_token)
+            self._release_usage_if_reserved(task, request_key)
             raise ApplicationError(
                 "X source connector is unavailable",
                 non_retryable=True,
@@ -111,6 +135,9 @@ class ScoutContinuationActivities:
         try:
             fetched = await connector.search(request)
         except SourceConnectorRateLimited as error:
+            # A 429 is a definitive no-data response. Clear the execution fence so
+            # the same safe token may be tried manually later.
+            self._clear_owned_attempt(task, attempt_token)
             raise ApplicationError(
                 "X continuation is rate limited",
                 non_retryable=True,
@@ -122,17 +149,19 @@ class ScoutContinuationActivities:
                 type="ScoutContinuationRateLimited",
             ) from None
         except SourceConnectorRejected:
+            self._clear_owned_attempt(task, attempt_token)
             raise ApplicationError(
                 "X continuation was rejected",
                 non_retryable=True,
                 type="ScoutContinuationRejected",
             ) from None
         except SourceConnectorUnavailable:
-            # Transport failures are ambiguous: the provider might have processed
-            # the request even if the response was lost. Do not permit an automatic
-            # or manual repeat of the same token; retire it from the result card.
-            self._retire_continuation(task, continuation)
-            return self._result(task, existing, failure_code="SOURCE_UNAVAILABLE")
+            # Transport/5xx failures are ambiguous: X might have processed the
+            # request even if its response was lost. Retire the token and clear the
+            # owned fence in the same transaction; never blind-retry this page.
+            self._retire_owned_continuation(task, continuation, attempt_token)
+            refreshed = self._load_candidates(task)
+            return self._result(task, refreshed, failure_code="SOURCE_UNAVAILABLE")
 
         known_ids = {(candidate.source, candidate.source_id) for candidate in existing}
         unique_new = tuple(
@@ -175,6 +204,12 @@ class ScoutContinuationActivities:
                 tenant_id=task.tenant_id,
                 candidates=(carrier, *accepted),
             )
+            if not self._attempt_store.clear_owned_completed_continuation(
+                session,
+                operation_key=task.operation_key,
+                attempt_token=attempt_token,
+            ):
+                raise RuntimeError("continuation attempt authority was lost before persistence")
 
         refreshed = self._load_candidates(task)
         return ScoutRunResult(
@@ -274,15 +309,36 @@ class ScoutContinuationActivities:
                 )
             )
 
-    def _commit_usage(self, task: SourceTask, request_key: OperationKey) -> None:
+    def _claim_attempt(self, task: SourceTask, attempt_token: UUID) -> bool:
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
-            self._usage_repository.commit(session, request_key)
+            return self._attempt_store.claim_completed_continuation(
+                session,
+                operation_key=task.operation_key,
+                attempt_token=attempt_token,
+            )
 
-    def _release_usage(self, task: SourceTask, request_key: OperationKey) -> None:
+    def _clear_owned_attempt(self, task: SourceTask, attempt_token: UUID) -> None:
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
-            self._usage_repository.release(session, request_key)
+            self._attempt_store.clear_owned_completed_continuation(
+                session,
+                operation_key=task.operation_key,
+                attempt_token=attempt_token,
+            )
 
-    def _retire_continuation(
+    def _commit_usage(self, task: SourceTask, request_key: OperationKey) -> bool:
+        with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
+            return self._usage_repository.commit(session, request_key)
+
+    def _release_usage_if_reserved(self, task: SourceTask, request_key: OperationKey) -> None:
+        with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
+            try:
+                self._usage_repository.release(session, request_key)
+            except ReservationStateConflict:
+                # A stale/successful workflow may refer to an already committed
+                # reservation. Never rewrite immutable usage history here.
+                pass
+
+    def _retire_ambiguous_continuation(
         self,
         task: SourceTask,
         continuation: ScoutContinuationState,
@@ -295,6 +351,31 @@ class ScoutContinuationActivities:
                 tenant_id=task.tenant_id,
                 candidates=(carrier,),
             )
+            self._attempt_store.clear_ambiguous_completed_continuation(
+                session,
+                operation_key=task.operation_key,
+            )
+
+    def _retire_owned_continuation(
+        self,
+        task: SourceTask,
+        continuation: ScoutContinuationState,
+        attempt_token: UUID,
+    ) -> None:
+        carrier = _advance_carrier(continuation, None)
+        with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
+            self._source_repository.replace_candidates(
+                session,
+                task_id=task.id,
+                tenant_id=task.tenant_id,
+                candidates=(carrier,),
+            )
+            if not self._attempt_store.clear_owned_completed_continuation(
+                session,
+                operation_key=task.operation_key,
+                attempt_token=attempt_token,
+            ):
+                raise RuntimeError("continuation attempt authority was lost while retiring token")
 
     @staticmethod
     def _result(
