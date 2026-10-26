@@ -95,7 +95,9 @@ async def run() -> None:
         query_planner=query_planner,
         semantic_scorer=local_ai_client,
         visual_scorer=visual_ai_client,
+        preview_ocr_extractor=visual_ai_client,
         visual_relevance_weight=settings.visual_relevance_weight,
+        preview_ocr_weight=settings.preview_ocr_weight,
         semantic_minimum_relevance=settings.semantic_relevance_min_score,
     )
     media_delivery = MediaPreparationDeliveryActivities(
