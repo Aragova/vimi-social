@@ -12,7 +12,7 @@ _E5_SIMILARITY_FLOOR = 0.70
 
 
 class CandidateCurator:
-    """Deterministic ranking with optional local text and visual relevance evidence."""
+    """Deterministic ranking with optional local semantic, visual and OCR evidence."""
 
     def rank(
         self,
@@ -23,7 +23,10 @@ class CandidateCurator:
         limit: int,
         semantic_scores: tuple[float, ...] | None = None,
         visual_scores: tuple[float | None, ...] | None = None,
+        preview_ocr_texts: tuple[str | None, ...] | None = None,
+        preview_ocr_semantic_scores: tuple[float | None, ...] | None = None,
         visual_weight: float = 0.15,
+        preview_ocr_weight: float = 0.10,
         minimum_relevance: float = 0.0,
     ) -> tuple[CandidateContent, ...]:
         if limit < 1:
@@ -32,6 +35,13 @@ class CandidateCurator:
             raise ValueError("semantic score count must match candidate count")
         if visual_scores is not None and len(visual_scores) != len(candidates):
             raise ValueError("visual score count must match candidate count")
+        if preview_ocr_texts is not None and len(preview_ocr_texts) != len(candidates):
+            raise ValueError("preview OCR text count must match candidate count")
+        if (
+            preview_ocr_semantic_scores is not None
+            and len(preview_ocr_semantic_scores) != len(candidates)
+        ):
+            raise ValueError("preview OCR semantic score count must match candidate count")
 
         visual_relevances = (
             _calibrate_siglip_relevances(visual_scores)
@@ -66,6 +76,25 @@ class CandidateCurator:
                 visual_weight,
             )
 
+            preview_ocr_text = (
+                preview_ocr_texts[index] if preview_ocr_texts is not None else None
+            )
+            preview_ocr_raw = (
+                preview_ocr_semantic_scores[index]
+                if preview_ocr_semantic_scores is not None
+                else None
+            )
+            preview_ocr_relevance = (
+                _calibrate_e5_relevance(preview_ocr_raw)
+                if preview_ocr_raw is not None
+                else None
+            )
+            relevance = _fused_ocr_relevance(
+                relevance,
+                preview_ocr_relevance,
+                preview_ocr_weight,
+            )
+
             quality = _quality_score(candidate)
             total = (0.82 * relevance) + (0.18 * quality)
             metadata = dict(candidate.connector_metadata)
@@ -78,6 +107,15 @@ class CandidateCurator:
                 metadata["curator_visual_raw_score"] = round(visual_raw, 6)
             if visual_relevance is not None:
                 metadata["curator_visual_relevance_score"] = visual_relevance
+            if preview_ocr_text:
+                metadata["curator_preview_ocr_text"] = preview_ocr_text
+            if preview_ocr_raw is not None:
+                metadata["curator_preview_ocr_semantic_raw_score"] = round(
+                    preview_ocr_raw,
+                    6,
+                )
+            if preview_ocr_relevance is not None:
+                metadata["curator_preview_ocr_relevance_score"] = preview_ocr_relevance
             metadata["curator_relevance_score"] = relevance
             metadata["curator_quality_score"] = quality
             metadata["curator_total_score"] = round(total, 6)
@@ -125,13 +163,15 @@ def _fused_visual_relevance(text: float, visual: float | None, weight: float) ->
     return round(((1.0 - bounded_weight) * text) + (bounded_weight * visual), 6)
 
 
-def _calibrate_e5_relevance(value: float) -> float:
-    """Map multilingual-E5's compressed cosine range into useful relevance space.
+def _fused_ocr_relevance(base: float, ocr: float | None, weight: float) -> float:
+    if ocr is None:
+        return base
+    bounded_weight = max(0.0, min(0.25, weight))
+    return round(((1.0 - bounded_weight) * base) + (bounded_weight * ocr), 6)
 
-    The model authors document cosine scores clustering around 0.7..1.0 because
-    of the low-temperature contrastive objective. Preserve the raw score in
-    metadata, but map that documented range to 0..1 before Curator fusion.
-    """
+
+def _calibrate_e5_relevance(value: float) -> float:
+    """Map multilingual-E5's compressed cosine range into useful relevance space."""
 
     bounded = max(_E5_SIMILARITY_FLOOR, min(1.0, value))
     calibrated = (bounded - _E5_SIMILARITY_FLOOR) / (1.0 - _E5_SIMILARITY_FLOOR)
@@ -141,14 +181,7 @@ def _calibrate_e5_relevance(value: float) -> float:
 def _calibrate_siglip_relevances(
     values: tuple[float | None, ...],
 ) -> tuple[float | None, ...]:
-    """Convert compressed SigLIP cosine scores into task-relative rerank evidence.
-
-    Scout uses visual evidence only to rerank candidates that already passed the
-    text relevance gate. Absolute cosine magnitudes vary by query and checkpoint,
-    so rank the distinct available scores within the current task instead of
-    treating the raw cosine as a probability. If the batch contains no visual
-    discrimination, return no calibrated evidence and leave text ranking intact.
-    """
+    """Convert compressed SigLIP cosine scores into task-relative rerank evidence."""
 
     bounded_values = tuple(
         None if value is None else max(-1.0, min(1.0, value)) for value in values
