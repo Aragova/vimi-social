@@ -12,6 +12,7 @@ class ScoutContinuationState:
     specificity: float
     search_scope: str
     next_token: str
+    generation: int
 
 
 def find_scout_continuation_state(
@@ -43,7 +44,17 @@ def find_scout_continuation_state(
     if latest_key is None:
         return None
 
-    for candidate in latest_candidates:
+    latest_generation = max(
+        (_continuation_generation(candidate) for candidate in latest_candidates),
+        default=0,
+    )
+    generation_candidates = tuple(
+        candidate
+        for candidate in latest_candidates
+        if _continuation_generation(candidate) == latest_generation
+    )
+
+    for candidate in generation_candidates:
         metadata = candidate.connector_metadata
         next_token = metadata.get("x_next_token")
         if not isinstance(next_token, str) or not next_token:
@@ -79,6 +90,14 @@ def find_scout_continuation_state(
             specificity=max(0.0, min(1.0, float(raw_specificity))),
             search_scope=search_scope,
             next_token=next_token,
+            generation=latest_generation,
         )
 
     return None
+
+
+def _continuation_generation(candidate: CandidateContent) -> int:
+    raw = candidate.connector_metadata.get("x_continuation_generation")
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
+        return raw
+    return 0
