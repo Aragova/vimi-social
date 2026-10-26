@@ -30,6 +30,7 @@ from vimi_social.telegram.menus import (
 )
 from vimi_social.telegram.models import TelegramCallbackQuery, TelegramUpdate, TelegramUser
 from vimi_social.telegram.outgoing import TelegramMessageRetryAfter, TelegramMessenger
+from vimi_social.telegram.scout_results import build_scout_result_page
 from vimi_social.usage.repository import CapacityExceeded
 
 
@@ -189,6 +190,28 @@ class TelegramBotService:
         elif callback.data == "source:feed":
             action = "source-feed-prompt"
             outgoing = build_feed_prompt(principal.locale)
+        elif callback.data.startswith("scout:page:"):
+            parsed_page = _parse_scout_page_callback(callback.data)
+            if parsed_page is None:
+                return
+            task_id, page = parsed_page
+            candidates = self._source_tasks.get_ai_search_candidates(principal, task_id)
+            if candidates is None:
+                return
+            outgoing = build_scout_result_page(
+                principal.locale,
+                candidates,
+                task_id=task_id,
+                page=page,
+            )
+            await self._messenger.edit_message(
+                update_id,
+                f"scout-page:{task_id}:{page}",
+                callback.message.chat.id,
+                callback.message.message_id,
+                outgoing,
+            )
+            return
         elif callback.data.startswith("candidate:select:"):
             candidate_id = _parse_uuid_suffix(callback.data, "candidate:select:")
             if candidate_id is None:
@@ -282,3 +305,21 @@ def _parse_uuid_suffix(callback_data: str, prefix: str) -> UUID | None:
         return UUID(raw_id)
     except ValueError:
         return None
+
+
+def _parse_scout_page_callback(callback_data: str) -> tuple[UUID, int] | None:
+    prefix = "scout:page:"
+    if not callback_data.startswith(prefix):
+        return None
+    raw = callback_data[len(prefix) :]
+    raw_id, separator, raw_page = raw.rpartition(":")
+    if not separator or not raw_id or not raw_page:
+        return None
+    try:
+        task_id = UUID(raw_id)
+        page = int(raw_page)
+    except ValueError:
+        return None
+    if page < 0:
+        return None
+    return task_id, page

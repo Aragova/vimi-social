@@ -2,18 +2,21 @@ import re
 from collections.abc import Callable
 from uuid import UUID
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from vimi_social.db.tenant import tenant_transaction
 from vimi_social.domain.identity import OperationKey
-from vimi_social.domain.source import SourceTask
+from vimi_social.domain.source import CandidateContent, SourceTask
 from vimi_social.source.conversation_state import consume_ai_search_conversation
+from vimi_social.source.curator import restore_curator_order
 from vimi_social.source.repository import SourceTaskRepository
 from vimi_social.telegram.identity import TelegramPrincipal
 from vimi_social.usage.models import ReservationRequest
 from vimi_social.usage.repository import UsageRepository
 
 _MAX_SOURCE_TASK_INTENT_LENGTH = 4000
+_MAX_PAGED_SCOUT_CANDIDATES = 1000
 
 _EXPLICIT_SOURCE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("x", re.compile(r"(?:^|\W)(?:x|twitter|твиттер\w*)(?:\W|$)", re.IGNORECASE)),
@@ -125,6 +128,40 @@ class SourceTaskService:
                 ),
             )
             return task
+
+    def get_ai_search_candidates(
+        self,
+        principal: TelegramPrincipal,
+        task_id: UUID,
+    ) -> tuple[CandidateContent, ...] | None:
+        with (
+            self._session_factory() as session,
+            tenant_transaction(session, principal.context.tenant_id),
+        ):
+            owned = session.execute(
+                text(
+                    """
+                    SELECT 1
+                    FROM source_task
+                    WHERE id = :task_id
+                      AND actor_user_id = :actor_user_id
+                      AND state = 'COMPLETED'
+                    """
+                ),
+                {
+                    "task_id": str(task_id),
+                    "actor_user_id": str(principal.user_id),
+                },
+            ).first()
+            if owned is None:
+                return None
+            return restore_curator_order(
+                self._repository.list_candidates(
+                    session,
+                    task_id,
+                    limit=_MAX_PAGED_SCOUT_CANDIDATES,
+                )
+            )
 
     def select_candidate(
         self,

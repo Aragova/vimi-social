@@ -151,6 +151,22 @@ class TelegramMessenger:
             dispatch=lambda: self._gateway.send_message(chat_id, message),
         )
 
+    async def edit_message(
+        self,
+        update_id: int,
+        action: str,
+        chat_id: int,
+        message_id: int,
+        message: OutgoingMessage,
+    ) -> TelegramOutgoingState:
+        return await self._dispatch(
+            update_id=update_id,
+            action=action,
+            chat_id=chat_id,
+            payload_sha256=_edit_message_fingerprint(chat_id, message_id, message),
+            dispatch=lambda: self._gateway.edit_message(chat_id, message_id, message),
+        )
+
     async def send_video(
         self,
         update_id: int,
@@ -217,6 +233,16 @@ class TelegramMessenger:
 
 def _message_fingerprint(chat_id: int, message: OutgoingMessage) -> str:
     payload = _message_payload(chat_id, message)
+    return _fingerprint(payload)
+
+
+def _edit_message_fingerprint(
+    chat_id: int,
+    message_id: int,
+    message: OutgoingMessage,
+) -> str:
+    payload = _message_payload(chat_id, message)
+    payload["message_id"] = message_id
     return _fingerprint(payload)
 
 

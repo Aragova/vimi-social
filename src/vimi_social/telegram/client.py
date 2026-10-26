@@ -32,6 +32,13 @@ class TelegramGatewayAmbiguous(TelegramGatewayError):
 class TelegramGateway(Protocol):
     async def send_message(self, chat_id: int, message: OutgoingMessage) -> None: ...
 
+    async def edit_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        message: OutgoingMessage,
+    ) -> None: ...
+
     async def send_video(
         self,
         chat_id: int,
@@ -70,6 +77,36 @@ class TelegramBotApiClient:
                 ]
             }
         await self._post_json("sendMessage", payload)
+
+    async def edit_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        message: OutgoingMessage,
+    ) -> None:
+        payload: dict[str, object] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": message.text,
+        }
+        if message.keyboard:
+            payload["reply_markup"] = {
+                "inline_keyboard": [
+                    [_button_payload(button) for button in row] for row in message.keyboard
+                ]
+            }
+        try:
+            response = await self._client.post(
+                f"{self._base_url}/editMessageText",
+                json=payload,
+            )
+        except httpx.HTTPError:
+            raise TelegramGatewayAmbiguous(
+                "Telegram Bot API edit outcome is unknown"
+            ) from None
+        if response.status_code == 400 and "message is not modified" in response.text.casefold():
+            return
+        self._raise_for_response(response)
 
     async def send_video(
         self,

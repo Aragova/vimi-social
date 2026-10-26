@@ -99,6 +99,9 @@ async def run() -> None:
         visual_relevance_weight=settings.visual_relevance_weight,
         preview_ocr_weight=settings.preview_ocr_weight,
         semantic_minimum_relevance=settings.semantic_relevance_min_score,
+        retrieval_budget=settings.scout_retrieval_budget,
+        retrieval_round_limit=settings.scout_retrieval_round_limit,
+        preview_evidence_limit=settings.scout_preview_evidence_limit,
     )
     media_delivery = MediaPreparationDeliveryActivities(
         session_factory,
