@@ -29,6 +29,7 @@ class MessageKey(StrEnum):
     SCOUT_QUOTA_EXCEEDED = "scout_quota_exceeded"
     VIEW = "view"
     SELECT = "select"
+    MORE_RESULTS = "more_results"
     SEARCH_MORE = "search_more"
     CANDIDATE_SELECTED = "candidate_selected"
     CANDIDATE_NOT_AVAILABLE = "candidate_not_available"
@@ -107,6 +108,7 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         ),
         MessageKey.VIEW: "👀 Посмотреть",
         MessageKey.SELECT: "✅ Выбрать",
+        MessageKey.MORE_RESULTS: "🔎 Ещё результаты",
         MessageKey.SEARCH_MORE: "🔄 Искать ещё",
         MessageKey.CANDIDATE_SELECTED: "✅ Кандидат выбран.",
         MessageKey.CANDIDATE_NOT_AVAILABLE: (
@@ -207,6 +209,7 @@ _CATALOG: dict[UiLocale, dict[MessageKey, str]] = {
         ),
         MessageKey.VIEW: "👀 View",
         MessageKey.SELECT: "✅ Select",
+        MessageKey.MORE_RESULTS: "🔎 More results",
         MessageKey.SEARCH_MORE: "🔄 Search more",
         MessageKey.CANDIDATE_SELECTED: "✅ Candidate selected.",
         MessageKey.CANDIDATE_NOT_AVAILABLE: (
