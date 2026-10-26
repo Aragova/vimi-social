@@ -1,4 +1,5 @@
 import re
+from dataclasses import replace
 from datetime import datetime
 from typing import cast
 
@@ -17,10 +18,11 @@ from vimi_social.source.connectors import (
 
 _PLAIN_QUERY_TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
 _X_BOOLEAN_WORDS = {"and", "or", "not"}
+_X_SEARCH_SCOPES = {"recent", "all"}
 
 
 class XSourceConnector:
-    """Official X API v2 Recent Search connector.
+    """Official X API v2 search connector.
 
     The connector performs discovery only. A returned video variant is retained as
     metadata for the rights-gated media worker; discovery never establishes reuse rights.
@@ -34,29 +36,44 @@ class XSourceConnector:
         *,
         client: httpx.AsyncClient | None = None,
         timeout_seconds: float = 10.0,
+        search_scope: str = "recent",
     ) -> None:
         token = bearer_token.strip()
         if not token:
             raise ValueError("X bearer token must not be empty")
+        normalized_scope = search_scope.strip().lower()
+        if normalized_scope not in _X_SEARCH_SCOPES:
+            raise ValueError("X search scope must be 'recent' or 'all'")
         self._token = token
+        self._search_scope = normalized_scope
         self._client = client or httpx.AsyncClient(timeout=timeout_seconds)
         self._owns_client = client is None
 
     async def search(self, request: ScoutSearchRequest) -> tuple[CandidateContent, ...]:
         read_budget = max(1, request.max_results)
-        query = _build_recent_search_query(request)
+        scope = request.search_scope or self._search_scope
+        if scope not in _X_SEARCH_SCOPES:
+            raise ValueError("X search scope must be 'recent' or 'all'")
+        query = _build_search_query(request, scope=scope)
         headers = {"Authorization": f"Bearer {self._token}"}
         candidates: list[CandidateContent] = []
         seen_posts: set[str] = set()
         seen_tokens: set[str] = set()
-        next_token: str | None = None
+        page_token = request.pagination_token
+        continuation_token: str | None = page_token
         posts_read = 0
 
         while posts_read < read_budget:
+            if page_token is not None:
+                if page_token in seen_tokens:
+                    continuation_token = None
+                    break
+                seen_tokens.add(page_token)
+
             remaining = read_budget - posts_read
             params = {
                 "query": query,
-                "max_results": str(max(10, min(remaining, 100))),
+                "max_results": str(max(10, min(remaining, _max_page_size(scope)))),
                 "tweet.fields": (
                     "attachments,author_id,created_at,lang,possibly_sensitive,public_metrics"
                 ),
@@ -65,17 +82,22 @@ class XSourceConnector:
                     "alt_text,duration_ms,height,media_key,preview_image_url,type,url,variants,width"
                 ),
             }
-            if next_token is not None:
-                params["next_token"] = next_token
+            if page_token is not None:
+                params["next_token"] = page_token
 
             try:
-                payload = await self._fetch_page(params, headers)
+                payload = await self._fetch_page(
+                    params,
+                    headers,
+                    scope=scope,
+                )
             except (
                 SourceConnectorRateLimited,
                 SourceConnectorRejected,
                 SourceConnectorUnavailable,
             ):
                 if candidates:
+                    continuation_token = page_token
                     break
                 raise
 
@@ -97,21 +119,38 @@ class XSourceConnector:
                 candidates.append(candidate)
 
             token = _next_token(payload)
-            if not data or token is None or token in seen_tokens:
+            continuation_token = token
+            if not data or token is None:
                 break
-            seen_tokens.add(token)
-            next_token = token
+            if token in seen_tokens:
+                continuation_token = None
+                break
+            if posts_read >= read_budget:
+                break
+            page_token = token
 
-        return tuple(candidates)
+        return tuple(
+            _with_search_state(
+                candidate,
+                scope=scope,
+                query=query,
+                continuation_token=continuation_token,
+                requested_token=request.pagination_token,
+            )
+            for candidate in candidates
+        )
 
     async def _fetch_page(
         self,
         params: dict[str, str],
         headers: dict[str, str],
+        *,
+        scope: str,
     ) -> dict[str, object]:
+        endpoint = "all" if scope == "all" else "recent"
         try:
             response = await self._client.get(
-                "https://api.x.com/2/tweets/search/recent",
+                f"https://api.x.com/2/tweets/search/{endpoint}",
                 params=params,
                 headers=headers,
             )
@@ -142,7 +181,7 @@ class XSourceConnector:
             await self._client.aclose()
 
 
-def _build_recent_search_query(request: ScoutSearchRequest) -> str:
+def _build_search_query(request: ScoutSearchRequest, *, scope: str) -> str:
     variants = _normalized_query_variants(request)
     language_clause = ""
     if len(request.preferred_languages) == 1:
@@ -151,9 +190,35 @@ def _build_recent_search_query(request: ScoutSearchRequest) -> str:
             language_clause = f" lang:{language.split('-', maxsplit=1)[0]}"
 
     suffix = f" has:videos -is:retweet{language_clause}"
-    expression_budget = 512 - len(suffix)
+    expression_budget = _query_limit(scope) - len(suffix)
     expression = _fit_query_expression(variants, expression_budget)
     return f"{expression}{suffix}"
+
+
+def _query_limit(scope: str) -> int:
+    return 4096 if scope == "all" else 512
+
+
+def _max_page_size(scope: str) -> int:
+    return 500 if scope == "all" else 100
+
+
+def _with_search_state(
+    candidate: CandidateContent,
+    *,
+    scope: str,
+    query: str,
+    continuation_token: str | None,
+    requested_token: str | None,
+) -> CandidateContent:
+    metadata = dict(candidate.connector_metadata)
+    metadata["x_search_scope"] = scope
+    metadata["x_search_query"] = query
+    if continuation_token is not None:
+        metadata["x_next_token"] = continuation_token
+    if requested_token is not None:
+        metadata["x_page_start_token"] = requested_token
+    return replace(candidate, connector_metadata=metadata)
 
 
 def _normalized_query_variants(request: ScoutSearchRequest) -> tuple[str, ...]:
