@@ -297,9 +297,13 @@ class SiglipPreviewScorer:
                 continue
             confidence = 1.0
             if raw_scores is not None and index < len(raw_scores):
-                try:
-                    confidence = float(raw_scores[index])
-                except (TypeError, ValueError):
+                raw_confidence = raw_scores[index]
+                if (
+                    isinstance(raw_confidence, int | float)
+                    and not isinstance(raw_confidence, bool)
+                ):
+                    confidence = float(raw_confidence)
+                else:
                     confidence = 0.0
             if confidence < _OCR_TEXT_SCORE or text in lines:
                 continue
