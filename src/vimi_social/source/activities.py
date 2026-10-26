@@ -405,7 +405,7 @@ class ScoutActivities:
                     self._source_repository.list_candidates(
                         session,
                         task.id,
-                        limit=self._retrieval_budget,
+                        limit=None,
                     )
                 )
 
@@ -500,7 +500,7 @@ class ScoutActivities:
             candidates = self._source_repository.list_candidates(
                 session,
                 task.id,
-                limit=self._retrieval_budget,
+                limit=None,
             )
             return ScoutRunResult(
                 operation_key=task.operation_key.value,
