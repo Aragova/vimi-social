@@ -28,6 +28,9 @@ class TestablePreviewOcrScorer(SiglipPreviewScorer):
     def _ensure_ocr_engine(self) -> FakeOcrEngine:
         return FakeOcrEngine()
 
+    def ocr_parameters(self, model_root: Path) -> dict[str, object]:
+        return self._ocr_parameters(model_root)
+
 
 def test_preview_ocr_normalizes_filters_and_deduplicates_lines(tmp_path: Path) -> None:
     scorer = TestablePreviewOcrScorer(tmp_path)
@@ -35,3 +38,13 @@ def test_preview_ocr_normalizes_filters_and_deduplicates_lines(tmp_path: Path) -
     texts = scorer.extract_texts(["https://pbs.twimg.com/media/example.jpg"])
 
     assert texts == ["BANGKOK NIGHT MARKET"]
+
+
+def test_preview_ocr_models_use_writable_cache_directory(tmp_path: Path) -> None:
+    scorer = TestablePreviewOcrScorer(tmp_path)
+    model_root = tmp_path / "rapidocr"
+
+    params = scorer.ocr_parameters(model_root)
+
+    assert params["Global.model_root_dir"] == str(model_root)
+    assert params["Global.use_cls"] is False
