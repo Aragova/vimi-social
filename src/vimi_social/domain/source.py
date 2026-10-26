@@ -102,6 +102,9 @@ class ScoutContinuationWorkflowInput:
     operation_key: str
     execution_token: str
     request_key: str
+    telegram_update_id: int
+    telegram_message_id: int
+    telegram_chat_id: int
 
 
 @dataclass(frozen=True, slots=True)
