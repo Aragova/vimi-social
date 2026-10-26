@@ -44,7 +44,10 @@ async def run() -> None:
     registry = SourceConnectorRegistry()
     x_connector: XSourceConnector | None = None
     if settings.x_bearer_token:
-        x_connector = XSourceConnector(settings.x_bearer_token)
+        x_connector = XSourceConnector(
+            settings.x_bearer_token,
+            search_scope=settings.x_search_scope,
+        )
         registry.register(x_connector)
 
     local_ai_client: LocalAiClient | None = None
