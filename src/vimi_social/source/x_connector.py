@@ -43,16 +43,17 @@ class XSourceConnector:
         self._owns_client = client is None
 
     async def search(self, request: ScoutSearchRequest) -> tuple[CandidateContent, ...]:
-        target = max(1, request.max_results)
+        read_budget = max(1, request.max_results)
         query = _build_recent_search_query(request)
         headers = {"Authorization": f"Bearer {self._token}"}
         candidates: list[CandidateContent] = []
         seen_posts: set[str] = set()
         seen_tokens: set[str] = set()
         next_token: str | None = None
+        posts_read = 0
 
-        while len(candidates) < target:
-            remaining = target - len(candidates)
+        while posts_read < read_budget:
+            remaining = read_budget - posts_read
             params = {
                 "query": query,
                 "max_results": str(max(10, min(remaining, 100))),
@@ -69,6 +70,7 @@ class XSourceConnector:
 
             payload = await self._fetch_page(params, headers)
             data = _object_list(payload.get("data"))
+            posts_read += len(data)
             includes_obj = payload.get("includes")
             includes = (
                 cast(dict[str, object], includes_obj)
@@ -83,16 +85,14 @@ class XSourceConnector:
                     continue
                 seen_posts.add(candidate.source_id)
                 candidates.append(candidate)
-                if len(candidates) >= target:
-                    break
 
             token = _next_token(payload)
-            if token is None or token in seen_tokens:
+            if not data or token is None or token in seen_tokens:
                 break
             seen_tokens.add(token)
             next_token = token
 
-        return tuple(candidates[:target])
+        return tuple(candidates)
 
     async def _fetch_page(
         self,
@@ -172,10 +172,6 @@ def _fit_query_expression(variants: tuple[str, ...], budget: int) -> str:
     if len(full_expression) <= budget:
         return full_expression
 
-    # Never slice a complete user/search expression character-by-character because
-    # that can cut quotes, parentheses, or operators and turn valid input into an
-    # invalid X query. Prefer complete variants in priority order when the full
-    # multilingual expression exceeds the endpoint budget.
     selected: list[str] = []
     for variant in variants:
         candidate = _group_query_variants((*selected, variant))
@@ -184,9 +180,6 @@ def _fit_query_expression(variants: tuple[str, ...], budget: int) -> str:
     if selected:
         return _group_query_variants(tuple(selected))
 
-    # If every complete variant is individually too long, fall back to bounded
-    # plain-text tokens. This intentionally removes X query syntax so truncation
-    # cannot leave unmatched grouping/quotes or a dangling boolean operator.
     return _safe_plaintext_fallback(variants[0], budget)
 
 
