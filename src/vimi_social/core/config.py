@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = None
     telegram_webhook_secret: str | None = None
     x_bearer_token: str | None = None
+    x_search_scope: str = "recent"
     local_ai_url: str | None = None
     local_ai_timeout_seconds: float = 20.0
     visual_ai_url: str | None = None
