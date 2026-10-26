@@ -196,7 +196,7 @@ def _build_search_query(request: ScoutSearchRequest, *, scope: str) -> str:
 
 
 def _query_limit(scope: str) -> int:
-    return 4096 if scope == "all" else 512
+    return 1024 if scope == "all" else 512
 
 
 def _max_page_size(scope: str) -> int:
