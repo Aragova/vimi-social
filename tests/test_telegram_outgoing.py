@@ -54,11 +54,25 @@ class FakeGateway:
     def __init__(self, failure: Exception | None = None) -> None:
         self.failure = failure
         self.send_count = 0
+        self.edit_count = 0
         self.video_count = 0
 
     async def send_message(self, chat_id: int, message: OutgoingMessage) -> None:
         self.send_count += 1
         assert chat_id
+        assert message.text
+        if self.failure is not None:
+            raise self.failure
+
+    async def edit_message(
+        self,
+        chat_id: int,
+        message_id: int,
+        message: OutgoingMessage,
+    ) -> None:
+        self.edit_count += 1
+        assert chat_id
+        assert message_id
         assert message.text
         if self.failure is not None:
             raise self.failure
@@ -93,6 +107,24 @@ async def test_unknown_existing_operation_is_never_sent_again() -> None:
     assert state is TelegramOutgoingState.UNKNOWN
     assert gateway.send_count == 0
     assert store.finished == []
+
+
+async def test_paginated_edit_uses_durable_dispatch() -> None:
+    store = FakeStore(TelegramDispatchDecision.DISPATCH)
+    gateway = FakeGateway()
+    messenger = TelegramMessenger(store, gateway)
+
+    state = await messenger.edit_message(
+        9,
+        "scout-page:test:1",
+        10,
+        77,
+        OutgoingMessage("page two"),
+    )
+
+    assert state is TelegramOutgoingState.CONFIRMED
+    assert gateway.edit_count == 1
+    assert store.finished == [TelegramOutgoingState.CONFIRMED]
 
 
 async def test_unknown_video_preview_is_never_sent_again(tmp_path: Path) -> None:
