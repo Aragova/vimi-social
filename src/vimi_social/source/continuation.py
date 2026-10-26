@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import replace
 from datetime import timedelta
 from uuid import UUID, uuid4
@@ -94,15 +95,10 @@ class ScoutContinuationActivities:
 
         expected_key = continuation_request_key(task.id, continuation.next_token)
         if request_key != expected_key:
-            # A previous execution already advanced to another token. This is a
-            # stale replay of an older workflow, not permission to read the new page.
             return self._result(task, existing, failure_code="STALE_CONTINUATION")
 
         attempt_token = uuid4()
         if not self._claim_attempt(task, attempt_token):
-            # An earlier owner reached the paid-I/O boundary and disappeared before
-            # clearing the fence. The provider outcome is ambiguous, so never repeat
-            # this token. Retire it and clear the stale fence atomically.
             self._retire_ambiguous_continuation(task, continuation)
             refreshed = self._load_candidates(task)
             return self._result(
@@ -135,8 +131,6 @@ class ScoutContinuationActivities:
         try:
             fetched = await connector.search(request)
         except SourceConnectorRateLimited as error:
-            # A 429 is a definitive no-data response. Clear the execution fence so
-            # the same safe token may be tried manually later.
             self._clear_owned_attempt(task, attempt_token)
             raise ApplicationError(
                 "X continuation is rate limited",
@@ -156,9 +150,6 @@ class ScoutContinuationActivities:
                 type="ScoutContinuationRejected",
             ) from None
         except SourceConnectorUnavailable:
-            # Transport/5xx failures are ambiguous: X might have processed the
-            # request even if its response was lost. Retire the token and clear the
-            # owned fence in the same transaction; never blind-retry this page.
             self._retire_owned_continuation(task, continuation, attempt_token)
             refreshed = self._load_candidates(task)
             return self._result(task, refreshed, failure_code="SOURCE_UNAVAILABLE")
@@ -331,12 +322,8 @@ class ScoutContinuationActivities:
 
     def _release_usage_if_reserved(self, task: SourceTask, request_key: OperationKey) -> None:
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
-            try:
+            with suppress(ReservationStateConflict):
                 self._usage_repository.release(session, request_key)
-            except ReservationStateConflict:
-                # A stale/successful workflow may refer to an already committed
-                # reservation. Never rewrite immutable usage history here.
-                pass
 
     def _retire_ambiguous_continuation(
         self,
