@@ -12,10 +12,13 @@ def _candidate(
     likes: int = 0,
     acquisition: bool = True,
     language: str = "en",
+    retrieval_specificity: float | None = None,
 ) -> CandidateContent:
     metadata: dict[str, object] = {"language": language}
     if acquisition:
         metadata["acquisition_url"] = f"https://media.example/{source_id}.mp4"
+    if retrieval_specificity is not None:
+        metadata["retrieval_specificity"] = retrieval_specificity
     return CandidateContent(
         id=None,
         source="x",
@@ -239,6 +242,56 @@ def test_curator_filters_low_semantic_relevance_when_enabled() -> None:
     )
 
     assert [candidate.source_id for candidate in ranked] == ["relevant"]
+
+
+def test_curator_broad_retrieval_requires_stronger_original_intent_match() -> None:
+    exact_round = _candidate(
+        "exact",
+        "gay porn",
+        retrieval_specificity=1.0,
+    )
+    broad_round = _candidate(
+        "broad",
+        "gay porn",
+        retrieval_specificity=0.25,
+    )
+
+    ranked = CandidateCurator().rank(
+        (exact_round, broad_round),
+        query_variants=("gay porn twink young",),
+        preferred_languages=("en",),
+        limit=10,
+        semantic_scores=(0.84, 0.84),
+        minimum_relevance=0.18,
+    )
+
+    assert [candidate.source_id for candidate in ranked] == ["exact"]
+    assert _score(ranked[0], "curator_minimum_text_relevance_score") == 0.48
+
+
+def test_curator_records_specificity_dependent_precision_thresholds() -> None:
+    candidates = tuple(
+        _candidate(
+            f"specificity-{specificity}",
+            "gay porn twink young",
+            retrieval_specificity=specificity,
+        )
+        for specificity in (1.0, 0.75, 0.5, 0.25)
+    )
+
+    ranked = CandidateCurator().rank(
+        candidates,
+        query_variants=("gay porn twink young",),
+        preferred_languages=("en",),
+        limit=10,
+        semantic_scores=(0.95, 0.95, 0.95, 0.95),
+        minimum_relevance=0.18,
+    )
+
+    assert [
+        _score(candidate, "curator_minimum_text_relevance_score")
+        for candidate in ranked
+    ] == [0.48, 0.52, 0.56, 0.60]
 
 
 def test_curator_enforces_final_result_budget() -> None:
