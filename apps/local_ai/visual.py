@@ -174,13 +174,18 @@ class SiglipPreviewScorer:
                 return self._ocr_engine
             rapidocr_module = cast(Any, import_module("rapidocr"))
             engine_factory = cast(Callable[..., Any], rapidocr_module.RapidOCR)
-            self._ocr_engine = engine_factory(
-                params={
-                    "Global.text_score": _OCR_TEXT_SCORE,
-                    "Global.use_cls": False,
-                }
-            )
+            model_root = self._cache_dir / "rapidocr"
+            model_root.mkdir(parents=True, exist_ok=True)
+            self._ocr_engine = engine_factory(params=self._ocr_parameters(model_root))
             return self._ocr_engine
+
+    @staticmethod
+    def _ocr_parameters(model_root: Path) -> dict[str, object]:
+        return {
+            "Global.model_root_dir": str(model_root),
+            "Global.text_score": _OCR_TEXT_SCORE,
+            "Global.use_cls": False,
+        }
 
     def _text_embeddings(
         self,
