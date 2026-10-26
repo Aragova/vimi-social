@@ -67,6 +67,7 @@ class ScoutActivities:
         preview_ocr_weight: float = 0.10,
         semantic_minimum_relevance: float = 0.0,
         retrieval_budget: int = 300,
+        retrieval_round_limit: int = 30,
         preview_evidence_limit: int = 50,
     ) -> None:
         self._session_factory = session_factory
@@ -84,6 +85,10 @@ class ScoutActivities:
         self._preview_ocr_weight = max(0.0, min(0.25, preview_ocr_weight))
         self._semantic_minimum_relevance = max(0.0, min(1.0, semantic_minimum_relevance))
         self._retrieval_budget = max(1, min(1000, retrieval_budget))
+        self._retrieval_round_limit = max(
+            1,
+            min(retrieval_round_limit, self._retrieval_budget),
+        )
         self._preview_evidence_limit = max(
             0,
             min(preview_evidence_limit, self._retrieval_budget),
@@ -93,8 +98,6 @@ class ScoutActivities:
     async def execute_scout_task(self, workflow_input: ScoutWorkflowInput) -> ScoutRunResult:
         task = self._authorized_task(workflow_input)
 
-        # Route before any paid query expansion. Unsupported source requests fail
-        # without spending translation-provider credits.
         try:
             connectors = self._registry.route(task.requested_sources)
         except SourceConnectorUnavailable:
@@ -134,9 +137,6 @@ class ScoutActivities:
 
             self._usage_repository.commit(session, task.operation_key)
 
-        # Query expansion is fenced behind the durable Scout claim. A terminal
-        # retry returns above and an ambiguous in-flight retry becomes UNKNOWN
-        # rather than repeating translation or source-search side effects.
         query_plan = await self._query_planner.plan(
             task.user_intent,
             task.preferred_languages,
@@ -160,7 +160,7 @@ class ScoutActivities:
                     requested_sources=task.requested_sources,
                     preferred_languages=search_round.preferred_languages,
                     query_variants=search_round.query_variants,
-                    max_results=remaining_budget,
+                    max_results=min(remaining_budget, self._retrieval_round_limit),
                 )
                 try:
                     round_candidates = await connector.search(request)
@@ -200,9 +200,6 @@ class ScoutActivities:
             except SemanticRelevanceUnavailable:
                 semantic_scores = None
 
-        # Text/E5 gates the complete pool first. Expensive preview evidence is
-        # intentionally limited to the strongest text candidates, but every text-
-        # relevant candidate remains eligible for persistence and Telegram paging.
         provisional = self._curator.rank(
             normalized,
             query_variants=query_plan.query_variants,
