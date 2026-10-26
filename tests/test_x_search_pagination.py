@@ -73,6 +73,35 @@ async def test_x_recent_search_follows_next_token_and_keeps_already_read_overflo
 
 
 @pytest.mark.asyncio
+async def test_x_recent_search_keeps_first_page_when_second_page_is_rate_limited() -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, json=_page(1, 10, next_token="page-2"))
+        return httpx.Response(429, headers={"retry-after": "60"})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = XSourceConnector("test-token", client=http_client)
+
+    candidates = await connector.search(
+        ScoutSearchRequest(
+            intent="gay twink porno",
+            requested_sources=("x",),
+            preferred_languages=("en",),
+            max_results=20,
+        )
+    )
+
+    assert len(candidates) == 10
+    assert [candidate.source_id for candidate in candidates] == [str(i) for i in range(1, 11)]
+    assert calls == 2
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_x_recent_search_stops_on_repeated_pagination_token() -> None:
     calls = 0
 
