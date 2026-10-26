@@ -111,7 +111,6 @@ class ScoutContinuationActivities:
         try:
             fetched = await connector.search(request)
         except SourceConnectorRateLimited as error:
-            self._release_committed_if_safe(task, request_key)
             raise ApplicationError(
                 "X continuation is rate limited",
                 non_retryable=True,
@@ -123,7 +122,6 @@ class ScoutContinuationActivities:
                 type="ScoutContinuationRateLimited",
             ) from None
         except SourceConnectorRejected:
-            self._release_committed_if_safe(task, request_key)
             raise ApplicationError(
                 "X continuation was rejected",
                 non_retryable=True,
@@ -169,7 +167,7 @@ class ScoutContinuationActivities:
             accepted = _offset_curator_ranks(accepted, len(existing))
 
         next_token = _next_token_from_candidates(fetched)
-        carrier = _advance_carrier(continuation.carrier, next_token)
+        carrier = _advance_carrier(continuation, next_token)
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
             self._source_repository.replace_candidates(
                 session,
@@ -284,20 +282,12 @@ class ScoutContinuationActivities:
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
             self._usage_repository.release(session, request_key)
 
-    def _release_committed_if_safe(self, task: SourceTask, request_key: OperationKey) -> None:
-        # The provider returned a definitive 429/401/403 without post data. Internal
-        # scout quota should not be consumed for a continuation that read no posts.
-        # UsageRepository cannot transition COMMITTED back to RELEASED, so this is
-        # intentionally a no-op after commit; the deterministic request key still
-        # prevents double charging if Telegram retries the same callback.
-        del task, request_key
-
     def _retire_continuation(
         self,
         task: SourceTask,
         continuation: ScoutContinuationState,
     ) -> None:
-        carrier = _advance_carrier(continuation.carrier, None)
+        carrier = _advance_carrier(continuation, None)
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
             self._source_repository.replace_candidates(
                 session,
@@ -332,6 +322,7 @@ def _with_continuation_provenance(
     metadata["retrieval_relaxation_level"] = continuation.relaxation_level
     metadata["retrieval_specificity"] = continuation.specificity
     metadata["retrieval_language_mode"] = "+".join(continuation.preferred_languages)
+    metadata["x_continuation_generation"] = continuation.generation + 1
     return replace(candidate, connector_metadata=metadata)
 
 
@@ -343,12 +334,16 @@ def _next_token_from_candidates(candidates: tuple[CandidateContent, ...]) -> str
     return None
 
 
-def _advance_carrier(candidate: CandidateContent, next_token: str | None) -> CandidateContent:
-    metadata = dict(candidate.connector_metadata)
+def _advance_carrier(
+    continuation: ScoutContinuationState,
+    next_token: str | None,
+) -> CandidateContent:
+    metadata = dict(continuation.carrier.connector_metadata)
     metadata.pop("x_next_token", None)
+    metadata["x_continuation_generation"] = continuation.generation + 1
     if next_token is not None:
         metadata["x_next_token"] = next_token
-    return replace(candidate, connector_metadata=metadata)
+    return replace(continuation.carrier, connector_metadata=metadata)
 
 
 def _offset_curator_ranks(
