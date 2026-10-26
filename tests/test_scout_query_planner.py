@@ -125,6 +125,17 @@ async def test_progressive_rounds_try_ru_then_bilingual_before_dropping_last_key
         ("ru",),
         ("ru", "en"),
     ]
+    assert [item.relaxation_level for item in rounds] == [0, 0, 1, 1, 2, 2, 3, 3]
+    assert [item.specificity for item in rounds] == [
+        1.0,
+        1.0,
+        0.75,
+        0.75,
+        0.5,
+        0.5,
+        0.25,
+        0.25,
+    ]
 
 
 @pytest.mark.asyncio
