@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     visual_relevance_weight: float = 0.15
     preview_ocr_weight: float = 0.10
     semantic_relevance_min_score: float = 0.18
+    scout_retrieval_budget: int = 300
+    scout_preview_evidence_limit: int = 50
     allow_paid_ai_fallback: bool = False
     search_translation_api_key: str | None = None
     search_translation_model: str = "gpt-6-luna"
