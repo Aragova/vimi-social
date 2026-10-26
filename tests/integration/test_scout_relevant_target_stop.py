@@ -5,7 +5,12 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from vimi_social.db.tenant import tenant_transaction
-from vimi_social.domain.source import AdultClassification, CandidateContent, ScoutSearchRequest, ScoutWorkflowInput
+from vimi_social.domain.source import (
+    AdultClassification,
+    CandidateContent,
+    ScoutSearchRequest,
+    ScoutWorkflowInput,
+)
 from vimi_social.source.activities import ScoutActivities
 from vimi_social.source.connectors import SourceConnectorRegistry
 from vimi_social.source.repository import SourceTaskRepository
@@ -69,13 +74,13 @@ async def test_scout_keeps_all_results_from_target_round_and_stops_broadening() 
         autoflush=False,
     )
     telegram_user = TelegramUser(
-        id=920000101,
+        id=930028101,
         first_name="Recall",
         username="recall_target_integration",
         language_code="en",
     )
-    update_id = 820000101
-    chat_id = 920000101
+    update_id = 830028101
+    chat_id = 930028101
 
     try:
         resolver = TelegramIdentityResolver(session_factory)
@@ -103,7 +108,7 @@ async def test_scout_keeps_all_results_from_target_round_and_stops_broadening() 
         task = service.submit_ai_search_intent(
             principal,
             update_id=update_id,
-            message_id=101,
+            message_id=928001,
             chat_id=chat_id,
             intent="bangkok night market video",
         )
