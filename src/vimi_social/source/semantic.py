@@ -13,3 +13,9 @@ class SemanticRelevanceScorer(Protocol):
         query_variants: tuple[str, ...],
         candidates: tuple[CandidateContent, ...],
     ) -> tuple[float, ...]: ...
+
+    async def score_texts(
+        self,
+        query_variants: tuple[str, ...],
+        texts: tuple[str | None, ...],
+    ) -> tuple[float | None, ...]: ...
