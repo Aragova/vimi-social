@@ -172,6 +172,35 @@ async def test_x_recent_search_keeps_first_page_when_second_page_is_rate_limited
 
 
 @pytest.mark.asyncio
+async def test_x_search_retires_token_when_later_page_transport_is_ambiguous() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(200, json=_page(1, 10, next_token="page-2"))
+        raise httpx.ReadError("response lost", request=request)
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = XSourceConnector("test-token", client=http_client)
+
+    candidates = await connector.search(
+        ScoutSearchRequest(
+            intent="gay twink porno",
+            requested_sources=("x",),
+            preferred_languages=("en",),
+            max_results=20,
+        )
+    )
+
+    assert len(candidates) == 10
+    assert calls == 2
+    assert all("x_next_token" not in candidate.connector_metadata for candidate in candidates)
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_x_recent_search_stops_on_repeated_pagination_token() -> None:
     calls = 0
 
