@@ -10,6 +10,7 @@ def _candidate(
     level: int,
     mode: str,
     token: str | None,
+    generation: int = 0,
 ) -> CandidateContent:
     metadata: dict[str, object] = {
         "retrieval_query": "гей порно твинк",
@@ -18,6 +19,7 @@ def _candidate(
         "retrieval_specificity": 0.75,
         "retrieval_language_mode": mode,
         "x_search_scope": "recent",
+        "x_continuation_generation": generation,
         "curator_rank": int(source_id),
     }
     if token is not None:
@@ -60,12 +62,34 @@ def test_continuation_uses_latest_successful_round_not_earlier_token() -> None:
     assert state.relaxation_level == 1
     assert state.preferred_languages == ("ru", "en")
     assert state.query_variants == ("гей порно твинк", "gay porn twink")
+    assert state.generation == 0
 
 
 def test_continuation_is_unavailable_when_latest_round_is_exhausted() -> None:
     candidates = (
         _candidate("1", level=0, mode="ru+en", token="older-token"),
         _candidate("2", level=1, mode="ru+en", token=None),
+    )
+
+    assert find_scout_continuation_state(candidates) is None
+
+
+def test_newer_generation_without_token_retires_older_same_round_token() -> None:
+    candidates = (
+        _candidate(
+            "1",
+            level=1,
+            mode="ru+en",
+            token="stale-page-2",
+            generation=0,
+        ),
+        _candidate(
+            "2",
+            level=1,
+            mode="ru+en",
+            token=None,
+            generation=1,
+        ),
     )
 
     assert find_scout_continuation_state(candidates) is None
