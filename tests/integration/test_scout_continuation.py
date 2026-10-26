@@ -5,7 +5,12 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from vimi_social.db.tenant import tenant_transaction
-from vimi_social.domain.source import AdultClassification, CandidateContent, ScoutSearchRequest
+from vimi_social.domain.source import (
+    AdultClassification,
+    CandidateContent,
+    ScoutSearchRequest,
+    ScoutWorkflowInput,
+)
 from vimi_social.source.activities import ScoutActivities
 from vimi_social.source.connectors import SourceConnectorRegistry
 from vimi_social.source.continuation import ScoutContinuationActivities
@@ -121,10 +126,7 @@ async def test_scout_continuation_reuses_token_once_and_appends_results() -> Non
             retrieval_round_limit=30,
         )
         first_result = await initial.execute_scout_task(
-            workflow_input=__import__(
-                "vimi_social.domain.source",
-                fromlist=["ScoutWorkflowInput"],
-            ).ScoutWorkflowInput(
+            ScoutWorkflowInput(
                 operation_key=task.operation_key.value,
                 execution_token=str(task.execution_token),
             )
