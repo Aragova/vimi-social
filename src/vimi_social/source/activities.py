@@ -66,6 +66,8 @@ class ScoutActivities:
         visual_relevance_weight: float = 0.15,
         preview_ocr_weight: float = 0.10,
         semantic_minimum_relevance: float = 0.0,
+        retrieval_budget: int = 300,
+        preview_evidence_limit: int = 50,
     ) -> None:
         self._session_factory = session_factory
         self._registry = registry
@@ -81,6 +83,8 @@ class ScoutActivities:
         self._visual_relevance_weight = max(0.0, min(0.40, visual_relevance_weight))
         self._preview_ocr_weight = max(0.0, min(0.25, preview_ocr_weight))
         self._semantic_minimum_relevance = max(0.0, min(1.0, semantic_minimum_relevance))
+        self._retrieval_budget = max(1, retrieval_budget)
+        self._preview_evidence_limit = max(0, preview_evidence_limit)
 
     @activity.defn(name="execute_scout_task")
     async def execute_scout_task(self, workflow_input: ScoutWorkflowInput) -> ScoutRunResult:
@@ -134,37 +138,42 @@ class ScoutActivities:
             task.user_intent,
             task.preferred_languages,
         )
-        max_results = 10
         discovered: list[CandidateContent] = []
-        normalized: tuple[CandidateContent, ...] = ()
-        semantic_scores: tuple[float, ...] | None = None
 
         async for search_round in self._query_planner.search_rounds(
             query_plan,
             task.user_intent,
             task.preferred_languages,
         ):
-            request = ScoutSearchRequest(
-                intent=task.user_intent,
-                requested_sources=task.requested_sources,
-                preferred_languages=search_round.preferred_languages,
-                query_variants=search_round.query_variants,
-                max_results=max_results,
-            )
             source_failure_code: str | None = None
-            try:
-                for connector in connectors:
+            for connector in connectors:
+                normalized_so_far = _deduplicate(discovered)
+                remaining_budget = self._retrieval_budget - len(normalized_so_far)
+                if remaining_budget <= 0:
+                    break
+
+                request = ScoutSearchRequest(
+                    intent=task.user_intent,
+                    requested_sources=task.requested_sources,
+                    preferred_languages=search_round.preferred_languages,
+                    query_variants=search_round.query_variants,
+                    max_results=remaining_budget,
+                )
+                try:
                     round_candidates = await connector.search(request)
                     discovered.extend(
                         _with_retrieval_provenance(candidate, search_round)
                         for candidate in round_candidates
                     )
-            except SourceConnectorRateLimited:
-                source_failure_code = "SOURCE_RATE_LIMITED"
-            except SourceConnectorRejected:
-                source_failure_code = "SOURCE_ACCESS_REJECTED"
-            except SourceConnectorUnavailable:
-                source_failure_code = "SOURCE_UNAVAILABLE"
+                except SourceConnectorRateLimited:
+                    source_failure_code = "SOURCE_RATE_LIMITED"
+                    break
+                except SourceConnectorRejected:
+                    source_failure_code = "SOURCE_ACCESS_REJECTED"
+                    break
+                except SourceConnectorUnavailable:
+                    source_failure_code = "SOURCE_UNAVAILABLE"
+                    break
 
             if source_failure_code is not None and not discovered:
                 return self._fail_safe(
@@ -172,47 +181,60 @@ class ScoutActivities:
                     source_failure_code,
                     attempt_token=attempt_token,
                 )
-
-            normalized = _deduplicate(discovered)
-            semantic_scores = None
-            if self._semantic_scorer is not None and normalized:
-                try:
-                    semantic_scores = await self._score_semantic_candidates(
-                        query_plan.query_variants,
-                        normalized,
-                    )
-                except SemanticRelevanceUnavailable:
-                    semantic_scores = None
-
-            # Recall broadening is driven by the original full intent, not by
-            # the relaxed source query. Expensive preview evidence runs only
-            # once after retrieval stops.
-            provisional = self._curator.rank(
-                normalized,
-                query_variants=query_plan.query_variants,
-                preferred_languages=task.preferred_languages,
-                limit=max_results,
-                semantic_scores=semantic_scores,
-                minimum_relevance=self._semantic_minimum_relevance,
-            )
-            if source_failure_code is not None or len(provisional) >= max_results:
+            if source_failure_code is not None:
+                break
+            if len(_deduplicate(discovered)) >= self._retrieval_budget:
                 break
 
-        visual_scores: tuple[float | None, ...] | None = None
-        if self._visual_scorer is not None and normalized:
+        normalized = _deduplicate(discovered)
+        semantic_scores: tuple[float, ...] | None = None
+        if self._semantic_scorer is not None and normalized:
             try:
-                visual_scores = await self._score_visual_candidates(
+                semantic_scores = await self._score_semantic_candidates(
                     query_plan.query_variants,
                     normalized,
+                )
+            except SemanticRelevanceUnavailable:
+                semantic_scores = None
+
+        # Text/E5 gates the complete pool first. Expensive preview evidence is
+        # intentionally limited to the strongest text candidates, but every text-
+        # relevant candidate remains eligible for persistence and Telegram paging.
+        provisional = self._curator.rank(
+            normalized,
+            query_variants=query_plan.query_variants,
+            preferred_languages=task.preferred_languages,
+            limit=max(1, len(normalized)),
+            semantic_scores=semantic_scores,
+            minimum_relevance=self._semantic_minimum_relevance,
+        )
+        evidence_candidates = provisional[: self._preview_evidence_limit]
+
+        visual_scores: tuple[float | None, ...] | None = None
+        if self._visual_scorer is not None and evidence_candidates:
+            try:
+                evidence_visual_scores = await self._score_visual_candidates(
+                    query_plan.query_variants,
+                    evidence_candidates,
+                )
+                visual_scores = _align_optional_floats(
+                    normalized,
+                    evidence_candidates,
+                    evidence_visual_scores,
                 )
             except VisualRelevanceUnavailable:
                 visual_scores = None
 
         preview_ocr_texts: tuple[str | None, ...] | None = None
         preview_ocr_semantic_scores: tuple[float | None, ...] | None = None
-        if self._preview_ocr_extractor is not None and normalized:
+        if self._preview_ocr_extractor is not None and evidence_candidates:
             try:
-                preview_ocr_texts = await self._extract_preview_ocr_texts(normalized)
+                evidence_ocr_texts = await self._extract_preview_ocr_texts(evidence_candidates)
+                preview_ocr_texts = _align_optional_texts(
+                    normalized,
+                    evidence_candidates,
+                    evidence_ocr_texts,
+                )
             except PreviewOcrUnavailable:
                 preview_ocr_texts = None
 
@@ -233,7 +255,7 @@ class ScoutActivities:
             normalized,
             query_variants=query_plan.query_variants,
             preferred_languages=task.preferred_languages,
-            limit=max_results,
+            limit=max(1, len(normalized)),
             semantic_scores=semantic_scores,
             visual_scores=visual_scores,
             preview_ocr_texts=preview_ocr_texts,
@@ -379,11 +401,16 @@ class ScoutActivities:
                     self._source_repository.list_candidates(
                         session,
                         task.id,
-                        limit=10,
+                        limit=None,
                     )
                 )
 
-        message = build_scout_results(UiLocale(task.locale), result, candidates)
+        message = build_scout_results(
+            UiLocale(task.locale),
+            result,
+            candidates,
+            task_id=task.id,
+        )
         try:
             state = await self._messenger.send_message(
                 task.telegram_update_id,
@@ -466,7 +493,7 @@ class ScoutActivities:
 
     def _result_for_task(self, session: Session, task: SourceTask) -> ScoutRunResult:
         if task.state is SourceTaskState.COMPLETED:
-            candidates = self._source_repository.list_candidates(session, task.id, limit=100)
+            candidates = self._source_repository.list_candidates(session, task.id, limit=None)
             return ScoutRunResult(
                 operation_key=task.operation_key.value,
                 state=SourceTaskState.COMPLETED,
@@ -515,3 +542,31 @@ def _deduplicate(candidates: list[CandidateContent]) -> tuple[CandidateContent, 
         seen.add(key)
         result.append(candidate)
     return tuple(result)
+
+
+def _align_optional_floats(
+    candidates: tuple[CandidateContent, ...],
+    evidence_candidates: tuple[CandidateContent, ...],
+    values: tuple[float | None, ...],
+) -> tuple[float | None, ...]:
+    if len(evidence_candidates) != len(values):
+        raise ValueError("evidence score count must match evidence candidate count")
+    by_key = {
+        (candidate.source, candidate.source_id): value
+        for candidate, value in zip(evidence_candidates, values, strict=True)
+    }
+    return tuple(by_key.get((candidate.source, candidate.source_id)) for candidate in candidates)
+
+
+def _align_optional_texts(
+    candidates: tuple[CandidateContent, ...],
+    evidence_candidates: tuple[CandidateContent, ...],
+    values: tuple[str | None, ...],
+) -> tuple[str | None, ...]:
+    if len(evidence_candidates) != len(values):
+        raise ValueError("evidence text count must match evidence candidate count")
+    by_key = {
+        (candidate.source, candidate.source_id): value
+        for candidate, value in zip(evidence_candidates, values, strict=True)
+    }
+    return tuple(by_key.get((candidate.source, candidate.source_id)) for candidate in candidates)
