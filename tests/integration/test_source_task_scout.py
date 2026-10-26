@@ -32,9 +32,11 @@ class FakeXConnector:
 
     def __init__(self) -> None:
         self.calls = 0
+        self.query_variants: list[tuple[str, ...]] = []
 
     async def search(self, request: ScoutSearchRequest) -> tuple[CandidateContent, ...]:
         self.calls += 1
+        self.query_variants.append(request.query_variants)
         return (
             CandidateContent(
                 id=None,
@@ -62,12 +64,15 @@ class FakeXConnector:
 
 class CountingTranslator:
     def __init__(self) -> None:
-        self.calls = 0
+        self.calls: list[str] = []
 
     async def translate_to_english(self, intent: str) -> str | None:
-        self.calls += 1
-        assert intent == "Найди видео про ночной Бангкок"
-        return "Bangkok night"
+        self.calls.append(intent)
+        if intent == "Найди видео про ночной Бангкок":
+            return "Bangkok night"
+        if intent == "Найди видео про ночной":
+            return "night"
+        raise AssertionError(f"unexpected translation input: {intent}")
 
 
 @pytest.mark.asyncio
@@ -148,8 +153,17 @@ async def test_ai_search_task_is_durable_metered_and_activity_retry_is_idempoten
 
         assert first_result.candidate_count == 1
         assert second_result.candidate_count == 1
-        assert connector.calls == 1
-        assert translator.calls == 1
+        assert connector.calls == 4
+        assert connector.query_variants == [
+            ("ночной Бангкок",),
+            ("ночной Бангкок", "Bangkok night"),
+            ("ночной",),
+            ("ночной", "night"),
+        ]
+        assert translator.calls == [
+            "Найди видео про ночной Бангкок",
+            "Найди видео про ночной",
+        ]
 
         repository = SourceTaskRepository()
         with (
