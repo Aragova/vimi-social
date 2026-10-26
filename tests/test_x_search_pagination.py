@@ -38,7 +38,7 @@ def _page(start: int, count: int, *, next_token: str | None = None) -> dict[str,
 
 
 @pytest.mark.asyncio
-async def test_x_recent_search_follows_next_token_until_requested_pool_is_filled() -> None:
+async def test_x_recent_search_follows_next_token_and_keeps_already_read_overflow() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -61,10 +61,14 @@ async def test_x_recent_search_follows_next_token_until_requested_pool_is_filled
         )
     )
 
-    assert len(candidates) == 15
-    assert [candidate.source_id for candidate in candidates] == [str(i) for i in range(1, 16)]
+    # X requires at least 10 posts per page. The second request therefore reads
+    # 10 even though only 5 remained in the nominal budget. Those posts have
+    # already been returned/billed, so ViMi keeps them instead of discarding them.
+    assert len(candidates) == 20
+    assert [candidate.source_id for candidate in candidates] == [str(i) for i in range(1, 21)]
     assert len(requests) == 2
     assert requests[1].url.params["next_token"] == "page-2"
+    assert requests[1].url.params["max_results"] == "10"
     await http_client.aclose()
 
 
