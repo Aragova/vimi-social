@@ -62,6 +62,18 @@ async def test_multilingual_planner_keeps_ru_and_adds_en_variant() -> None:
 
 
 @pytest.mark.asyncio
+async def test_relaxed_queries_strip_unbalanced_search_syntax() -> None:
+    planner = MultilingualQueryPlanner()
+    plan = await planner.plan('Find videos about "night market" Bangkok', ("en",))
+
+    assert plan.relaxation_queries == (
+        '"night market" Bangkok',
+        "night market",
+        "night",
+    )
+
+
+@pytest.mark.asyncio
 async def test_multilingual_planner_normalizes_local_full_intent_translation() -> None:
     translator = FakeTranslator("Find a video of the night Bangkok")
     planner = MultilingualQueryPlanner(translator)
