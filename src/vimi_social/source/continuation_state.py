@@ -1,6 +1,9 @@
+import hashlib
 from dataclasses import dataclass
 from typing import cast
+from uuid import UUID
 
+from vimi_social.domain.identity import OperationKey
 from vimi_social.domain.source import CandidateContent
 
 
@@ -14,6 +17,11 @@ class ScoutContinuationState:
     search_scope: str
     next_token: str
     generation: int
+
+
+def continuation_request_key(task_id: UUID, next_token: str) -> OperationKey:
+    token_fingerprint = hashlib.sha256(next_token.encode("utf-8")).hexdigest()[:16]
+    return OperationKey(f"source-task-more:{task_id}:{token_fingerprint}")
 
 
 def find_scout_continuation_state(
