@@ -14,7 +14,7 @@ class ScoutWorkflow:
             "execute_scout_task",
             workflow_input,
             result_type=ScoutRunResult,
-            start_to_close_timeout=timedelta(minutes=2),
+            start_to_close_timeout=timedelta(minutes=5),
             retry_policy=RetryPolicy(
                 initial_interval=timedelta(seconds=2),
                 maximum_interval=timedelta(seconds=10),
