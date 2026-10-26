@@ -68,7 +68,13 @@ class XSourceConnector:
             if next_token is not None:
                 params["next_token"] = next_token
 
-            payload = await self._fetch_page(params, headers)
+            try:
+                payload = await self._fetch_page(params, headers)
+            except (SourceConnectorRateLimited, SourceConnectorRejected, SourceConnectorUnavailable):
+                if candidates:
+                    break
+                raise
+
             data = _object_list(payload.get("data"))
             posts_read += len(data)
             includes_obj = payload.get("includes")
