@@ -3,6 +3,7 @@ import pytest
 
 from vimi_social.ai.client import LocalAiClient
 from vimi_social.domain.source import AdultClassification, CandidateContent
+from vimi_social.source.ocr import PreviewOcrUnavailable
 from vimi_social.source.semantic import SemanticRelevanceUnavailable
 from vimi_social.source.visual import VisualRelevanceUnavailable
 
@@ -75,6 +76,24 @@ async def test_local_ai_semantic_scores_preserve_candidate_alignment() -> None:
 
 
 @pytest.mark.asyncio
+async def test_local_ai_text_scores_preserve_missing_ocr_alignment() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/semantic-score"
+        return httpx.Response(200, json={"scores": [0.91, 0.73]})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = LocalAiClient("http://local-ai:8090", client=http_client)
+
+    scores = await client.score_texts(
+        ("Bangkok at night",),
+        ("BANGKOK NIGHT MARKET", None, "BLOCKCHAIN WEEK BANGKOK"),
+    )
+
+    assert scores == (0.91, None, 0.73)
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_local_ai_visual_scores_preserve_preview_candidate_alignment() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/visual-score"
@@ -100,6 +119,37 @@ async def test_local_ai_visual_scores_preserve_preview_candidate_alignment() -> 
     scores = await client.score_preview_candidates(("Bangkok at night",), candidates)
 
     assert scores == (0.42, None, None)
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_local_ai_preview_ocr_preserves_candidate_alignment() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/preview-ocr"
+        return httpx.Response(
+            200,
+            json={"texts": ["BANGKOK NIGHT MARKET", None]},
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = LocalAiClient("http://visual-ai:8090", client=http_client)
+    candidates = (
+        _candidate(
+            "night-city",
+            "Bangkok skyline at night",
+            preview_image_url="https://pbs.twimg.com/night-city.jpg",
+        ),
+        _candidate("missing-preview", "Bangkok conference"),
+        _candidate(
+            "no-text",
+            "Bangkok street",
+            preview_image_url="https://pbs.twimg.com/no-text.jpg",
+        ),
+    )
+
+    texts = await client.extract_preview_texts(candidates)
+
+    assert texts == ("BANGKOK NIGHT MARKET", None, None)
     await http_client.aclose()
 
 
@@ -136,6 +186,27 @@ async def test_local_ai_visual_failure_is_explicit_for_fail_open_scout() -> None
                     preview_image_url="https://pbs.twimg.com/candidate.jpg",
                 ),
             ),
+        )
+
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_local_ai_preview_ocr_failure_is_explicit_for_fail_open_scout() -> None:
+    http_client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(503))
+    )
+    client = LocalAiClient("http://visual-ai:8090", client=http_client)
+
+    with pytest.raises(PreviewOcrUnavailable):
+        await client.extract_preview_texts(
+            (
+                _candidate(
+                    "candidate",
+                    "Bangkok skyline",
+                    preview_image_url="https://pbs.twimg.com/candidate.jpg",
+                ),
+            )
         )
 
     await http_client.aclose()

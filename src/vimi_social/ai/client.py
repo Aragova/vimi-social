@@ -3,6 +3,7 @@ from typing import cast
 import httpx
 
 from vimi_social.domain.source import CandidateContent
+from vimi_social.source.ocr import PreviewOcrUnavailable
 from vimi_social.source.semantic import SemanticRelevanceUnavailable
 from vimi_social.source.visual import VisualRelevanceUnavailable
 
@@ -73,38 +74,37 @@ class LocalAiClient:
         if not documents:
             return tuple(scores)
 
-        try:
-            response = await self._client.post(
-                f"{self._base_url}/v1/semantic-score",
-                json={
-                    "query_variants": list(query_variants),
-                    "documents": documents,
-                },
-            )
-        except httpx.HTTPError as error:
-            raise SemanticRelevanceUnavailable("local semantic AI transport failed") from error
-        if response.status_code >= 400:
-            raise SemanticRelevanceUnavailable(
-                f"local semantic AI failed with HTTP {response.status_code}"
-            )
-        try:
-            payload_obj: object = response.json()
-        except ValueError as error:
-            raise SemanticRelevanceUnavailable("local semantic AI returned invalid JSON") from error
-        if not isinstance(payload_obj, dict):
-            raise SemanticRelevanceUnavailable("local semantic AI returned invalid response shape")
-        payload = cast(dict[str, object], payload_obj)
-        raw_scores = payload.get("scores")
-        if not isinstance(raw_scores, list):
-            raise SemanticRelevanceUnavailable("local semantic AI omitted scores")
-        values = cast(list[object], raw_scores)
-        if len(values) != len(active_indices):
-            raise SemanticRelevanceUnavailable("local semantic AI returned wrong score count")
+        values = await self._semantic_scores(query_variants, tuple(documents))
+        for index, score in zip(active_indices, values, strict=True):
+            scores[index] = score
+        return tuple(scores)
 
-        for index, raw_score in zip(active_indices, values, strict=True):
-            if not isinstance(raw_score, int | float) or isinstance(raw_score, bool):
-                raise SemanticRelevanceUnavailable("local semantic AI returned non-numeric score")
-            scores[index] = max(-1.0, min(1.0, float(raw_score)))
+    async def score_texts(
+        self,
+        query_variants: tuple[str, ...],
+        texts: tuple[str | None, ...],
+    ) -> tuple[float | None, ...]:
+        if not texts:
+            return ()
+
+        active_indices: list[int] = []
+        documents: list[str] = []
+        scores: list[float | None] = [None] * len(texts)
+        for index, raw_text in enumerate(texts):
+            if not isinstance(raw_text, str):
+                continue
+            text = " ".join(raw_text.split()).strip()
+            if not text:
+                continue
+            active_indices.append(index)
+            documents.append(text)
+
+        if not documents:
+            return tuple(scores)
+
+        values = await self._semantic_scores(query_variants, tuple(documents))
+        for index, score in zip(active_indices, values, strict=True):
+            scores[index] = score
         return tuple(scores)
 
     async def score_preview_candidates(
@@ -165,6 +165,103 @@ class LocalAiClient:
             if not isinstance(raw_score, int | float) or isinstance(raw_score, bool):
                 raise VisualRelevanceUnavailable("local visual AI returned non-numeric score")
             scores[index] = max(-1.0, min(1.0, float(raw_score)))
+        return tuple(scores)
+
+    async def extract_preview_texts(
+        self,
+        candidates: tuple[CandidateContent, ...],
+    ) -> tuple[str | None, ...]:
+        if not candidates:
+            return ()
+
+        active_indices: list[int] = []
+        preview_urls: list[str] = []
+        texts: list[str | None] = [None] * len(candidates)
+        for index, candidate in enumerate(candidates):
+            raw_url = candidate.connector_metadata.get("preview_image_url")
+            if not isinstance(raw_url, str):
+                continue
+            preview_url = raw_url.strip()
+            if not preview_url:
+                continue
+            active_indices.append(index)
+            preview_urls.append(preview_url)
+
+        if not preview_urls:
+            return tuple(texts)
+
+        try:
+            response = await self._client.post(
+                f"{self._base_url}/v1/preview-ocr",
+                json={"preview_image_urls": preview_urls},
+            )
+        except httpx.HTTPError as error:
+            raise PreviewOcrUnavailable("local preview OCR transport failed") from error
+        if response.status_code >= 400:
+            raise PreviewOcrUnavailable(
+                f"local preview OCR failed with HTTP {response.status_code}"
+            )
+        try:
+            payload_obj: object = response.json()
+        except ValueError as error:
+            raise PreviewOcrUnavailable("local preview OCR returned invalid JSON") from error
+        if not isinstance(payload_obj, dict):
+            raise PreviewOcrUnavailable("local preview OCR returned invalid response shape")
+        payload = cast(dict[str, object], payload_obj)
+        raw_texts = payload.get("texts")
+        if not isinstance(raw_texts, list):
+            raise PreviewOcrUnavailable("local preview OCR omitted texts")
+        values = cast(list[object], raw_texts)
+        if len(values) != len(active_indices):
+            raise PreviewOcrUnavailable("local preview OCR returned wrong text count")
+
+        for index, raw_text in zip(active_indices, values, strict=True):
+            if raw_text is None:
+                continue
+            if not isinstance(raw_text, str):
+                raise PreviewOcrUnavailable("local preview OCR returned non-text output")
+            normalized = " ".join(raw_text.split()).strip()
+            texts[index] = normalized or None
+        return tuple(texts)
+
+    async def _semantic_scores(
+        self,
+        query_variants: tuple[str, ...],
+        documents: tuple[str, ...],
+    ) -> tuple[float, ...]:
+        try:
+            response = await self._client.post(
+                f"{self._base_url}/v1/semantic-score",
+                json={
+                    "query_variants": list(query_variants),
+                    "documents": list(documents),
+                },
+            )
+        except httpx.HTTPError as error:
+            raise SemanticRelevanceUnavailable("local semantic AI transport failed") from error
+        if response.status_code >= 400:
+            raise SemanticRelevanceUnavailable(
+                f"local semantic AI failed with HTTP {response.status_code}"
+            )
+        try:
+            payload_obj: object = response.json()
+        except ValueError as error:
+            raise SemanticRelevanceUnavailable("local semantic AI returned invalid JSON") from error
+        if not isinstance(payload_obj, dict):
+            raise SemanticRelevanceUnavailable("local semantic AI returned invalid response shape")
+        payload = cast(dict[str, object], payload_obj)
+        raw_scores = payload.get("scores")
+        if not isinstance(raw_scores, list):
+            raise SemanticRelevanceUnavailable("local semantic AI omitted scores")
+        values = cast(list[object], raw_scores)
+        if len(values) != len(documents):
+            raise SemanticRelevanceUnavailable("local semantic AI returned wrong score count")
+
+        scores: list[float] = []
+        for raw_score in values:
+            if not isinstance(raw_score, int | float) or isinstance(raw_score, bool):
+                raise SemanticRelevanceUnavailable("local semantic AI returned non-numeric score")
+            scores.append(max(-1.0, min(1.0, float(raw_score))))
         return tuple(scores)
 
     async def aclose(self) -> None:

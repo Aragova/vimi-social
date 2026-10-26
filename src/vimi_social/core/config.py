@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     visual_ai_url: str | None = None
     visual_ai_timeout_seconds: float = 45.0
     visual_relevance_weight: float = 0.15
+    preview_ocr_weight: float = 0.10
     semantic_relevance_min_score: float = 0.18
     allow_paid_ai_fallback: bool = False
     search_translation_api_key: str | None = None

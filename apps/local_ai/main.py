@@ -47,6 +47,16 @@ class VisualScoreResponse(BaseModel):
     model: str
 
 
+class PreviewOcrRequest(BaseModel):
+    preview_image_urls: list[str] = Field(min_length=1, max_length=100)
+
+
+class PreviewOcrResponse(BaseModel):
+    texts: list[str | None]
+    provider: str
+    model: str
+
+
 class LocalModels:
     def __init__(self) -> None:
         self._cache_dir = Path(os.getenv("VIMI_LOCAL_AI_CACHE", "/var/lib/vimi/ai-models"))
@@ -251,6 +261,12 @@ async def model_manifest() -> dict[str, object]:
             "requires_paid_api": False,
             "input_scope": "official_connector_preview_only",
         },
+        "preview_ocr": {
+            "provider": "local-rapidocr",
+            "model": visual_models.ocr_model,
+            "requires_paid_api": False,
+            "input_scope": "official_connector_preview_only",
+        },
     }
 
 
@@ -302,4 +318,20 @@ async def visual_score(request: VisualScoreRequest) -> VisualScoreResponse:
         scores=scores,
         provider="local-onnxruntime",
         model=visual_models.model,
+    )
+
+
+@app.post("/v1/preview-ocr", response_model=PreviewOcrResponse)
+async def preview_ocr(request: PreviewOcrRequest) -> PreviewOcrResponse:
+    try:
+        texts = await asyncio.to_thread(
+            visual_models.extract_texts,
+            request.preview_image_urls,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="local preview OCR unavailable") from error
+    return PreviewOcrResponse(
+        texts=texts,
+        provider="local-rapidocr",
+        model=visual_models.ocr_model,
     )

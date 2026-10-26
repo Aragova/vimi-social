@@ -24,6 +24,7 @@ from vimi_social.source.connectors import (
     SourceConnectorUnavailable,
 )
 from vimi_social.source.curator import CandidateCurator, restore_curator_order
+from vimi_social.source.ocr import PreviewOcrExtractor, PreviewOcrUnavailable
 from vimi_social.source.query_planner import MultilingualQueryPlanner
 from vimi_social.source.repository import SourceTaskRepository
 from vimi_social.source.scout_attempts import ScoutAttemptStore
@@ -58,7 +59,9 @@ class ScoutActivities:
         curator: CandidateCurator | None = None,
         semantic_scorer: SemanticRelevanceScorer | None = None,
         visual_scorer: VisualRelevanceScorer | None = None,
+        preview_ocr_extractor: PreviewOcrExtractor | None = None,
         visual_relevance_weight: float = 0.15,
+        preview_ocr_weight: float = 0.10,
         semantic_minimum_relevance: float = 0.0,
     ) -> None:
         self._session_factory = session_factory
@@ -71,7 +74,9 @@ class ScoutActivities:
         self._curator = curator or CandidateCurator()
         self._semantic_scorer = semantic_scorer
         self._visual_scorer = visual_scorer
+        self._preview_ocr_extractor = preview_ocr_extractor
         self._visual_relevance_weight = max(0.0, min(0.40, visual_relevance_weight))
+        self._preview_ocr_weight = max(0.0, min(0.25, preview_ocr_weight))
         self._semantic_minimum_relevance = max(0.0, min(1.0, semantic_minimum_relevance))
 
     @activity.defn(name="execute_scout_task")
@@ -178,6 +183,29 @@ class ScoutActivities:
             except VisualRelevanceUnavailable:
                 visual_scores = None
 
+        preview_ocr_texts: tuple[str | None, ...] | None = None
+        preview_ocr_semantic_scores: tuple[float | None, ...] | None = None
+        if self._preview_ocr_extractor is not None and normalized:
+            try:
+                preview_ocr_texts = await self._preview_ocr_extractor.extract_preview_texts(
+                    normalized
+                )
+            except PreviewOcrUnavailable:
+                preview_ocr_texts = None
+
+        if (
+            preview_ocr_texts is not None
+            and self._semantic_scorer is not None
+            and any(text for text in preview_ocr_texts)
+        ):
+            try:
+                preview_ocr_semantic_scores = await self._semantic_scorer.score_texts(
+                    query_plan.query_variants,
+                    preview_ocr_texts,
+                )
+            except SemanticRelevanceUnavailable:
+                preview_ocr_semantic_scores = None
+
         curated = self._curator.rank(
             normalized,
             query_variants=query_plan.query_variants,
@@ -185,7 +213,10 @@ class ScoutActivities:
             limit=request.max_results,
             semantic_scores=semantic_scores,
             visual_scores=visual_scores,
+            preview_ocr_texts=preview_ocr_texts,
+            preview_ocr_semantic_scores=preview_ocr_semantic_scores,
             visual_weight=self._visual_relevance_weight,
+            preview_ocr_weight=self._preview_ocr_weight,
             minimum_relevance=self._semantic_minimum_relevance,
         )
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):

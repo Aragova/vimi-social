@@ -13,6 +13,7 @@ from vimi_social.media.secure_ingest.models import FetchTimeouts, OneHopTranspor
 from vimi_social.media.secure_ingest.transport import PinnedAiohttpTransport
 
 _DEFAULT_VISUAL_MODEL = "Xenova/siglip-base-patch16-224"
+_DEFAULT_OCR_MODEL = "RapidOCR/PP-OCRv6-small"
 _ALLOWED_PREVIEW_HOSTS = frozenset({"pbs.twimg.com"})
 _MAX_PREVIEW_BYTES = 4 * 1024 * 1024
 _PREVIEW_CHUNK_SIZE = 64 * 1024
@@ -21,10 +22,13 @@ _PREVIEW_TIMEOUTS = FetchTimeouts(
     read_seconds=10.0,
     total_seconds=15.0,
 )
+_OCR_TEXT_SCORE = 0.55
+_MAX_OCR_LINES = 32
+_MAX_OCR_CHARS = 2000
 
 
 class SiglipPreviewScorer:
-    """CPU-only SigLIP scorer for official X preview images.
+    """CPU-only preview evidence for official X image previews.
 
     Scout discovery is intentionally limited to connector-provided previews. Full video
     acquisition remains behind the existing rights gate and media-preparation workflow.
@@ -42,13 +46,20 @@ class SiglipPreviewScorer:
         self._destination_policy = destination_policy or DestinationPolicy(SystemHostResolver())
         self._transport = transport or PinnedAiohttpTransport()
         self._lock = Lock()
+        self._ocr_model_lock = Lock()
+        self._ocr_inference_lock = Lock()
         self._text_session: Any | None = None
         self._vision_session: Any | None = None
         self._tokenizer: Any | None = None
+        self._ocr_engine: Any | None = None
 
     @property
     def model(self) -> str:
         return self._model_repo
+
+    @property
+    def ocr_model(self) -> str:
+        return _DEFAULT_OCR_MODEL
 
     def score(
         self,
@@ -72,6 +83,21 @@ class SiglipPreviewScorer:
             except Exception:
                 scores.append(None)
         return scores
+
+    def extract_texts(self, preview_image_urls: list[str]) -> list[str | None]:
+        engine = self._ensure_ocr_engine()
+        texts: list[str | None] = []
+        for preview_url in preview_image_urls:
+            try:
+                data = asyncio.run(self._download_preview(preview_url))
+                with self._ocr_inference_lock:
+                    result = engine(data, use_cls=False)
+                lines = self._ocr_lines(result)
+                merged = " | ".join(lines)
+                texts.append(merged[:_MAX_OCR_CHARS] or None)
+            except Exception:
+                texts.append(None)
+        return texts
 
     def _configure_cache_environment(self) -> None:
         huggingface_home = self._cache_dir / "huggingface"
@@ -138,6 +164,28 @@ class SiglipPreviewScorer:
             self._vision_session = vision_session
             self._tokenizer = tokenizer
             return text_session, vision_session, tokenizer
+
+    def _ensure_ocr_engine(self) -> Any:
+        if self._ocr_engine is not None:
+            return self._ocr_engine
+
+        with self._ocr_model_lock:
+            if self._ocr_engine is not None:
+                return self._ocr_engine
+            rapidocr_module = cast(Any, import_module("rapidocr"))
+            engine_factory = cast(Callable[..., Any], rapidocr_module.RapidOCR)
+            model_root = self._cache_dir / "rapidocr"
+            model_root.mkdir(parents=True, exist_ok=True)
+            self._ocr_engine = engine_factory(params=self._ocr_parameters(model_root))
+            return self._ocr_engine
+
+    @staticmethod
+    def _ocr_parameters(model_root: Path) -> dict[str, object]:
+        return {
+            "Global.model_root_dir": str(model_root),
+            "Global.text_score": _OCR_TEXT_SCORE,
+            "Global.use_cls": False,
+        }
 
     def _text_embeddings(
         self,
@@ -232,6 +280,42 @@ class SiglipPreviewScorer:
             return bytes(data)
         finally:
             await response.close()
+
+    @staticmethod
+    def _ocr_lines(result: Any) -> tuple[str, ...]:
+        raw_texts_obj = getattr(result, "txts", None)
+        raw_scores_obj = getattr(result, "scores", None)
+        if not isinstance(raw_texts_obj, (list, tuple)):
+            return ()
+
+        raw_texts = cast(list[object] | tuple[object, ...], raw_texts_obj)
+        raw_scores = (
+            cast(list[object] | tuple[object, ...], raw_scores_obj)
+            if isinstance(raw_scores_obj, (list, tuple))
+            else None
+        )
+
+        lines: list[str] = []
+        for index, raw_text in enumerate(raw_texts):
+            text = " ".join(str(raw_text).split()).strip()
+            if not text:
+                continue
+            confidence = 1.0
+            if raw_scores is not None and index < len(raw_scores):
+                raw_confidence = raw_scores[index]
+                if (
+                    isinstance(raw_confidence, int | float)
+                    and not isinstance(raw_confidence, bool)
+                ):
+                    confidence = float(raw_confidence)
+                else:
+                    confidence = 0.0
+            if confidence < _OCR_TEXT_SCORE or text in lines:
+                continue
+            lines.append(text)
+            if len(lines) >= _MAX_OCR_LINES:
+                break
+        return tuple(lines)
 
     @staticmethod
     def _normalize_rows(matrix: Any, np: Any) -> Any:
