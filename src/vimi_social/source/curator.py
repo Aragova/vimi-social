@@ -9,6 +9,8 @@ _URL = re.compile(r"https?://\S+", re.IGNORECASE)
 _HASHTAG = re.compile(r"(?<!\w)#[^\s#]+", re.UNICODE)
 _REPEATED_PUNCTUATION = re.compile(r"[!?]{4,}")
 _E5_SIMILARITY_FLOOR = 0.70
+_RETRIEVAL_FULL_QUERY_MINIMUM = 0.48
+_RETRIEVAL_BROADENING_SPAN = 0.16
 
 
 class CandidateCurator:
@@ -63,7 +65,8 @@ class CandidateCurator:
                 else None
             )
             text_relevance = _fused_text_relevance(lexical_relevance, semantic_relevance)
-            if semantic_relevance is not None and text_relevance < minimum_relevance:
+            candidate_minimum = _candidate_minimum_relevance(candidate, minimum_relevance)
+            if semantic_relevance is not None and text_relevance < candidate_minimum:
                 continue
 
             visual_raw = visual_scores[index] if visual_scores is not None else None
@@ -103,6 +106,7 @@ class CandidateCurator:
                 metadata["curator_semantic_relevance_score"] = semantic_relevance
                 metadata["curator_semantic_raw_score"] = round(semantic_raw, 6)
             metadata["curator_text_relevance_score"] = text_relevance
+            metadata["curator_minimum_text_relevance_score"] = candidate_minimum
             if visual_raw is not None:
                 metadata["curator_visual_raw_score"] = round(visual_raw, 6)
             if visual_relevance is not None:
@@ -148,6 +152,22 @@ def restore_curator_order(
         return (1, index, index)
 
     return tuple(candidate for _, candidate in sorted(indexed, key=key))
+
+
+def _candidate_minimum_relevance(candidate: CandidateContent, configured: float) -> float:
+    configured_minimum = max(0.0, min(1.0, configured))
+    raw_specificity = candidate.connector_metadata.get("retrieval_specificity")
+    if (
+        not isinstance(raw_specificity, int | float)
+        or isinstance(raw_specificity, bool)
+    ):
+        return configured_minimum
+
+    specificity = max(0.0, min(1.0, float(raw_specificity)))
+    dynamic_minimum = _RETRIEVAL_FULL_QUERY_MINIMUM + (
+        _RETRIEVAL_BROADENING_SPAN * (1.0 - specificity)
+    )
+    return round(max(configured_minimum, min(1.0, dynamic_minimum)), 6)
 
 
 def _fused_text_relevance(lexical: float, semantic: float | None) -> float:
