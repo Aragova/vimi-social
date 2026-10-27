@@ -1,19 +1,43 @@
+from contextlib import suppress
 from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError
 
+from vimi_social.domain.interest import XInterestSyncResult
 from vimi_social.domain.source import (
     ScoutContinuationWorkflowInput,
     ScoutRunResult,
     ScoutWorkflowInput,
 )
 
+_X_INTEREST_SYNC_PATCH = "scout-x-interest-sync-v1"
+
 
 @workflow.defn
 class ScoutWorkflow:
     @workflow.run
     async def run(self, workflow_input: ScoutWorkflowInput) -> ScoutRunResult:
+        # Preserve deterministic replay for Scout histories created before the
+        # personalization activity existed. New histories record this patch marker
+        # and run the best-effort profile refresh before provider discovery.
+        if workflow.patched(_X_INTEREST_SYNC_PATCH):
+            # User-context reads can incur provider charges. Refresh is best-effort,
+            # never retried automatically, and must not block an otherwise valid
+            # Scout run. schedule_to_close_timeout also bounds queue wait when the
+            # destination worker is unavailable or backlogged.
+            with suppress(ActivityError):
+                await workflow.execute_activity(
+                    "sync_x_user_interest_profile",
+                    workflow_input,
+                    result_type=XInterestSyncResult,
+                    task_queue=workflow_input.interest_task_queue,
+                    schedule_to_close_timeout=timedelta(minutes=2),
+                    start_to_close_timeout=timedelta(minutes=2),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
+
         result = await workflow.execute_activity(
             "execute_scout_task",
             workflow_input,

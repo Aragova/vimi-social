@@ -9,7 +9,7 @@ It is intentionally a staging topology, not the final horizontally scaled produc
 - Telegram bot FastAPI process.
 - Core Temporal worker.
 - Media Temporal worker with ffmpeg/ffprobe and optional visual moderation.
-- Destination Temporal worker for X publication/reconciliation.
+- Destination Temporal worker for X publication/reconciliation and user-context interest sync.
 - Internal API process.
 - PostgreSQL 17.
 - Temporal 1.27.2.
@@ -18,7 +18,7 @@ It is intentionally a staging topology, not the final horizontally scaled produc
 
 Only ports 80/443 are published by the staging compose file. PostgreSQL and Temporal remain on the internal Docker network. Processes that must call Telegram/X/OpenAI also join a separate egress-capable Docker bridge; they still publish no host ports.
 
-The Compose model deliberately scopes credentials by process: Caddy does not receive application secrets; source-search credentials stay with the core worker; visual-moderation credentials, when configured, stay with the media worker; and the X publication credential stays with the destination worker.
+The Compose model deliberately scopes credentials by process: Caddy does not receive application secrets; source-search credentials stay with the core worker; visual-moderation credentials, when configured, stay with the media worker; and the X user-context/publication credential stays with the destination worker.
 
 ## VM prerequisites
 
@@ -65,7 +65,7 @@ Replace every `CHANGE_ME` value and fill these external credentials:
 - `VIMI_TELEGRAM_WEBHOOK_SECRET`: random webhook secret.
 - `VIMI_X_BEARER_TOKEN`: X source-search credential.
 - `VIMI_OPENAI_API_KEY`: optional key used by sampled-frame visual moderation; leave it blank to disable that OpenAI-backed stage.
-- `VIMI_DEST_X_PRIMARY_TOKEN`: user-context X credential allowed to upload media and create posts.
+- `VIMI_DEST_X_PRIMARY_TOKEN`: user-context X credential allowed to upload media, create posts, and read the explicitly authorized personalization signals.
 
 Database passwords are passed to PostgreSQL through environment variables and to psycopg through `PGPASSWORD`; they are not embedded in application DSNs.
 
@@ -164,7 +164,7 @@ with the configured Telegram secret-token header and verifies the resulting webh
 Open the dedicated staging bot in Telegram and send `/start`.
 This creates/resolves the Telegram identity, user, workspace, tenant, locale, and initial usage capacity through the normal application path.
 
-To identify the new staging tenant while OAuth/account-management UI is not implemented yet, resolve each Telegram identity through its workspace membership using the same default-first ordering as the application:
+To identify the staging tenant and user while OAuth/account-management UI is not implemented yet, resolve each Telegram identity through its workspace membership using the same default-first ordering as the application:
 
 ```bash
 docker compose \
@@ -172,14 +172,51 @@ docker compose \
   -f infra/docker/docker-compose.staging.yml \
   exec postgres \
   psql -U vimi_bootstrap -d vimi \
-  -c "SELECT ti.telegram_user_id, wm.tenant_id, ti.username, ti.last_seen_at FROM telegram_identity AS ti JOIN LATERAL (SELECT tenant_id FROM workspace_membership WHERE user_id = ti.user_id ORDER BY is_default DESC, created_at ASC LIMIT 1) AS wm ON TRUE ORDER BY ti.last_seen_at DESC;"
+  -c "SELECT ti.telegram_user_id, ti.user_id, wm.tenant_id, ti.username, ti.last_seen_at FROM telegram_identity AS ti JOIN LATERAL (SELECT tenant_id FROM workspace_membership WHERE user_id = ti.user_id ORDER BY is_default DESC, created_at ASC LIMIT 1) AS wm ON TRUE ORDER BY ti.last_seen_at DESC;"
 ```
 
-Use the tenant UUID belonging to the staging Telegram account only.
+Use the tenant UUID and user UUID belonging to the staging Telegram account only.
 
-## 9. Provision one staging X destination
+## 9. Authorize and provision one staging X account
 
-Until customer OAuth/account-management lands, provision one destination account through the repository helper. The helper stores only the credential reference; the actual X token remains available only to the destination worker as `VIMI_DEST_X_PRIMARY_TOKEN`.
+Until customer OAuth/account-management lands, staging uses the repository OAuth helper. Re-authorize whenever the requested X OAuth scopes change. The current helper requests read scopes for follows, likes, Lists, and bookmarks in addition to the existing post/user/media/offline scopes. The token value is written to `.env.staging` and is never printed back after exchange.
+
+For the standalone staging topology in this runbook, Caddy does not expose an nginx access log. Use manual callback mode:
+
+```bash
+PYTHONPATH=src python3 scripts/configure_staging_x_oauth.py --manual-callback
+```
+
+Open the printed X authorization URL. After X redirects the browser back to `https://<VIMI_PUBLIC_HOST>/?state=...&code=...`, the root route may display `Not Found`; that is expected. Copy the complete URL from the browser address bar and paste it into the helper prompt. The helper validates the OAuth state before exchanging the short-lived code.
+
+On the nginx co-host staging topology, the helper can capture the callback automatically from `/var/log/nginx/access.log`, so use:
+
+```bash
+PYTHONPATH=src python3 scripts/configure_staging_x_oauth.py
+```
+
+After either authorization flow succeeds, recreate the destination worker before any personalization or publication smoke test. The OAuth helper updates `.env.staging`, while a running container keeps its previous environment until it is recreated.
+
+For standalone staging:
+
+```bash
+docker compose \
+  --env-file .env.staging \
+  -f infra/docker/docker-compose.staging.yml \
+  up -d --no-deps --force-recreate destination-worker
+```
+
+For nginx co-host staging, include the co-host override:
+
+```bash
+docker compose \
+  --env-file .env.staging \
+  -f infra/docker/docker-compose.staging.yml \
+  -f infra/docker/docker-compose.staging.cohost.yml \
+  up -d --no-deps --force-recreate destination-worker
+```
+
+Then provision the X destination and explicitly bind it to the workspace user who authorized that X account. `--user-id` is mandatory; the helper intentionally does not query `workspace_membership` through the application role.
 
 ```bash
 docker compose \
@@ -188,27 +225,31 @@ docker compose \
   exec bot \
   python scripts/provision_staging_x_destination.py \
   --tenant-id YOUR_TENANT_UUID \
+  --user-id YOUR_USER_UUID \
   --external-account-id staging-primary \
   --display-name "Staging X"
 ```
+
+The database stores only the credential reference. The actual X token remains available only to the destination worker as `VIMI_DEST_X_PRIMARY_TOKEN`.
 
 ## 10. First end-to-end smoke test
 
 Run the real product path through Telegram:
 
 1. Start an AI Search task.
-2. Confirm that Scout returns an X candidate.
-3. Select a candidate that you are authorized to reuse.
-4. Confirm the rights/provenance gate when requested.
-5. Wait for secure media acquisition and MediaProbe.
-6. Confirm scene detection/ranking completes.
-7. Confirm sampled-frame visual moderation runs when `VIMI_OPENAI_API_KEY` is configured; otherwise confirm the rest of the media path proceeds without that optional stage.
-8. Confirm destination preflight and VariantPlanner complete.
-9. Confirm the rendered/passthrough video preview arrives in Telegram.
-10. Confirm the publish button is shown only for an allowed policy decision.
-11. Press the X publish approval button.
-12. Confirm X media upload finishes and exactly one post appears in the staging X account.
-13. Confirm the Telegram result reports the final publication state.
+2. Confirm that the X user-interest profile sync is best-effort and does not block Scout when unavailable.
+3. Confirm that Scout returns X candidates and that personalized ranking metadata appears when a fresh profile exists.
+4. Select a candidate that you are authorized to reuse.
+5. Confirm the rights/provenance gate when requested.
+6. Wait for secure media acquisition and MediaProbe.
+7. Confirm scene detection/ranking completes.
+8. Confirm sampled-frame visual moderation runs when `VIMI_OPENAI_API_KEY` is configured; otherwise confirm the rest of the media path proceeds without that optional stage.
+9. Confirm destination preflight and VariantPlanner complete.
+10. Confirm the rendered/passthrough video preview arrives in Telegram.
+11. Confirm the publish button is shown only for an allowed policy decision.
+12. Press the X publish approval button.
+13. Confirm X media upload finishes and exactly one post appears in the staging X account.
+14. Confirm the Telegram result reports the final publication state.
 
 For the first staging exercise, use media that you own or are explicitly authorized to republish.
 

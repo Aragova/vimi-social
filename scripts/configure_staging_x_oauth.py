@@ -192,12 +192,24 @@ def _wait_for_code(
             process.kill()
 
 
+def _read_manual_callback_code(expected_state: str) -> str:
+    print(
+        "After X redirects the browser, copy the complete callback URL from the "
+        "address bar and paste it here."
+    )
+    target = input("Callback URL: ").strip()
+    code = callback_code(target, expected_state)
+    if code is None:
+        raise RuntimeError("callback URL is missing the expected OAuth state/code")
+    return code
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate a fresh X OAuth 2.0 authorization URL, wait for the nginx "
-            "callback, exchange the short-lived code immediately, and store the "
-            "user access token in .env.staging without printing credentials."
+            "Generate a fresh X OAuth 2.0 authorization URL, obtain the callback, "
+            "exchange the short-lived code immediately, and store the user access "
+            "token in .env.staging without printing credentials."
         )
     )
     parser.add_argument("--env-file", type=Path, default=Path(".env.staging"))
@@ -220,6 +232,14 @@ def _parse_args() -> argparse.Namespace:
         "--nginx-access-log",
         type=Path,
         default=Path("/var/log/nginx/access.log"),
+    )
+    parser.add_argument(
+        "--manual-callback",
+        action="store_true",
+        help=(
+            "Do not watch an nginx access log. Paste the complete browser callback "
+            "URL instead; use this for standalone Caddy staging."
+        ),
     )
     parser.add_argument("--timeout-seconds", type=int, default=300)
     return parser.parse_args()
@@ -265,17 +285,25 @@ def main() -> int:
         code_challenge=code_challenge,
     )
 
-    watcher = _start_log_watcher(args.nginx_access_log)
+    watcher: subprocess.Popen[bytes] | None = None
+    if not args.manual_callback:
+        watcher = _start_log_watcher(args.nginx_access_log)
+
     print("Open this X authorization URL now:")
     print(oauth_url)
     print()
-    print("Waiting for the X callback in nginx...")
 
-    code = _wait_for_code(
-        process=watcher,
-        expected_state=state,
-        timeout_seconds=args.timeout_seconds,
-    )
+    if args.manual_callback:
+        code = _read_manual_callback_code(state)
+    else:
+        assert watcher is not None
+        print("Waiting for the X callback in nginx...")
+        code = _wait_for_code(
+            process=watcher,
+            expected_state=state,
+            timeout_seconds=args.timeout_seconds,
+        )
+
     access_token, refresh_token = _exchange_code(
         code=code,
         client_id=client_id,

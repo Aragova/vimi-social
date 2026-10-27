@@ -12,10 +12,17 @@ from vimi_social.workflows.scout import ScoutContinuationWorkflow, ScoutWorkflow
 
 
 class TemporalScoutWorkflowStarter:
-    def __init__(self, target: str, namespace: str, task_queue: str) -> None:
+    def __init__(
+        self,
+        target: str,
+        namespace: str,
+        task_queue: str,
+        interest_task_queue: str = "vimi-social-destination",
+    ) -> None:
         self._target = target
         self._namespace = namespace
         self._task_queue = task_queue
+        self._interest_task_queue = interest_task_queue
         self._client: Client | None = None
         self._connect_lock = asyncio.Lock()
 
@@ -24,6 +31,7 @@ class TemporalScoutWorkflowStarter:
         workflow_input = ScoutWorkflowInput(
             operation_key=operation_key,
             execution_token=execution_token,
+            interest_task_queue=self._interest_task_queue,
         )
         try:
             await client.start_workflow(

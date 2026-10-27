@@ -47,6 +47,7 @@ def create_application() -> FastAPI:
         settings.temporal_target,
         settings.temporal_namespace,
         settings.temporal_task_queue,
+        settings.destination_task_queue,
     )
     media_starter = TemporalMediaPreparationStarter(
         settings.temporal_target,

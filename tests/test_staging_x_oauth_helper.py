@@ -19,6 +19,13 @@ def test_request_target_extracts_nginx_request_path() -> None:
 
 def test_callback_code_requires_matching_state() -> None:
     assert callback_code("/?state=expected&code=abc123", "expected") == "abc123"
+    assert (
+        callback_code(
+            "https://staging.usevimi.ru/?state=expected&code=abc123",
+            "expected",
+        )
+        == "abc123"
+    )
     assert callback_code("/?state=other&code=abc123", "expected") is None
     assert callback_code("/?state=expected", "expected") is None
 
@@ -36,6 +43,11 @@ def test_authorization_url_contains_required_oauth_values() -> None:
     assert "state=state-value" in url
     assert "code_challenge=challenge-value" in url
     assert "media.write" in url
+    assert "follows.read" in url
+    assert "like.read" in url
+    assert "list.read" in url
+    assert "bookmark.read" in url
+    assert "offline.access" in url
 
 
 def test_write_env_value_replaces_only_requested_key(tmp_path: Path) -> None:

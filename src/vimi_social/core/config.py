@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     telegram_webhook_secret: str | None = None
     x_bearer_token: str | None = None
     x_search_scope: str = "all"
+    x_interest_profile_ttl_hours: int = 6
+    x_interest_list_sample_limit: int = 3
     local_ai_url: str | None = None
     local_ai_timeout_seconds: float = 20.0
     visual_ai_url: str | None = None
