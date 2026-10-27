@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     x_search_scope: str = "all"
     x_interest_profile_ttl_hours: int = 6
     x_interest_list_sample_limit: int = 3
+    dest_x_primary_token: str | None = None
+    dest_x_primary_refresh_token: str | None = None
+    x_oauth_client_id: str | None = None
+    x_oauth_client_secret: str | None = None
+    x_oauth_state_path: str = "/var/lib/vimi/x-oauth/primary-refresh-token"
+    x_oauth_refresh_interval_seconds: float = 5400.0
     local_ai_url: str | None = None
     local_ai_timeout_seconds: float = 20.0
     visual_ai_url: str | None = None
