@@ -4,7 +4,6 @@ import httpx
 
 from vimi_social.domain.source import CandidateContent
 from vimi_social.source.ocr import PreviewOcrUnavailable
-from vimi_social.source.preview_rerank import select_preview_evidence_candidates
 from vimi_social.source.semantic import SemanticRelevanceUnavailable
 from vimi_social.source.visual import VisualRelevanceUnavailable
 
@@ -116,13 +115,10 @@ class LocalAiClient:
         if not candidates:
             return ()
 
-        selected_keys = _preview_evidence_keys(candidates)
         active_indices: list[int] = []
         preview_urls: list[str] = []
         scores: list[float | None] = [None] * len(candidates)
         for index, candidate in enumerate(candidates):
-            if (candidate.source, candidate.source_id) not in selected_keys:
-                continue
             raw_url = candidate.connector_metadata.get("preview_image_url")
             if not isinstance(raw_url, str):
                 continue
@@ -178,13 +174,10 @@ class LocalAiClient:
         if not candidates:
             return ()
 
-        selected_keys = _preview_evidence_keys(candidates)
         active_indices: list[int] = []
         preview_urls: list[str] = []
         texts: list[str | None] = [None] * len(candidates)
         for index, candidate in enumerate(candidates):
-            if (candidate.source, candidate.source_id) not in selected_keys:
-                continue
             raw_url = candidate.connector_metadata.get("preview_image_url")
             if not isinstance(raw_url, str):
                 continue
@@ -274,13 +267,6 @@ class LocalAiClient:
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
-
-
-def _preview_evidence_keys(
-    candidates: tuple[CandidateContent, ...],
-) -> set[tuple[str, str]]:
-    selected = select_preview_evidence_candidates(candidates, limit=len(candidates))
-    return {(candidate.source, candidate.source_id) for candidate in selected}
 
 
 def _candidate_search_text(candidate: CandidateContent) -> str:
