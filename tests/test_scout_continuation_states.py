@@ -1,6 +1,10 @@
 # pyright: reportPrivateUsage=false
 
-from vimi_social.domain.source import AdultClassification, CandidateContent
+from vimi_social.domain.source import (
+    AdultClassification,
+    CandidateContent,
+    ScoutRefillContinuationState,
+)
 from vimi_social.source.activities import _apply_continuation_state
 
 
@@ -28,7 +32,7 @@ def _candidate() -> CandidateContent:
             "retrieval_query": "round zero",
             "retrieval_query_variants": ["round zero"],
             "retrieval_relaxation_level": 0,
-            "retrieval_specificity": "strict",
+            "retrieval_specificity": 1.0,
             "retrieval_language_mode": "en",
             "x_search_scope": "all",
             "x_search_query": "round zero",
@@ -39,27 +43,30 @@ def _candidate() -> CandidateContent:
 
 
 def test_earlier_round_retirement_survives_unmatched_broader_round_state() -> None:
-    retired_round = {
-        "retrieval_query": "round zero",
-        "retrieval_query_variants": ["round zero"],
-        "retrieval_relaxation_level": 0,
-        "retrieval_specificity": "strict",
-        "retrieval_language_mode": "en",
-        "x_search_scope": "all",
-        "x_search_query": "round zero",
-        "x_page_start_token": "page-2",
-        "x_continuation_generation": 1,
-    }
-    empty_broader_round = {
-        "retrieval_query": "broader round",
-        "retrieval_query_variants": ["broader round"],
-        "retrieval_relaxation_level": 1,
-        "retrieval_specificity": "relaxed",
-        "retrieval_language_mode": "en",
-        "x_search_scope": "all",
-        "x_search_query": "broader round",
-        "x_continuation_generation": 0,
-    }
+    retired_round = ScoutRefillContinuationState(
+        retrieval_query="round zero",
+        retrieval_query_variants=("round zero",),
+        retrieval_relaxation_level=0,
+        retrieval_specificity=1.0,
+        retrieval_language_mode="en",
+        continuation_generation=1,
+        page_start_token="page-2",
+        next_token=None,
+        search_scope="all",
+        search_query="round zero",
+    )
+    empty_broader_round = ScoutRefillContinuationState(
+        retrieval_query="broader round",
+        retrieval_query_variants=("broader round",),
+        retrieval_relaxation_level=1,
+        retrieval_specificity=0.5,
+        retrieval_language_mode="en",
+        continuation_generation=0,
+        page_start_token=None,
+        next_token=None,
+        search_scope="all",
+        search_query="broader round",
+    )
 
     curated = (_candidate(),)
     for state in (retired_round, empty_broader_round):
