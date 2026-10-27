@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from vimi_social.domain.identity import TenantId
@@ -56,7 +56,7 @@ def _profile() -> UserInterestProfile:
         author_weights={"fav-author": 1.0},
         source_stats={"bookmarks": 10},
         sample_size=10,
-        generated_at=datetime(2026, 10, 27, tzinfo=timezone.utc),
+        generated_at=datetime(2026, 10, 27, tzinfo=UTC),
     )
 
 
