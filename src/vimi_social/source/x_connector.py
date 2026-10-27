@@ -20,6 +20,7 @@ from vimi_social.source.connectors import (
 _PLAIN_QUERY_TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
 _X_BOOLEAN_WORDS = {"and", "or", "not"}
 _X_SEARCH_SCOPES = {"recent", "all"}
+_X_MIN_PAGE_SIZE = 10
 
 
 class XSourceConnector:
@@ -52,6 +53,8 @@ class XSourceConnector:
 
     async def search(self, request: ScoutSearchRequest) -> tuple[CandidateContent, ...]:
         read_budget = max(1, request.max_results)
+        if read_budget < _X_MIN_PAGE_SIZE:
+            raise ValueError("X search read budget must be at least 10 posts")
         scope = request.search_scope or self._search_scope
         if scope not in _X_SEARCH_SCOPES:
             raise ValueError("X search scope must be 'recent' or 'all'")
@@ -65,16 +68,20 @@ class XSourceConnector:
         posts_read = 0
 
         while posts_read < read_budget:
+            remaining = read_budget - posts_read
+            if remaining < _X_MIN_PAGE_SIZE:
+                continuation_token = page_token
+                break
+
             if page_token is not None:
                 if page_token in seen_tokens:
                     continuation_token = None
                     break
                 seen_tokens.add(page_token)
 
-            remaining = read_budget - posts_read
             params = {
                 "query": query,
-                "max_results": str(max(10, min(remaining, _max_page_size(scope)))),
+                "max_results": str(min(remaining, _max_page_size(scope))),
                 "tweet.fields": (
                     "attachments,author_id,created_at,lang,possibly_sensitive,public_metrics"
                 ),
