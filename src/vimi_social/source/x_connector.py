@@ -21,6 +21,8 @@ _PLAIN_QUERY_TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
 _X_BOOLEAN_WORDS = {"and", "or", "not"}
 _X_SEARCH_SCOPES = {"recent", "all"}
 _X_MIN_PAGE_SIZE = 10
+_X_FULL_ARCHIVE_START_TIME = "2006-03-21T00:00:00Z"
+_X_FULL_ARCHIVE_SORT_ORDER = "relevancy"
 
 
 class XSourceConnector:
@@ -90,6 +92,9 @@ class XSourceConnector:
                     "alt_text,duration_ms,height,media_key,preview_image_url,type,url,variants,width"
                 ),
             }
+            if scope == "all":
+                params["start_time"] = _X_FULL_ARCHIVE_START_TIME
+                params["sort_order"] = _X_FULL_ARCHIVE_SORT_ORDER
             if page_token is not None:
                 params["next_token"] = page_token
 
