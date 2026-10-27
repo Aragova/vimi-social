@@ -9,7 +9,6 @@ from vimi_social.db.tenant import tenant_transaction
 from vimi_social.domain.identity import OperationKey
 from vimi_social.domain.interest import XInterestSyncResult, XInterestSyncState
 from vimi_social.domain.source import ScoutWorkflowInput, SourceTask
-from vimi_social.publication.repository import PublicationRepository
 from vimi_social.publication.x_adapter import (
     DestinationCredentialError,
     EnvironmentCredentialResolver,
@@ -32,7 +31,6 @@ class XInterestProfileActivities:
         session_factory: Callable[[], Session],
         *,
         source_repository: SourceTaskRepository | None = None,
-        publication_repository: PublicationRepository | None = None,
         interest_repository: UserInterestProfileRepository | None = None,
         credential_resolver: EnvironmentCredentialResolver | None = None,
         client: XUserContextClient | None = None,
@@ -40,7 +38,6 @@ class XInterestProfileActivities:
     ) -> None:
         self._session_factory = session_factory
         self._source_repository = source_repository or SourceTaskRepository()
-        self._publication_repository = publication_repository or PublicationRepository()
         self._interest_repository = interest_repository or UserInterestProfileRepository()
         self._credential_resolver = credential_resolver or EnvironmentCredentialResolver()
         self._client = client or XUserContextClient()
@@ -53,14 +50,23 @@ class XInterestProfileActivities:
     ) -> XInterestSyncResult:
         task = self._authorized_task(workflow_input)
 
-        with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
-            accounts = self._publication_repository.active_accounts(session, platform="x")
+        with self._session_factory() as session, tenant_transaction(
+            session,
+            task.tenant_id,
+        ):
+            accounts = self._interest_repository.active_x_accounts_for_user(
+                session,
+                user_id=task.actor_user_id,
+            )
             if not accounts:
                 return XInterestSyncResult(XInterestSyncState.NO_ACCOUNT)
             if len(accounts) != 1:
                 return XInterestSyncResult(XInterestSyncState.MULTIPLE_ACCOUNTS)
             account = accounts[0]
-            cached = self._interest_repository.get(session, user_id=task.actor_user_id)
+            cached = self._interest_repository.get(
+                session,
+                user_id=task.actor_user_id,
+            )
             if (
                 cached is not None
                 and cached.destination_account_id == account.id
@@ -91,7 +97,10 @@ class XInterestProfileActivities:
                 unavailable_sources=snapshot.unavailable_sources,
             )
 
-        with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
+        with self._session_factory() as session, tenant_transaction(
+            session,
+            task.tenant_id,
+        ):
             profile = self._interest_repository.upsert(
                 session,
                 tenant_id=task.tenant_id,
