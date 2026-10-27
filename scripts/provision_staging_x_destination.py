@@ -15,7 +15,11 @@ def _parser() -> argparse.ArgumentParser:
         description="Provision one user-bound X destination account for a staging tenant."
     )
     parser.add_argument("--tenant-id", required=True)
-    parser.add_argument("--user-id", required=True, help="Workspace user who connected this X account.")
+    parser.add_argument(
+        "--user-id",
+        required=True,
+        help="Workspace user who connected this X account.",
+    )
     parser.add_argument("--external-account-id", default="staging-primary")
     parser.add_argument("--display-name", default="Staging X")
     parser.add_argument(
