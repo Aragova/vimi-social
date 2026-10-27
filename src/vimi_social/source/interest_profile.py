@@ -148,7 +148,7 @@ def build_personalized_retrieval_terms(
             for variant in query_variants
             for token in _TOKEN.findall(variant)
             if len(token.strip("-'_")) >= 3
-            and token.casefold().strip("-_") not in _STOPWORDS
+            and token.casefold().strip("-'_") not in _STOPWORDS
         )
     )
     if not query_tokens:
@@ -161,13 +161,7 @@ def build_personalized_retrieval_terms(
     ):
         for raw_key, raw_weight in values.items():
             key = raw_key.casefold().strip().strip("#").strip("-'_")
-            if (
-                len(key) < 3
-                or key in _PROFILE_NOISE
-                or key.isdigit()
-                or not isinstance(raw_weight, int | float)
-                or isinstance(raw_weight, bool)
-            ):
+            if len(key) < 3 or key in _PROFILE_NOISE or key.isdigit():
                 continue
             weight = max(0.0, min(1.0, float(raw_weight)))
             if weight <= 0:
