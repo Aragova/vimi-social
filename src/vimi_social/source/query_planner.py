@@ -136,7 +136,7 @@ class MultilingualQueryPlanner:
                     yield ScoutQueryRound(
                         query_variants=(english_variant,),
                         preferred_languages=(),
-                        relaxation_level=0,
+                        relaxation_level=1,
                         specificity=1.0,
                         strategy="full_intent_language_broadening",
                     )
@@ -146,7 +146,7 @@ class MultilingualQueryPlanner:
                 yield ScoutQueryRound(
                     query_variants=(query,),
                     preferred_languages=(),
-                    relaxation_level=0,
+                    relaxation_level=1,
                     specificity=1.0,
                     strategy="full_intent_language_broadening",
                 )
@@ -163,7 +163,7 @@ class MultilingualQueryPlanner:
                 yield ScoutQueryRound(
                     query_variants=(query,),
                     preferred_languages=(),
-                    relaxation_level=0,
+                    relaxation_level=1,
                     specificity=1.0,
                     strategy="full_intent_language_broadening",
                 )
@@ -180,7 +180,7 @@ class MultilingualQueryPlanner:
             yield ScoutQueryRound(
                 query_variants=(query,),
                 preferred_languages=(),
-                relaxation_level=0,
+                relaxation_level=1,
                 specificity=1.0,
                 strategy="full_intent_language_broadening",
             )
