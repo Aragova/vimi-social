@@ -13,15 +13,18 @@ from vimi_social.publication.delivery import PublicationDeliveryActivities
 from vimi_social.publication.preview import PublicationPreviewActivities
 from vimi_social.source.connectors import SourceConnectorRegistry
 from vimi_social.source.personalization import (
-    PersonalizedFilteringCandidateCurator,
     PersonalizedFilteringScoutContinuationActivities,
-    PersonalizedScoutActivities,
 )
 from vimi_social.source.query_planner import (
     EnglishIntentTranslator,
     FallbackEnglishIntentTranslator,
     MultilingualQueryPlanner,
     OpenAIEnglishIntentTranslator,
+)
+from vimi_social.source.retrieval_v3 import (
+    ConceptQueryPlanner,
+    RetrievalV3CandidateCurator,
+    RetrievalV3ScoutActivities,
 )
 from vimi_social.source.x_connector import XSourceConnector
 from vimi_social.telegram.client import TelegramBotApiClient
@@ -86,8 +89,9 @@ async def run() -> None:
         translator = translators[0]
     else:
         translator = None
-    query_planner = MultilingualQueryPlanner(translator)
-    scout_curator = PersonalizedFilteringCandidateCurator()
+    base_query_planner = MultilingualQueryPlanner(translator)
+    query_planner = ConceptQueryPlanner(base_query_planner)
+    scout_curator = RetrievalV3CandidateCurator()
 
     messenger: TelegramMessenger | None = None
     if settings.telegram_bot_token:
@@ -96,7 +100,7 @@ async def run() -> None:
             TelegramBotApiClient(settings.telegram_bot_token),
         )
 
-    scout_activities = PersonalizedScoutActivities(
+    scout_activities = RetrievalV3ScoutActivities(
         session_factory,
         registry,
         messenger,
