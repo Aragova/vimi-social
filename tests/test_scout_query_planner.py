@@ -21,16 +21,6 @@ class FakeTranslator:
         return self.translation
 
 
-class MappingTranslator:
-    def __init__(self, translations: dict[str, str | None]) -> None:
-        self.translations = translations
-        self.calls: list[str] = []
-
-    async def translate_to_english(self, intent: str) -> str | None:
-        self.calls.append(intent)
-        return self.translations.get(intent)
-
-
 def test_normalize_search_intent_removes_russian_command_wrapper() -> None:
     assert normalize_search_intent("Найди видео про ночной Бангкок") == "ночной Бангкок"
 
@@ -47,30 +37,29 @@ def test_normalize_search_intent_removes_translated_video_of_wrapper() -> None:
 
 
 @pytest.mark.asyncio
-async def test_multilingual_planner_keeps_ru_and_adds_en_variant() -> None:
-    translator = FakeTranslator("Bangkok night")
+async def test_multilingual_planner_keeps_full_ru_and_adds_full_en_variant() -> None:
+    translator = FakeTranslator("Bangkok night market beautiful")
     planner = MultilingualQueryPlanner(translator)
+    intent = "Найди видео про Бангкок ночной рынок красивый"
 
-    plan = await planner.plan(
-        "Найди видео про ночной Бангкок",
-        ("ru", "en"),
+    plan = await planner.plan(intent, ("ru", "en"))
+
+    assert translator.calls == [intent]
+    assert plan.normalized_intent == "Бангкок ночной рынок красивый"
+    assert plan.query_variants == (
+        "Бангкок ночной рынок красивый",
+        "Bangkok night market beautiful",
     )
-
-    assert translator.calls == ["Найди видео про ночной Бангкок"]
-    assert plan.query_variants == ("ночной Бангкок", "Bangkok night")
-    assert plan.relaxation_queries == ("ночной Бангкок", "ночной")
+    assert plan.retrieval_queries == ("Бангкок ночной рынок красивый",)
 
 
 @pytest.mark.asyncio
-async def test_relaxed_queries_strip_unbalanced_search_syntax() -> None:
+async def test_planner_preserves_quotes_without_generating_truncated_queries() -> None:
     planner = MultilingualQueryPlanner()
     plan = await planner.plan('Find videos about "night market" Bangkok', ("en",))
 
-    assert plan.relaxation_queries == (
-        '"night market" Bangkok',
-        "night market",
-        "night",
-    )
+    assert plan.normalized_intent == '"night market" Bangkok'
+    assert plan.retrieval_queries == ('"night market" Bangkok',)
 
 
 @pytest.mark.asyncio
@@ -87,16 +76,9 @@ async def test_multilingual_planner_normalizes_local_full_intent_translation() -
 
 
 @pytest.mark.asyncio
-async def test_progressive_rounds_try_ru_then_bilingual_before_dropping_last_keyword() -> None:
+async def test_ru_en_rounds_preserve_every_full_intent_constraint() -> None:
     intent = "Найди видео про Бангкок ночной рынок красивый"
-    translator = MappingTranslator(
-        {
-            intent: "Bangkok night market beautiful",
-            "Найди видео про Бангкок ночной рынок": "Bangkok night market",
-            "Найди видео про Бангкок ночной": "Bangkok night",
-            "Найди видео про Бангкок": "Bangkok",
-        }
-    )
+    translator = FakeTranslator("Bangkok night market beautiful")
     planner = MultilingualQueryPlanner(translator)
     plan = await planner.plan(intent, ("ru", "en"))
 
@@ -107,103 +89,74 @@ async def test_progressive_rounds_try_ru_then_bilingual_before_dropping_last_key
 
     assert [item.query_variants for item in rounds] == [
         ("Бангкок ночной рынок красивый",),
-        ("Бангкок ночной рынок красивый", "Bangkok night market beautiful"),
-        ("Бангкок ночной рынок",),
-        ("Бангкок ночной рынок", "Bangkok night market"),
-        ("Бангкок ночной",),
-        ("Бангкок ночной", "Bangkok night"),
-        ("Бангкок",),
-        ("Бангкок", "Bangkok"),
+        (
+            "Бангкок ночной рынок красивый",
+            "Bangkok night market beautiful",
+        ),
     ]
     assert [item.preferred_languages for item in rounds] == [
         ("ru",),
         ("ru", "en"),
-        ("ru",),
-        ("ru", "en"),
-        ("ru",),
-        ("ru", "en"),
-        ("ru",),
-        ("ru", "en"),
     ]
-    assert [item.relaxation_level for item in rounds] == [0, 0, 1, 1, 2, 2, 3, 3]
-    assert [item.specificity for item in rounds] == [
-        1.0,
-        1.0,
-        0.75,
-        0.75,
-        0.5,
-        0.5,
-        0.25,
-        0.25,
+    assert [item.relaxation_level for item in rounds] == [0, 0]
+    assert [item.specificity for item in rounds] == [1.0, 1.0]
+    assert [item.strategy for item in rounds] == [
+        "full_intent_primary",
+        "full_intent_multilingual",
     ]
-
-
-@pytest.mark.asyncio
-async def test_shorter_translations_are_lazy_until_relaxation_is_reached() -> None:
-    intent = "Найди видео про Бангкок ночной рынок"
-    translator = MappingTranslator(
-        {
-            intent: "Bangkok night market",
-            "Найди видео про Бангкок ночной": "Bangkok night",
-            "Найди видео про Бангкок": "Bangkok",
-        }
-    )
-    planner = MultilingualQueryPlanner(translator)
-    plan = await planner.plan(intent, ("ru", "en"))
-    rounds = planner.search_rounds(plan, intent, ("ru", "en"))
-
-    first = await anext(rounds)
-    second = await anext(rounds)
-    third = await anext(rounds)
-
-    assert first.query_variants == ("Бангкок ночной рынок",)
-    assert second.query_variants == ("Бангкок ночной рынок", "Bangkok night market")
-    assert third.query_variants == ("Бангкок ночной",)
     assert translator.calls == [intent]
 
-    fourth = await anext(rounds)
-    assert fourth.query_variants == ("Бангкок ночной", "Bangkok night")
-    assert translator.calls == [intent, "Найди видео про Бангкок ночной"]
-
 
 @pytest.mark.asyncio
-async def test_relaxed_translation_failure_disables_later_translation_attempts() -> None:
-    intent = "Найди видео про Бангкок ночной рынок"
-    translator = MappingTranslator(
-        {
-            intent: "Bangkok night market",
-            "Найди видео про Бангкок ночной": None,
-            "Найди видео про Бангкок": "Bangkok",
-        }
-    )
-    planner = MultilingualQueryPlanner(translator)
-    plan = await planner.plan(intent, ("ru", "en"))
+async def test_english_query_never_drops_trailing_constraint() -> None:
+    planner = MultilingualQueryPlanner()
+    intent = "Find videos about Bangkok night market beautiful"
+    plan = await planner.plan(intent, ("en",))
 
     rounds = [
         round_item
-        async for round_item in planner.search_rounds(plan, intent, ("ru", "en"))
+        async for round_item in planner.search_rounds(plan, intent, ("en",))
     ]
 
-    assert [item.query_variants for item in rounds] == [
-        ("Бангкок ночной рынок",),
-        ("Бангкок ночной рынок", "Bangkok night market"),
-        ("Бангкок ночной",),
-        ("Бангкок",),
+    assert len(rounds) == 1
+    assert rounds[0].query_variants == ("Bangkok night market beautiful",)
+    assert rounds[0].specificity == 1.0
+    assert rounds[0].strategy == "full_intent_primary"
+
+
+@pytest.mark.asyncio
+async def test_cyrillic_en_only_uses_full_translation_without_ru_round() -> None:
+    intent = "Найди видео про ночной Бангкок"
+    translator = FakeTranslator("Bangkok at night")
+    planner = MultilingualQueryPlanner(translator)
+    plan = await planner.plan(intent, ("en",))
+
+    rounds = [
+        round_item
+        async for round_item in planner.search_rounds(plan, intent, ("en",))
     ]
-    assert translator.calls == [
-        intent,
-        "Найди видео про Бангкок ночной",
-    ]
+
+    assert len(rounds) == 1
+    assert rounds[0].query_variants == ("Bangkok at night",)
+    assert rounds[0].preferred_languages == ("en",)
+    assert rounds[0].strategy == "full_intent_translated"
 
 
 @pytest.mark.asyncio
 async def test_multilingual_planner_falls_back_when_translation_unavailable() -> None:
     translator = FakeTranslator(None)
     planner = MultilingualQueryPlanner(translator)
+    intent = "Найди видео про ночной Бангкок"
 
-    plan = await planner.plan("Найди видео про ночной Бангкок", ("ru", "en"))
+    plan = await planner.plan(intent, ("ru", "en"))
+    rounds = [
+        round_item
+        async for round_item in planner.search_rounds(plan, intent, ("ru", "en"))
+    ]
 
     assert plan.query_variants == ("ночной Бангкок",)
+    assert [item.query_variants for item in rounds] == [("ночной Бангкок",)]
+    assert rounds[0].preferred_languages == ("ru",)
 
 
 @pytest.mark.asyncio
@@ -240,6 +193,7 @@ async def test_planner_does_not_translate_already_english_intent() -> None:
 
     assert translator.calls == []
     assert plan.query_variants == ("Bangkok at night",)
+    assert plan.retrieval_queries == ("Bangkok at night",)
 
 
 @pytest.mark.asyncio
