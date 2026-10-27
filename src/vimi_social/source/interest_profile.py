@@ -1,5 +1,5 @@
 import re
-from collections import Counter
+from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
@@ -10,43 +10,11 @@ _TOKEN = re.compile(r"[^\W_]+(?:[-'][^\W_]+)*", re.UNICODE)
 _HASHTAG = re.compile(r"(?<!\w)#([^\s#]+)", re.UNICODE)
 _URL = re.compile(r"https?://\S+", re.IGNORECASE)
 _STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "are",
-    "as",
-    "at",
-    "be",
-    "by",
-    "for",
-    "from",
-    "in",
-    "is",
-    "it",
-    "of",
-    "on",
-    "or",
-    "that",
-    "the",
-    "this",
-    "to",
-    "with",
-    "you",
-    "your",
-    "\u0432",
-    "\u0434\u043b\u044f",
-    "\u0438",
-    "\u0438\u0437",
-    "\u0438\u043b\u0438",
-    "\u043d\u0430",
-    "\u043e",
-    "\u043e\u0431",
-    "\u043e\u0442",
-    "\u043f\u043e",
-    "\u043f\u0440\u043e",
-    "\u0441",
-    "\u0441\u043e",
-    "\u0447\u0442\u043e",
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
+    "in", "is", "it", "of", "on", "or", "that", "the", "this", "to",
+    "with", "you", "your", "\u0432", "\u0434\u043b\u044f", "\u0438", "\u0438\u0437",
+    "\u0438\u043b\u0438", "\u043d\u0430", "\u043e", "\u043e\u0431", "\u043e\u0442",
+    "\u043f\u043e", "\u043f\u0440\u043e", "\u0441", "\u0441\u043e", "\u0447\u0442\u043e",
 }
 _MAX_TERMS = 160
 _MAX_HASHTAGS = 96
@@ -63,9 +31,9 @@ class InterestProfileDraft:
 
 
 def build_interest_profile(snapshot: XInterestSnapshot) -> InterestProfileDraft:
-    terms: Counter[str] = Counter()
-    hashtags: Counter[str] = Counter()
-    authors: Counter[str] = Counter()
+    terms: defaultdict[str, float] = defaultdict(float)
+    hashtags: defaultdict[str, float] = defaultdict(float)
+    authors: defaultdict[str, float] = defaultdict(float)
 
     def add_text(text: str | None, weight: float) -> None:
         if not text:
@@ -211,15 +179,16 @@ def apply_interest_profile(
     return replace(candidate, connector_metadata=metadata)
 
 
-def _normalized_top(counter: Counter[str], limit: int) -> dict[str, float]:
-    if not counter:
+def _normalized_top(values: Mapping[str, float], limit: int) -> dict[str, float]:
+    if not values:
         return {}
-    highest = max(counter.values())
+    highest = max(values.values())
     if highest <= 0:
         return {}
+    ranked = sorted(values.items(), key=lambda item: (-item[1], item[0]))
     return {
         key: round(value / highest, 6)
-        for key, value in counter.most_common(limit)
+        for key, value in ranked[:limit]
         if value > 0
     }
 
