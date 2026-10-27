@@ -12,6 +12,7 @@ from vimi_social.media.delivery import MediaPreparationDeliveryActivities
 from vimi_social.publication.delivery import PublicationDeliveryActivities
 from vimi_social.publication.preview import PublicationPreviewActivities
 from vimi_social.source.connectors import SourceConnectorRegistry
+from vimi_social.source.home_timeline import HomeTimelineRetrievalV3ScoutActivities
 from vimi_social.source.personalization import (
     PersonalizedFilteringScoutContinuationActivities,
 )
@@ -24,9 +25,9 @@ from vimi_social.source.query_planner import (
 from vimi_social.source.retrieval_v3 import (
     ConceptQueryPlanner,
     RetrievalV3CandidateCurator,
-    RetrievalV3ScoutActivities,
 )
 from vimi_social.source.x_connector import XSourceConnector
+from vimi_social.source.x_user_context import X_HOME_TIMELINE_SEED_LIMIT
 from vimi_social.telegram.client import TelegramBotApiClient
 from vimi_social.telegram.outgoing import TelegramMessenger, TelegramOutgoingStore
 from vimi_social.workflows.destination_publication import DestinationPublicationWorkflow
@@ -100,7 +101,15 @@ async def run() -> None:
             TelegramBotApiClient(settings.telegram_bot_token),
         )
 
-    scout_activities = RetrievalV3ScoutActivities(
+    timeline_seed_limit = min(
+        X_HOME_TIMELINE_SEED_LIMIT,
+        max(0, settings.scout_retrieval_budget - 10),
+    )
+    search_retrieval_budget = max(
+        10,
+        settings.scout_retrieval_budget - timeline_seed_limit,
+    )
+    scout_activities = HomeTimelineRetrievalV3ScoutActivities(
         session_factory,
         registry,
         messenger,
@@ -112,7 +121,7 @@ async def run() -> None:
         visual_relevance_weight=settings.visual_relevance_weight,
         preview_ocr_weight=settings.preview_ocr_weight,
         semantic_minimum_relevance=settings.semantic_relevance_min_score,
-        retrieval_budget=settings.scout_retrieval_budget,
+        retrieval_budget=search_retrieval_budget,
         retrieval_round_limit=settings.scout_retrieval_round_limit,
         preview_evidence_limit=settings.scout_preview_evidence_limit,
     )
