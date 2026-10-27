@@ -1,6 +1,16 @@
 import pytest
 
-from vimi_social.domain.source import AdultClassification, CandidateContent
+from vimi_social.domain.source import (
+    AdultClassification,
+    CandidateContent,
+    ScoutSearchRequest,
+)
+from vimi_social.source.connectors import (
+    SourceConnectorRegistry,
+    SourceConnectorUnavailable,
+    SourceSearchCandidates,
+)
+from vimi_social.source.home_timeline import HomeTimelineSeedRegistry
 from vimi_social.source.query_planner import MultilingualQueryPlanner
 from vimi_social.source.retrieval_v3 import (
     ConceptQueryPlanner,
@@ -40,6 +50,35 @@ def _candidate(
             "retrieval_specificity": 0.5,
         },
     )
+
+
+class _UnavailableXConnector:
+    source_name = "x"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def search(self, request: ScoutSearchRequest) -> tuple[CandidateContent, ...]:
+        del request
+        self.calls += 1
+        raise SourceConnectorUnavailable("provider unavailable")
+
+
+class _PaginatedXConnector:
+    source_name = "x"
+
+    async def search(self, request: ScoutSearchRequest) -> tuple[CandidateContent, ...]:
+        del request
+        return SourceSearchCandidates(
+            (
+                _candidate(
+                    "provider",
+                    text="gay porn twink young provider result",
+                    duration_ms=600_000,
+                ),
+            ),
+            next_token="provider-next",
+        )
 
 
 @pytest.mark.asyncio
@@ -141,3 +180,63 @@ def test_v3_ranking_demotes_link_farm_without_relevance_gate_bypass() -> None:
     assert float(first_penalty) == 0.0
     assert float(second_penalty) > 0.0
     assert float(first_score) > float(second_score)
+
+
+@pytest.mark.asyncio
+async def test_timeline_seed_survives_first_provider_failure_without_second_paid_call() -> None:
+    seed = _candidate(
+        "timeline",
+        text="gay porn twink young timeline video",
+        duration_ms=600_000,
+    )
+    provider = _UnavailableXConnector()
+    registry = HomeTimelineSeedRegistry(
+        SourceConnectorRegistry((provider,)),
+        seed_getter=lambda: (seed,),
+    )
+    connector = registry.route(("x",))[0]
+    request = ScoutSearchRequest(
+        intent="gay porn twink young",
+        requested_sources=("x",),
+        preferred_languages=("en",),
+        query_variants=("gay porn twink young",),
+        max_results=30,
+    )
+
+    first = await connector.search(request)
+
+    assert [candidate.source_id for candidate in first] == ["timeline"]
+    assert first[0].connector_metadata["retrieval_specificity"] == 0.0
+    assert provider.calls == 1
+
+    with pytest.raises(SourceConnectorUnavailable):
+        await connector.search(request)
+
+    assert provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_timeline_seed_merge_preserves_provider_pagination() -> None:
+    seed = _candidate(
+        "timeline",
+        text="gay porn twink young timeline video",
+        duration_ms=600_000,
+    )
+    registry = HomeTimelineSeedRegistry(
+        SourceConnectorRegistry((_PaginatedXConnector(),)),
+        seed_getter=lambda: (seed,),
+    )
+    connector = registry.route(("x",))[0]
+    request = ScoutSearchRequest(
+        intent="gay porn twink young",
+        requested_sources=("x",),
+        preferred_languages=("en",),
+        query_variants=("gay porn twink young",),
+        max_results=30,
+    )
+
+    result = await connector.search(request)
+
+    assert isinstance(result, SourceSearchCandidates)
+    assert result.next_token == "provider-next"
+    assert [candidate.source_id for candidate in result] == ["timeline", "provider"]
