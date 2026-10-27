@@ -11,6 +11,7 @@ _REPEATED_PUNCTUATION = re.compile(r"[!?]{4,}")
 _E5_SIMILARITY_FLOOR = 0.70
 _RETRIEVAL_FULL_QUERY_MINIMUM = 0.48
 _RETRIEVAL_BROADENING_SPAN = 0.16
+_RRF_RANK_CONSTANT = 60.0
 
 
 class CandidateCurator:
@@ -50,24 +51,51 @@ class CandidateCurator:
             if visual_scores is not None
             else None
         )
+        lexical_relevances = tuple(
+            _relevance_score(candidate, query_variants, preferred_languages)
+            for candidate in candidates
+        )
+        semantic_relevances = tuple(
+            _calibrate_e5_relevance(score) for score in semantic_scores
+        ) if semantic_scores is not None else tuple(None for _ in candidates)
+        text_gate_scores = tuple(
+            _score_based_text_relevance(lexical, semantic)
+            for lexical, semantic in zip(
+                lexical_relevances,
+                semantic_relevances,
+                strict=True,
+            )
+        )
 
-        scored: list[tuple[float, float, float, int, CandidateContent]] = []
+        eligible_indices: list[int] = []
+        candidate_minimums: dict[int, float] = {}
         for index, candidate in enumerate(candidates):
-            lexical_relevance = _relevance_score(
-                candidate,
-                query_variants,
-                preferred_languages,
-            )
-            semantic_raw = semantic_scores[index] if semantic_scores is not None else None
-            semantic_relevance = (
-                _calibrate_e5_relevance(semantic_raw)
-                if semantic_raw is not None
-                else None
-            )
-            text_relevance = _fused_text_relevance(lexical_relevance, semantic_relevance)
             candidate_minimum = _candidate_minimum_relevance(candidate, minimum_relevance)
-            if semantic_relevance is not None and text_relevance < candidate_minimum:
+            candidate_minimums[index] = candidate_minimum
+            semantic_relevance = semantic_relevances[index]
+            if (
+                semantic_relevance is not None
+                and text_gate_scores[index] < candidate_minimum
+            ):
                 continue
+            eligible_indices.append(index)
+
+        if not eligible_indices:
+            return ()
+
+        text_fusion_scores = _rrf_text_relevances(
+            lexical_relevances,
+            semantic_relevances,
+            tuple(eligible_indices),
+        )
+
+        scored: list[tuple[float, float, float, float, int, CandidateContent]] = []
+        for index in eligible_indices:
+            candidate = candidates[index]
+            lexical_relevance = lexical_relevances[index]
+            semantic_raw = semantic_scores[index] if semantic_scores is not None else None
+            semantic_relevance = semantic_relevances[index]
+            text_relevance = text_fusion_scores[index]
 
             visual_raw = visual_scores[index] if visual_scores is not None else None
             visual_relevance = (
@@ -99,14 +127,16 @@ class CandidateCurator:
             )
 
             quality = _quality_score(candidate)
-            total = (0.82 * relevance) + (0.18 * quality)
             metadata = dict(candidate.connector_metadata)
             metadata["curator_lexical_relevance_score"] = lexical_relevance
             if semantic_relevance is not None and semantic_raw is not None:
                 metadata["curator_semantic_relevance_score"] = semantic_relevance
                 metadata["curator_semantic_raw_score"] = round(semantic_raw, 6)
+            metadata["curator_text_gate_score"] = text_gate_scores[index]
             metadata["curator_text_relevance_score"] = text_relevance
-            metadata["curator_minimum_text_relevance_score"] = candidate_minimum
+            metadata["curator_text_fusion_method"] = "rrf"
+            metadata["curator_rrf_rank_constant"] = _RRF_RANK_CONSTANT
+            metadata["curator_minimum_text_relevance_score"] = candidate_minimums[index]
             if visual_raw is not None:
                 metadata["curator_visual_raw_score"] = round(visual_raw, 6)
             if visual_relevance is not None:
@@ -122,15 +152,25 @@ class CandidateCurator:
                 metadata["curator_preview_ocr_relevance_score"] = preview_ocr_relevance
             metadata["curator_relevance_score"] = relevance
             metadata["curator_quality_score"] = quality
-            metadata["curator_total_score"] = round(total, 6)
+            metadata["curator_total_score"] = relevance
             scored_candidate = replace(candidate, connector_metadata=metadata)
-            scored.append((total, relevance, quality, -index, scored_candidate))
+            semantic_tiebreak = semantic_relevance if semantic_relevance is not None else -1.0
+            scored.append(
+                (
+                    relevance,
+                    semantic_tiebreak,
+                    lexical_relevance,
+                    quality,
+                    -index,
+                    scored_candidate,
+                )
+            )
 
-        scored.sort(key=lambda item: item[:4], reverse=True)
+        scored.sort(key=lambda item: item[:5], reverse=True)
 
         ranked: list[CandidateContent] = []
         for rank, item in enumerate(scored[:limit], start=1):
-            candidate = item[4]
+            candidate = item[5]
             metadata = dict(candidate.connector_metadata)
             metadata["curator_rank"] = rank
             ranked.append(replace(candidate, connector_metadata=metadata))
@@ -170,10 +210,62 @@ def _candidate_minimum_relevance(candidate: CandidateContent, configured: float)
     return round(max(configured_minimum, min(1.0, dynamic_minimum)), 6)
 
 
-def _fused_text_relevance(lexical: float, semantic: float | None) -> float:
+def _score_based_text_relevance(lexical: float, semantic: float | None) -> float:
+    """Absolute relevance score used only by the precision gate, never for ordering."""
+
     if semantic is None:
         return lexical
     return round(min(1.0, (0.35 * lexical) + (0.65 * semantic)), 6)
+
+
+def _rrf_text_relevances(
+    lexical_values: tuple[float, ...],
+    semantic_values: tuple[float | None, ...],
+    eligible_indices: tuple[int, ...],
+) -> dict[int, float]:
+    """Fuse lexical and semantic result positions without mixing their score scales."""
+
+    lexical_ranks = _rank_positions(
+        {index: lexical_values[index] for index in eligible_indices}
+    )
+    semantic_inputs = {
+        index: semantic_values[index]
+        for index in eligible_indices
+        if semantic_values[index] is not None
+    }
+    semantic_ranks = _rank_positions(
+        {index: value for index, value in semantic_inputs.items() if value is not None}
+    )
+    has_semantic = bool(semantic_ranks)
+    maximum = (1.0 + (1.0 if has_semantic else 0.0)) / (
+        _RRF_RANK_CONSTANT + 1.0
+    )
+
+    fused: dict[int, float] = {}
+    for index in eligible_indices:
+        score = 1.0 / (_RRF_RANK_CONSTANT + lexical_ranks[index])
+        semantic_rank = semantic_ranks.get(index)
+        if semantic_rank is not None:
+            score += 1.0 / (_RRF_RANK_CONSTANT + semantic_rank)
+        fused[index] = round(min(1.0, score / maximum), 6)
+    return fused
+
+
+def _rank_positions(values: dict[int, float]) -> dict[int, int]:
+    """Return stable competition ranks while giving equal evidence equal rank."""
+
+    ranked: dict[int, int] = {}
+    previous_value: float | None = None
+    previous_rank = 0
+    for position, (index, value) in enumerate(
+        sorted(values.items(), key=lambda item: (-item[1], item[0])),
+        start=1,
+    ):
+        if previous_value is None or value != previous_value:
+            previous_rank = position
+            previous_value = value
+        ranked[index] = previous_rank
+    return ranked
 
 
 def _fused_visual_relevance(text: float, visual: float | None, weight: float) -> float:

@@ -103,6 +103,9 @@ def test_curator_uses_quality_to_break_equal_relevance() -> None:
     assert _score(ranked[0], "curator_quality_score") > _score(
         ranked[1], "curator_quality_score"
     )
+    assert _score(ranked[0], "curator_total_score") == _score(
+        ranked[0], "curator_relevance_score"
+    )
 
 
 def test_curator_semantic_evidence_can_override_lexical_noise() -> None:
@@ -129,9 +132,11 @@ def test_curator_semantic_evidence_can_override_lexical_noise() -> None:
     assert [candidate.source_id for candidate in ranked] == ["match", "trap"]
     assert _score(ranked[0], "curator_semantic_raw_score") == 0.91
     assert _score(ranked[0], "curator_semantic_relevance_score") == 0.7
-    assert _score(ranked[0], "curator_relevance_score") > _score(
-        ranked[1], "curator_relevance_score"
+    assert _score(ranked[0], "curator_semantic_relevance_score") > _score(
+        ranked[1], "curator_semantic_relevance_score"
     )
+    assert ranked[0].connector_metadata["curator_text_fusion_method"] == "rrf"
+    assert _score(ranked[0], "curator_rrf_rank_constant") == 60.0
 
 
 def test_curator_visual_evidence_can_break_equal_text_relevance() -> None:
@@ -242,6 +247,9 @@ def test_curator_filters_low_semantic_relevance_when_enabled() -> None:
     )
 
     assert [candidate.source_id for candidate in ranked] == ["relevant"]
+    assert _score(ranked[0], "curator_text_gate_score") >= _score(
+        ranked[0], "curator_minimum_text_relevance_score"
+    )
 
 
 def test_curator_broad_retrieval_requires_stronger_original_intent_match() -> None:
