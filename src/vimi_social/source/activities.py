@@ -158,7 +158,7 @@ class ScoutActivities:
         )
         discovered: list[CandidateContent] = []
         retrieval_spent = 0
-        latest_continuation_state: dict[str, object] | None = None
+        continuation_states: list[dict[str, object]] = []
 
         async for search_round in self._query_planner.search_rounds(
             query_plan,
@@ -213,7 +213,6 @@ class ScoutActivities:
                                 page_start_token=pagination_token,
                                 continuation_generation=continuation_generation,
                             )
-                            latest_continuation_state = round_continuation_state
                         break
 
                     if isinstance(round_candidates, SourceSearchCandidates):
@@ -224,7 +223,6 @@ class ScoutActivities:
                             continuation_generation=continuation_generation,
                             previous=round_continuation_state,
                         )
-                        latest_continuation_state = round_continuation_state
 
                     round_relevant = await self._rank_relevant_pool(
                         query_plan.query_variants,
@@ -247,6 +245,8 @@ class ScoutActivities:
                     pagination_token = next_token
                     continuation_generation += 1
 
+                if round_continuation_state is not None:
+                    continuation_states.append(round_continuation_state)
                 if source_failure_code is not None or target_met:
                     break
                 if retrieval_spent >= self._retrieval_budget:
@@ -340,7 +340,8 @@ class ScoutActivities:
             preview_ocr_weight=self._preview_ocr_weight,
             minimum_relevance=self._semantic_minimum_relevance,
         )
-        curated = _apply_continuation_state(curated, latest_continuation_state)
+        for continuation_state in continuation_states:
+            curated = _apply_continuation_state(curated, continuation_state)
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
             if not self._attempt_store.lock_owned_attempt(
                 session,
