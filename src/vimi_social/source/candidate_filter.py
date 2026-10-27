@@ -1,8 +1,10 @@
 import math
 import re
 from collections.abc import Iterable
+from dataclasses import replace
 
 from vimi_social.domain.source import CandidateContent
+from vimi_social.source.curator import CandidateCurator
 
 _MIN_VIDEO_DURATION_MS = 60_000
 _URL = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
@@ -65,6 +67,127 @@ def filter_scout_candidates(
             result_texts[duplicate_index] = canonical
 
     return tuple(result)
+
+
+class FilteringCandidateCurator(CandidateCurator):
+    """CandidateCurator with short-form rejection and conservative spam suppression."""
+
+    def rank(
+        self,
+        candidates: tuple[CandidateContent, ...],
+        *,
+        query_variants: tuple[str, ...],
+        preferred_languages: tuple[str, ...],
+        limit: int,
+        semantic_scores: tuple[float, ...] | None = None,
+        visual_scores: tuple[float | None, ...] | None = None,
+        preview_ocr_texts: tuple[str | None, ...] | None = None,
+        preview_ocr_semantic_scores: tuple[float | None, ...] | None = None,
+        visual_weight: float = 0.15,
+        preview_ocr_weight: float = 0.10,
+        minimum_relevance: float = 0.0,
+    ) -> tuple[CandidateContent, ...]:
+        if limit < 1:
+            return ()
+
+        filtered = filter_scout_candidates(candidates)
+        if not filtered:
+            return ()
+
+        indices = _selected_indices(candidates, filtered)
+        ranked = super().rank(
+            filtered,
+            query_variants=query_variants,
+            preferred_languages=preferred_languages,
+            limit=len(filtered),
+            semantic_scores=_align_required(semantic_scores, indices),
+            visual_scores=_align_optional(visual_scores, indices),
+            preview_ocr_texts=_align_optional(preview_ocr_texts, indices),
+            preview_ocr_semantic_scores=_align_optional(
+                preview_ocr_semantic_scores,
+                indices,
+            ),
+            visual_weight=visual_weight,
+            preview_ocr_weight=preview_ocr_weight,
+            minimum_relevance=minimum_relevance,
+        )
+
+        rescored: list[tuple[float, float, float, float, float, int, CandidateContent]] = []
+        for candidate in ranked:
+            metadata = dict(candidate.connector_metadata)
+            duration_preference = _duration_preference_score(candidate)
+            metadata["curator_duration_preference_score"] = duration_preference
+            updated = replace(candidate, connector_metadata=metadata)
+            rescored.append(
+                (
+                    _metadata_float(metadata, "curator_relevance_score", 0.0),
+                    _metadata_float(metadata, "curator_semantic_relevance_score", -1.0),
+                    _metadata_float(metadata, "curator_lexical_relevance_score", 0.0),
+                    duration_preference,
+                    _metadata_float(metadata, "curator_quality_score", 0.0),
+                    -int(metadata.get("curator_rank", 0)),
+                    updated,
+                )
+            )
+
+        rescored.sort(key=lambda item: item[:6], reverse=True)
+        result: list[CandidateContent] = []
+        for rank, item in enumerate(rescored[:limit], start=1):
+            candidate = item[6]
+            metadata = dict(candidate.connector_metadata)
+            metadata["curator_rank"] = rank
+            result.append(replace(candidate, connector_metadata=metadata))
+        return tuple(result)
+
+
+def _selected_indices(
+    candidates: tuple[CandidateContent, ...],
+    filtered: tuple[CandidateContent, ...],
+) -> tuple[int, ...]:
+    by_key = {
+        (candidate.source, candidate.source_id): index
+        for index, candidate in enumerate(candidates)
+    }
+    return tuple(by_key[(candidate.source, candidate.source_id)] for candidate in filtered)
+
+
+def _align_required(
+    values: tuple[float, ...] | None,
+    indices: tuple[int, ...],
+) -> tuple[float, ...] | None:
+    if values is None:
+        return None
+    return tuple(values[index] for index in indices)
+
+
+def _align_optional(
+    values: tuple[object, ...] | None,
+    indices: tuple[int, ...],
+) -> tuple[object, ...] | None:
+    if values is None:
+        return None
+    return tuple(values[index] for index in indices)
+
+
+def _duration_preference_score(candidate: CandidateContent) -> float:
+    duration_ms = candidate.duration_ms
+    if duration_ms is None or duration_ms <= 0:
+        return 0.50
+    seconds = duration_ms / 1000
+    if seconds < 60:
+        return 0.0
+    if seconds < 300:
+        return 0.70
+    if seconds <= 1800:
+        return 1.0
+    return 0.90
+
+
+def _metadata_float(metadata: dict[str, object], key: str, default: float) -> float:
+    value = metadata.get(key)
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    return default
 
 
 def _is_known_short_video(candidate: CandidateContent, minimum_duration_ms: int) -> bool:
