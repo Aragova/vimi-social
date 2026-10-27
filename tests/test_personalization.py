@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -8,8 +9,10 @@ from vimi_social.domain.interest import UserInterestProfile
 from vimi_social.domain.source import AdultClassification, CandidateContent
 from vimi_social.source.personalization import (
     PersonalizedFilteringCandidateCurator,
+    PersonalizedQueryPlanner,
     _cache_taste_semantic_scores,  # pyright: ignore[reportPrivateUsage]
 )
+from vimi_social.source.query_planner import MultilingualQueryPlanner
 
 
 def _candidate(
@@ -124,6 +127,35 @@ def test_taste_affinity_cannot_rescue_irrelevant_broadened_candidate() -> None:
     )
 
     assert ranked == ()
+
+
+@pytest.mark.asyncio
+async def test_personalized_query_planner_prepends_one_bounded_profile_round() -> None:
+    profile = replace(
+        _profile(),
+        term_weights={"gay": 0.44, "twink": 0.40},
+        hashtag_weights={"gaycontent": 1.0, "gayporn": 0.20},
+    )
+    planner = PersonalizedQueryPlanner(
+        MultilingualQueryPlanner(),
+        profile_getter=lambda: profile,
+    )
+    plan = await planner.plan("Gay porn twink young", ("en",))
+
+    rounds = [
+        search_round
+        async for search_round in planner.search_rounds(
+            plan,
+            "Gay porn twink young",
+            ("en",),
+        )
+    ]
+
+    assert rounds[0].strategy == "profile_personalized_recall"
+    assert rounds[0].query_variants == ("gaycontent", "gay", "twink", "gayporn")
+    assert rounds[0].preferred_languages == ("en",)
+    assert rounds[0].max_pages == 1
+    assert any(search_round.strategy == "provider_or_primary" for search_round in rounds[1:])
 
 
 @pytest.mark.asyncio
