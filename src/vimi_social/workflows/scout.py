@@ -1,3 +1,4 @@
+from contextlib import suppress
 from datetime import timedelta
 
 from temporalio import workflow
@@ -18,7 +19,7 @@ class ScoutWorkflow:
     async def run(self, workflow_input: ScoutWorkflowInput) -> ScoutRunResult:
         # User-context reads can incur provider charges. Refresh is best-effort,
         # never retried automatically, and must not block an otherwise valid Scout run.
-        try:
+        with suppress(ActivityError):
             await workflow.execute_activity(
                 "sync_x_user_interest_profile",
                 workflow_input,
@@ -27,8 +28,6 @@ class ScoutWorkflow:
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=RetryPolicy(maximum_attempts=1),
             )
-        except ActivityError:
-            pass
 
         result = await workflow.execute_activity(
             "execute_scout_task",
