@@ -181,8 +181,18 @@ Use the tenant UUID and user UUID belonging to the staging Telegram account only
 
 Until customer OAuth/account-management lands, staging uses the repository OAuth helper. Re-authorize whenever the requested X OAuth scopes change. The current helper requests read scopes for follows, likes, Lists, and bookmarks in addition to the existing post/user/media/offline scopes. The token value is written to `.env.staging` and is never printed back after exchange.
 
+For the standalone staging topology in this runbook, Caddy does not expose an nginx access log. Use manual callback mode:
+
 ```bash
-python scripts/configure_staging_x_oauth.py
+PYTHONPATH=src python3 scripts/configure_staging_x_oauth.py --manual-callback
+```
+
+Open the printed X authorization URL. After X redirects the browser back to `https://<VIMI_PUBLIC_HOST>/?state=...&code=...`, the root route may display `Not Found`; that is expected. Copy the complete URL from the browser address bar and paste it into the helper prompt. The helper validates the OAuth state before exchanging the short-lived code.
+
+On the nginx co-host staging topology, the helper can capture the callback automatically from `/var/log/nginx/access.log`, so use:
+
+```bash
+PYTHONPATH=src python3 scripts/configure_staging_x_oauth.py
 ```
 
 Then provision the X destination and explicitly bind it to the workspace user who authorized that X account. `--user-id` is mandatory; the helper intentionally does not query `workspace_membership` through the application role.
