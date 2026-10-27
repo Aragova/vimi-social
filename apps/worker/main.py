@@ -12,9 +12,11 @@ from vimi_social.media.delivery import MediaPreparationDeliveryActivities
 from vimi_social.publication.delivery import PublicationDeliveryActivities
 from vimi_social.publication.preview import PublicationPreviewActivities
 from vimi_social.source.activities import ScoutActivities
-from vimi_social.source.candidate_filter import FilteringCandidateCurator
+from vimi_social.source.candidate_filter import (
+    FilteringCandidateCurator,
+    FilteringScoutContinuationActivities,
+)
 from vimi_social.source.connectors import SourceConnectorRegistry
-from vimi_social.source.continuation import ScoutContinuationActivities
 from vimi_social.source.query_planner import (
     EnglishIntentTranslator,
     FallbackEnglishIntentTranslator,
@@ -110,7 +112,7 @@ async def run() -> None:
         retrieval_round_limit=settings.scout_retrieval_round_limit,
         preview_evidence_limit=settings.scout_preview_evidence_limit,
     )
-    scout_continuation = ScoutContinuationActivities(
+    scout_continuation = FilteringScoutContinuationActivities(
         session_factory,
         registry,
         messenger,
