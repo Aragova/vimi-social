@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import timedelta
 from uuid import UUID, uuid4
@@ -49,6 +49,17 @@ from vimi_social.usage.repository import UsageRepository
 _LOCAL_AI_BATCH_LIMIT = 100
 _SCOUT_RELEVANT_TARGET = 10
 _X_MIN_PAGE_SIZE = 10
+_CONTINUATION_CARRIER_KEYS = (
+    "retrieval_query",
+    "retrieval_query_variants",
+    "retrieval_relaxation_level",
+    "retrieval_specificity",
+    "retrieval_language_mode",
+    "x_search_scope",
+    "x_search_query",
+    "x_next_token",
+    "x_continuation_generation",
+)
 
 
 class ScoutActivities:
@@ -146,6 +157,7 @@ class ScoutActivities:
         )
         discovered: list[CandidateContent] = []
         retrieval_spent = 0
+        latest_continuation_state: dict[str, object] | None = None
 
         async for search_round in self._query_planner.search_rounds(
             query_plan,
@@ -157,6 +169,7 @@ class ScoutActivities:
             for connector in connectors:
                 pagination_token: str | None = None
                 continuation_generation = 0
+                round_continuation_state: dict[str, object] | None = None
 
                 while True:
                     remaining_budget = self._retrieval_budget - retrieval_spent
@@ -194,6 +207,15 @@ class ScoutActivities:
                     except SourceConnectorUnavailable:
                         source_failure_code = "SOURCE_UNAVAILABLE"
                         break
+
+                    if isinstance(round_candidates, SourceSearchCandidates):
+                        round_continuation_state = _capture_continuation_state(
+                            round_candidates,
+                            search_round,
+                            continuation_generation=continuation_generation,
+                            previous=round_continuation_state,
+                        )
+                        latest_continuation_state = round_continuation_state
 
                     round_relevant = await self._rank_relevant_pool(
                         query_plan.query_variants,
@@ -309,6 +331,7 @@ class ScoutActivities:
             preview_ocr_weight=self._preview_ocr_weight,
             minimum_relevance=self._semantic_minimum_relevance,
         )
+        curated = _apply_continuation_state(curated, latest_continuation_state)
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
             if not self._attempt_store.lock_owned_attempt(
                 session,
@@ -608,6 +631,63 @@ def _with_retrieval_provenance(
     metadata["retrieval_language_mode"] = "+".join(search_round.preferred_languages)
     metadata["x_continuation_generation"] = continuation_generation
     return replace(candidate, connector_metadata=metadata)
+
+
+def _capture_continuation_state(
+    candidates: SourceSearchCandidates,
+    search_round: ScoutQueryRound,
+    *,
+    continuation_generation: int,
+    previous: Mapping[str, object] | None,
+) -> dict[str, object]:
+    state = dict(previous or {})
+    if candidates:
+        provider_metadata = candidates[0].connector_metadata
+        for key in ("x_search_scope", "x_search_query"):
+            if key in provider_metadata:
+                state[key] = provider_metadata[key]
+
+    state["retrieval_query"] = search_round.query_variants[0]
+    state["retrieval_query_variants"] = list(search_round.query_variants)
+    state["retrieval_relaxation_level"] = search_round.relaxation_level
+    state["retrieval_specificity"] = search_round.specificity
+    state["retrieval_language_mode"] = "+".join(search_round.preferred_languages)
+    state["x_continuation_generation"] = continuation_generation
+    if candidates.next_token:
+        state["x_next_token"] = candidates.next_token
+    else:
+        state.pop("x_next_token", None)
+    return state
+
+
+def _apply_continuation_state(
+    candidates: tuple[CandidateContent, ...],
+    state: Mapping[str, object] | None,
+) -> tuple[CandidateContent, ...]:
+    if not candidates or state is None:
+        return candidates
+
+    target_level = state.get("retrieval_relaxation_level")
+    target_language_mode = state.get("retrieval_language_mode")
+    carrier_index: int | None = None
+    for index, candidate in enumerate(candidates):
+        metadata = candidate.connector_metadata
+        if (
+            metadata.get("retrieval_relaxation_level") == target_level
+            and metadata.get("retrieval_language_mode") == target_language_mode
+        ):
+            carrier_index = index
+            break
+    if carrier_index is None:
+        return candidates
+
+    carrier = candidates[carrier_index]
+    metadata = dict(carrier.connector_metadata)
+    for key in _CONTINUATION_CARRIER_KEYS:
+        metadata.pop(key, None)
+    metadata.update(state)
+    updated = replace(carrier, connector_metadata=metadata)
+    return candidates[:carrier_index] + (updated,) + candidates[carrier_index + 1 :]
 
 
 def _deduplicate(candidates: list[CandidateContent]) -> tuple[CandidateContent, ...]:
