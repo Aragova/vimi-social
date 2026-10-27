@@ -2,6 +2,7 @@ import httpx
 import pytest
 
 from vimi_social.domain.source import ScoutSearchRequest
+from vimi_social.source.connectors import SourceSearchCandidates
 from vimi_social.source.x_connector import XSourceConnector
 
 
@@ -224,4 +225,30 @@ async def test_x_recent_search_stops_on_repeated_pagination_token() -> None:
     assert len(candidates) == 20
     assert calls == 2
     assert "x_next_token" not in candidates[0].connector_metadata
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_x_search_keeps_next_token_when_page_has_no_convertible_candidates() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        payload = _page(1, 10, next_token="page-3")
+        payload["includes"] = {"media": []}
+        return httpx.Response(200, json=payload)
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = XSourceConnector("test-token", client=http_client)
+
+    candidates = await connector.search(
+        ScoutSearchRequest(
+            intent="gay twink porno",
+            requested_sources=("x",),
+            preferred_languages=("en",),
+            max_results=10,
+            pagination_token="page-2",
+        )
+    )
+
+    assert isinstance(candidates, SourceSearchCandidates)
+    assert candidates == ()
+    assert candidates.next_token == "page-3"
     await http_client.aclose()
