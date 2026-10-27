@@ -56,9 +56,9 @@ def test_taste_affinity_breaks_ties_between_relevant_candidates() -> None:
 
     assert [candidate.source_id for candidate in ranked] == ["preferred", "ordinary"]
     assert ranked[0].connector_metadata["curator_personal_affinity_score"] == 1.0
-    assert ranked[0].connector_metadata["curator_personalized_score"] > ranked[1].connector_metadata[
-        "curator_personalized_score"
-    ]
+    preferred_score = ranked[0].connector_metadata["curator_personalized_score"]
+    ordinary_score = ranked[1].connector_metadata["curator_personalized_score"]
+    assert preferred_score > ordinary_score
 
 
 def test_taste_affinity_cannot_rescue_irrelevant_broadened_candidate() -> None:
