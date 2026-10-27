@@ -57,6 +57,18 @@ def test_preview_selector_always_protects_first_telegram_page() -> None:
     )
 
 
+def test_preview_selector_preserves_global_head_across_transport_batches() -> None:
+    candidates = tuple(_candidate(index) for index in range(120))
+
+    selected_all = select_preview_evidence_candidates(candidates, limit=120)
+    selected_second_batch = select_preview_evidence_candidates(candidates[100:], limit=20)
+
+    assert [candidate.source_id for candidate in selected_all] == [
+        str(index) for index in range(10)
+    ]
+    assert selected_second_batch == ()
+
+
 def test_preview_selector_adds_only_uncertain_candidates_below_head() -> None:
     candidates = tuple(
         _candidate(
@@ -88,6 +100,37 @@ def test_preview_selector_treats_missing_gate_metadata_as_uncertain() -> None:
 
     assert selected[-1].source_id == "10"
     assert selected[-1].connector_metadata["preview_evidence_reason"] == "text_uncertain"
+
+
+def test_preview_selector_treats_missing_global_rank_as_uncertain() -> None:
+    candidate = _candidate(100)
+    metadata = dict(candidate.connector_metadata)
+    metadata.pop("curator_rank")
+    candidate = CandidateContent(
+        id=candidate.id,
+        source=candidate.source,
+        source_id=candidate.source_id,
+        source_url=candidate.source_url,
+        author=candidate.author,
+        published_at=candidate.published_at,
+        media_type=candidate.media_type,
+        duration_ms=candidate.duration_ms,
+        width=candidate.width,
+        height=candidate.height,
+        title=candidate.title,
+        caption=candidate.caption,
+        tags=candidate.tags,
+        engagement=candidate.engagement,
+        adult_classification=candidate.adult_classification,
+        explicitness_score=candidate.explicitness_score,
+        provenance_hint=candidate.provenance_hint,
+        availability=candidate.availability,
+        connector_metadata=metadata,
+    )
+
+    selected = select_preview_evidence_candidates((candidate,), limit=50)
+
+    assert selected[0].connector_metadata["preview_evidence_reason"] == "ranking_uncertain"
 
 
 def test_preview_selector_honors_hard_limit() -> None:
