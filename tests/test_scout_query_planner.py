@@ -54,7 +54,7 @@ async def test_multilingual_planner_keeps_full_ru_and_adds_full_en_variant() -> 
 
 
 @pytest.mark.asyncio
-async def test_planner_preserves_quotes_without_generating_truncated_queries() -> None:
+async def test_planner_preserves_quotes_in_ranking_target() -> None:
     planner = MultilingualQueryPlanner()
     plan = await planner.plan('Find videos about "night market" Bangkok', ("en",))
 
@@ -76,7 +76,7 @@ async def test_multilingual_planner_normalizes_local_full_intent_translation() -
 
 
 @pytest.mark.asyncio
-async def test_ru_en_rounds_preserve_every_full_intent_constraint() -> None:
+async def test_ru_en_rounds_use_provider_or_recall_but_keep_full_ranking_target() -> None:
     intent = "Найди видео про Бангкок ночной рынок красивый"
     translator = FakeTranslator("Bangkok night market beautiful")
     planner = MultilingualQueryPlanner(translator)
@@ -87,28 +87,61 @@ async def test_ru_en_rounds_preserve_every_full_intent_constraint() -> None:
         async for round_item in planner.search_rounds(plan, intent, ("ru", "en"))
     ]
 
+    assert plan.query_variants == (
+        "Бангкок ночной рынок красивый",
+        "Bangkok night market beautiful",
+    )
     assert [item.query_variants for item in rounds] == [
-        ("Бангкок ночной рынок красивый",),
-        (
-            "Бангкок ночной рынок красивый",
-            "Bangkok night market beautiful",
-        ),
+        ("Бангкок", "ночной", "рынок", "красивый"),
+        ("Bangkok", "night", "market", "beautiful"),
+        ("Bangkok", "night", "market", "beautiful"),
+        ("market",),
     ]
     assert [item.preferred_languages for item in rounds] == [
         ("ru",),
-        ("ru", "en"),
+        ("en",),
+        (),
+        (),
     ]
-    assert [item.relaxation_level for item in rounds] == [0, 0]
-    assert [item.specificity for item in rounds] == [1.0, 1.0]
+    assert [item.relaxation_level for item in rounds] == [0, 1, 2, 3]
+    assert [item.specificity for item in rounds] == [0.25, 0.25, 0.25, 0.25]
     assert [item.strategy for item in rounds] == [
-        "full_intent_primary",
-        "full_intent_multilingual",
+        "provider_or_primary",
+        "provider_or_translated",
+        "provider_or_language_broadening",
+        "provider_anchor_fallback",
     ]
     assert translator.calls == [intent]
 
 
 @pytest.mark.asyncio
-async def test_english_query_broadens_language_without_dropping_constraint() -> None:
+async def test_sparse_staging_query_becomes_word_level_or_recall() -> None:
+    intent = "Гей порно твинк молодые"
+    translator = FakeTranslator("Gay porn twink young")
+    planner = MultilingualQueryPlanner(translator)
+    plan = await planner.plan(intent, ("ru", "en"))
+
+    rounds = [
+        round_item
+        async for round_item in planner.search_rounds(plan, intent, ("ru", "en"))
+    ]
+
+    assert [item.query_variants for item in rounds] == [
+        ("Гей", "порно", "твинк", "молодые"),
+        ("Gay", "porn", "twink", "young"),
+        ("Gay", "porn", "twink", "young"),
+        ("twink",),
+    ]
+    assert [item.preferred_languages for item in rounds] == [
+        ("ru",),
+        ("en",),
+        (),
+        (),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_english_query_uses_or_then_language_broadening() -> None:
     planner = MultilingualQueryPlanner()
     intent = "Find videos about Bangkok night market beautiful"
     plan = await planner.plan(intent, ("en",))
@@ -119,20 +152,17 @@ async def test_english_query_broadens_language_without_dropping_constraint() -> 
     ]
 
     assert [item.query_variants for item in rounds] == [
-        ("Bangkok night market beautiful",),
-        ("Bangkok night market beautiful",),
+        ("Bangkok", "night", "market", "beautiful"),
+        ("Bangkok", "night", "market", "beautiful"),
+        ("market",),
     ]
-    assert [item.preferred_languages for item in rounds] == [("en",), ()]
-    assert [item.relaxation_level for item in rounds] == [0, 1]
-    assert [item.specificity for item in rounds] == [1.0, 1.0]
-    assert [item.strategy for item in rounds] == [
-        "full_intent_primary",
-        "full_intent_language_broadening",
-    ]
+    assert [item.preferred_languages for item in rounds] == [("en",), (), ()]
+    assert [item.relaxation_level for item in rounds] == [0, 1, 2]
+    assert [item.specificity for item in rounds] == [0.25, 0.25, 0.25]
 
 
 @pytest.mark.asyncio
-async def test_cyrillic_en_only_uses_full_translation_then_language_broadening() -> None:
+async def test_cyrillic_en_only_uses_translated_or_terms() -> None:
     intent = "Найди видео про ночной Бангкок"
     translator = FakeTranslator("Bangkok at night")
     planner = MultilingualQueryPlanner(translator)
@@ -144,19 +174,15 @@ async def test_cyrillic_en_only_uses_full_translation_then_language_broadening()
     ]
 
     assert [item.query_variants for item in rounds] == [
-        ("Bangkok at night",),
-        ("Bangkok at night",),
+        ("Bangkok", "night"),
+        ("Bangkok", "night"),
     ]
     assert [item.preferred_languages for item in rounds] == [("en",), ()]
     assert [item.relaxation_level for item in rounds] == [0, 1]
-    assert [item.strategy for item in rounds] == [
-        "full_intent_translated",
-        "full_intent_language_broadening",
-    ]
 
 
 @pytest.mark.asyncio
-async def test_multilingual_planner_falls_back_without_dropping_terms() -> None:
+async def test_multilingual_planner_falls_back_to_primary_or_terms_without_translation() -> None:
     translator = FakeTranslator(None)
     planner = MultilingualQueryPlanner(translator)
     intent = "Найди видео про ночной Бангкок"
@@ -169,11 +195,10 @@ async def test_multilingual_planner_falls_back_without_dropping_terms() -> None:
 
     assert plan.query_variants == ("ночной Бангкок",)
     assert [item.query_variants for item in rounds] == [
-        ("ночной Бангкок",),
-        ("ночной Бангкок",),
+        ("ночной", "Бангкок"),
+        ("ночной", "Бангкок"),
     ]
     assert [item.preferred_languages for item in rounds] == [("ru",), ()]
-    assert [item.relaxation_level for item in rounds] == [0, 1]
 
 
 @pytest.mark.asyncio

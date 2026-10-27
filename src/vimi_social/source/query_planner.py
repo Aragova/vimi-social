@@ -17,6 +17,37 @@ _ENGLISH_COMMAND_PREFIX = re.compile(
     re.IGNORECASE,
 )
 _CYRILLIC = re.compile(r"[\u0400-\u04FF]")
+_RECALL_TOKEN = re.compile(r"[^\W_]+(?:[-'][^\W_]+)*", re.UNICODE)
+_RECALL_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "at",
+    "about",
+    "for",
+    "in",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "with",
+    "в",
+    "для",
+    "и",
+    "из",
+    "или",
+    "к",
+    "на",
+    "\u043e",
+    "\u043e\u0431",
+    "по",
+    "про",
+    "\u0441",
+    "\u0441\u043e",
+}
+_MAX_PROVIDER_OR_TERMS = 4
+_OR_RECALL_MAX_PAGES = 2
 
 
 class EnglishIntentTranslator(Protocol):
@@ -30,6 +61,7 @@ class ScoutQueryRound:
     relaxation_level: int
     specificity: float
     strategy: str = "full_intent"
+    max_pages: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,13 +72,12 @@ class ScoutQueryPlan:
 
 
 class MultilingualQueryPlanner:
-    """Build conservative retrieval rounds that preserve the complete user intent.
+    """Separate broad provider recall from full-intent relevance ranking.
 
-    Retrieval must not silently delete semantic constraints just to broaden recall. The
-    planner therefore keeps the normalized full intent intact and broadens only language
-    coverage. Translation is a reformulation, not a license to drop terms. More granular
-    constraint checks belong in downstream ranking/reranking stages where the original
-    intent remains available.
+    X retrieval uses bounded word-level OR queries so one extra adjective cannot hide
+    otherwise relevant media. The complete normalized RU/EN query variants remain in the
+    plan and continue to drive semantic, visual, OCR and final curator relevance. In
+    other words: X is responsible for recall; ViMi is responsible for precision.
     """
 
     def __init__(self, translator: EnglishIntentTranslator | None = None) -> None:
@@ -80,13 +111,7 @@ class MultilingualQueryPlanner:
         intent: str,
         preferred_languages: tuple[str, ...],
     ) -> AsyncIterator[ScoutQueryRound]:
-        """Yield full-intent rounds, broadening language scope rather than semantics.
-
-        A single-language request first keeps its provider language filter. If downstream
-        curation still has too few relevant candidates, the next round removes only that
-        language filter while retaining the complete normalized intent. Cyrillic RU+EN
-        requests instead broaden into the complete bilingual reformulation.
-        """
+        """Yield bounded OR-recall rounds while preserving full intent for ranking."""
 
         del intent
         if not plan.retrieval_queries:
@@ -101,89 +126,100 @@ class MultilingualQueryPlanner:
         )
         wants_english = "en" in normalized_languages
         wants_russian = "ru" in normalized_languages
-        query = plan.retrieval_queries[0]
-        is_cyrillic = _CYRILLIC.search(query) is not None
+        primary = plan.retrieval_queries[0]
+        is_cyrillic = _CYRILLIC.search(primary) is not None
         translation_available = len(plan.query_variants) > 1
 
         if is_cyrillic:
             if wants_russian:
-                yield ScoutQueryRound(
-                    query_variants=(query,),
+                yield _or_recall_round(
+                    primary,
                     preferred_languages=("ru",),
                     relaxation_level=0,
-                    specificity=1.0,
-                    strategy="full_intent_primary",
+                    strategy="provider_or_primary",
                 )
 
             if wants_english and translation_available:
                 english_variant = plan.query_variants[-1]
-                if wants_russian:
-                    yield ScoutQueryRound(
-                        query_variants=tuple(dict.fromkeys((query, english_variant))),
-                        preferred_languages=("ru", "en"),
-                        relaxation_level=0,
-                        specificity=1.0,
-                        strategy="full_intent_multilingual",
-                    )
-                else:
-                    yield ScoutQueryRound(
-                        query_variants=(english_variant,),
-                        preferred_languages=("en",),
-                        relaxation_level=0,
-                        specificity=1.0,
-                        strategy="full_intent_translated",
-                    )
-                    yield ScoutQueryRound(
-                        query_variants=(english_variant,),
-                        preferred_languages=(),
-                        relaxation_level=1,
-                        specificity=1.0,
-                        strategy="full_intent_language_broadening",
-                    )
+                yield _or_recall_round(
+                    english_variant,
+                    preferred_languages=("en",),
+                    relaxation_level=1 if wants_russian else 0,
+                    strategy="provider_or_translated",
+                )
+                yield _or_recall_round(
+                    english_variant,
+                    preferred_languages=(),
+                    relaxation_level=2 if wants_russian else 1,
+                    strategy="provider_or_language_broadening",
+                )
+                anchor = _anchor_round(
+                    english_variant,
+                    preferred_languages=(),
+                    relaxation_level=3 if wants_russian else 2,
+                )
+                if anchor is not None:
+                    yield anchor
                 return
 
             if wants_russian:
-                yield ScoutQueryRound(
-                    query_variants=(query,),
+                yield _or_recall_round(
+                    primary,
                     preferred_languages=(),
                     relaxation_level=1,
-                    specificity=1.0,
-                    strategy="full_intent_language_broadening",
+                    strategy="provider_or_language_broadening",
                 )
+                anchor = _anchor_round(
+                    primary,
+                    preferred_languages=(),
+                    relaxation_level=2,
+                )
+                if anchor is not None:
+                    yield anchor
                 return
 
-            yield ScoutQueryRound(
-                query_variants=(query,),
+            yield _or_recall_round(
+                primary,
                 preferred_languages=normalized_languages,
                 relaxation_level=0,
-                specificity=1.0,
-                strategy="full_intent_primary",
+                strategy="provider_or_primary",
             )
             if len(normalized_languages) == 1:
-                yield ScoutQueryRound(
-                    query_variants=(query,),
+                yield _or_recall_round(
+                    primary,
                     preferred_languages=(),
                     relaxation_level=1,
-                    specificity=1.0,
-                    strategy="full_intent_language_broadening",
+                    strategy="provider_or_language_broadening",
                 )
+            anchor = _anchor_round(
+                primary,
+                preferred_languages=(),
+                relaxation_level=2,
+            )
+            if anchor is not None:
+                yield anchor
             return
 
-        yield ScoutQueryRound(
-            query_variants=(query,),
+        yield _or_recall_round(
+            primary,
             preferred_languages=normalized_languages,
             relaxation_level=0,
-            specificity=1.0,
-            strategy="full_intent_primary",
+            strategy="provider_or_primary",
         )
         if len(normalized_languages) == 1:
-            yield ScoutQueryRound(
-                query_variants=(query,),
+            yield _or_recall_round(
+                primary,
                 preferred_languages=(),
                 relaxation_level=1,
-                specificity=1.0,
-                strategy="full_intent_language_broadening",
+                strategy="provider_or_language_broadening",
             )
+        anchor = _anchor_round(
+            primary,
+            preferred_languages=(),
+            relaxation_level=2,
+        )
+        if anchor is not None:
+            yield anchor
 
 
 class FallbackEnglishIntentTranslator:
@@ -272,6 +308,84 @@ def normalize_search_intent(intent: str) -> str:
             normalized = stripped
             break
     return normalized
+
+
+def _or_recall_round(
+    value: str,
+    *,
+    preferred_languages: tuple[str, ...],
+    relaxation_level: int,
+    strategy: str,
+) -> ScoutQueryRound:
+    tokens = _recall_content_tokens(value)
+    if not tokens:
+        tokens = (value,)
+    variants = _ordered_or_variants(tokens)
+    specificity = 1.0 if len(tokens) == 1 else 1 / len(tokens)
+    return ScoutQueryRound(
+        query_variants=variants,
+        preferred_languages=preferred_languages,
+        relaxation_level=relaxation_level,
+        specificity=specificity,
+        strategy=strategy,
+        max_pages=_OR_RECALL_MAX_PAGES if len(tokens) >= 3 else None,
+    )
+
+
+def _anchor_round(
+    value: str,
+    *,
+    preferred_languages: tuple[str, ...],
+    relaxation_level: int,
+) -> ScoutQueryRound | None:
+    tokens = _recall_content_tokens(value)
+    if len(tokens) < 3:
+        return None
+    pivot = tokens[_recall_pivot_index(tokens)]
+    return ScoutQueryRound(
+        query_variants=(pivot,),
+        preferred_languages=preferred_languages,
+        relaxation_level=relaxation_level,
+        specificity=1 / len(tokens),
+        strategy="provider_anchor_fallback",
+        max_pages=None,
+    )
+
+
+def _ordered_or_variants(tokens: tuple[str, ...]) -> tuple[str, ...]:
+    if len(tokens) <= _MAX_PROVIDER_OR_TERMS:
+        return tokens
+    pivot_index = _recall_pivot_index(tokens)
+    ordered_indices = [pivot_index]
+    ordered_indices.extend(
+        sorted(
+            (index for index in range(len(tokens)) if index != pivot_index),
+            key=lambda index: (abs(index - pivot_index), index),
+        )
+    )
+    selected = [tokens[index] for index in ordered_indices[:_MAX_PROVIDER_OR_TERMS]]
+    return tuple(dict.fromkeys(selected))
+
+
+def _recall_content_tokens(value: str) -> tuple[str, ...]:
+    tokens = [
+        token
+        for token in _RECALL_TOKEN.findall(value)
+        if token.casefold() not in _RECALL_STOPWORDS
+    ]
+    return tuple(dict.fromkeys(tokens))
+
+
+def _recall_pivot_index(tokens: tuple[str, ...]) -> int:
+    midpoint = (len(tokens) - 1) / 2
+    return min(
+        range(len(tokens)),
+        key=lambda index: (
+            abs(index - midpoint),
+            -len(tokens[index]),
+            index,
+        ),
+    )
 
 
 def _response_output_text(payload: dict[str, object]) -> str | None:

@@ -151,10 +151,11 @@ async def test_ai_search_task_is_durable_metered_and_activity_retry_is_idempoten
 
         assert first_result.candidate_count == 1
         assert second_result.candidate_count == 1
-        assert connector.calls == 2
+        assert connector.calls == 3
         assert connector.query_variants == [
-            ("ночной Бангкок",),
-            ("ночной Бангкок", "Bangkok night"),
+            ("ночной", "Бангкок"),
+            ("Bangkok", "night"),
+            ("Bangkok", "night"),
         ]
         assert translator.calls == ["Найди видео про ночной Бангкок"]
 
@@ -169,10 +170,10 @@ async def test_ai_search_task_is_durable_metered_and_activity_retry_is_idempoten
             candidates = repository.list_candidates(session, task.id)
             assert len(candidates) == 1
             metadata = candidates[0].connector_metadata
-            assert metadata["retrieval_query"] == "ночной Бангкок"
-            assert metadata["retrieval_query_variants"] == ["ночной Бангкок"]
+            assert metadata["retrieval_query"] == "ночной"
+            assert metadata["retrieval_query_variants"] == ["ночной", "Бангкок"]
             assert metadata["retrieval_relaxation_level"] == 0
-            assert metadata["retrieval_specificity"] == 1.0
+            assert metadata["retrieval_specificity"] == 0.5
             assert metadata["retrieval_language_mode"] == "ru"
 
             counters = session.execute(
