@@ -2,7 +2,6 @@ import math
 import re
 from collections.abc import Iterable
 from dataclasses import replace
-from typing import TypeVar
 
 from vimi_social.domain.source import CandidateContent
 from vimi_social.source.curator import CandidateCurator
@@ -11,7 +10,6 @@ _MIN_VIDEO_DURATION_MS = 60_000
 _URL = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 _MENTION = re.compile(r"(?<!\w)@[\w_]+", re.UNICODE)
 _TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
-_T = TypeVar("_T")
 
 
 def filter_scout_candidates(
@@ -153,7 +151,7 @@ def _selected_indices(
     return tuple(by_key[(candidate.source, candidate.source_id)] for candidate in filtered)
 
 
-def _align_optional(
+def _align_optional[_T](
     values: tuple[_T, ...] | None,
     indices: tuple[int, ...],
 ) -> tuple[_T, ...] | None:
