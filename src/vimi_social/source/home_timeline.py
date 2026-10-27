@@ -1,4 +1,5 @@
 from contextvars import ContextVar
+from dataclasses import replace
 
 from temporalio import activity
 
@@ -55,4 +56,10 @@ def _merge_home_timeline_seeds(
         if key in seen:
             continue
         seen.add(key)
-        discovered.append(seed)
+        metadata = dict(seed.connector_metadata)
+        # Home Timeline is personalized but not constrained by the active search
+        # intent. Mark it as maximally broad so CandidateCurator keeps the normal
+        # absolute relevance gate active even when semantic scoring is unavailable.
+        metadata["retrieval_specificity"] = 0.0
+        metadata["retrieval_strategy"] = "home_timeline_personalized_seed"
+        discovered.append(replace(seed, connector_metadata=metadata))
