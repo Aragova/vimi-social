@@ -1,5 +1,8 @@
 from vimi_social.domain.source import AdultClassification, CandidateContent
-from vimi_social.source.candidate_filter import filter_scout_candidates
+from vimi_social.source.candidate_filter import (
+    FilteringCandidateCurator,
+    filter_scout_candidates,
+)
 
 
 def _candidate(
@@ -108,3 +111,41 @@ def test_filter_suppresses_continuation_duplicate_against_existing_results() -> 
     filtered = filter_scout_candidates(new, existing=existing)
 
     assert [candidate.source_id for candidate in filtered] == ["fresh"]
+
+
+def test_filtered_curator_removes_short_video_from_ranked_results() -> None:
+    short = _candidate("short", "Bangkok nightlife short clip", duration_ms=15_000)
+    long = _candidate("long", "Bangkok nightlife long documentary", duration_ms=600_000)
+
+    ranked = FilteringCandidateCurator().rank(
+        (short, long),
+        query_variants=("Bangkok nightlife",),
+        preferred_languages=("en",),
+        limit=10,
+    )
+
+    assert [candidate.source_id for candidate in ranked] == ["long"]
+
+
+def test_filtered_curator_prefers_five_to_thirty_minute_video_on_equal_relevance() -> None:
+    one_minute = _candidate(
+        "one-minute",
+        "Bangkok nightlife compact tour",
+        duration_ms=90_000,
+    )
+    ten_minutes = _candidate(
+        "ten-minutes",
+        "Bangkok nightlife extended tour",
+        duration_ms=600_000,
+    )
+
+    ranked = FilteringCandidateCurator().rank(
+        (one_minute, ten_minutes),
+        query_variants=("Bangkok nightlife",),
+        preferred_languages=("en",),
+        limit=10,
+    )
+
+    assert [candidate.source_id for candidate in ranked] == ["ten-minutes", "one-minute"]
+    assert ranked[0].connector_metadata["curator_duration_preference_score"] == 1.0
+    assert ranked[1].connector_metadata["curator_duration_preference_score"] == 0.7
