@@ -121,8 +121,21 @@ def test_candidate_affinity_is_explainable_and_zero_for_unrelated_content() -> N
         _profile(),
     )
 
-    matching_metadata = matching.connector_metadata
-    assert matching_metadata["personal_affinity_score"] > 0.8
-    assert "author:fav-author" in matching_metadata["personal_affinity_reasons"]
-    assert "hashtag:twink" in matching_metadata["personal_affinity_reasons"]
-    assert unrelated.connector_metadata["personal_affinity_score"] == 0.0
+    assert _metadata_float(matching, "personal_affinity_score") > 0.8
+    reasons = _metadata_strings(matching, "personal_affinity_reasons")
+    assert "author:fav-author" in reasons
+    assert "hashtag:twink" in reasons
+    assert _metadata_float(unrelated, "personal_affinity_score") == 0.0
+
+
+def _metadata_float(candidate: CandidateContent, key: str) -> float:
+    value = candidate.connector_metadata.get(key)
+    assert isinstance(value, int | float) and not isinstance(value, bool)
+    return float(value)
+
+
+def _metadata_strings(candidate: CandidateContent, key: str) -> tuple[str, ...]:
+    value = candidate.connector_metadata.get(key)
+    assert isinstance(value, list)
+    assert all(isinstance(item, str) for item in value)
+    return tuple(item for item in value if isinstance(item, str))
