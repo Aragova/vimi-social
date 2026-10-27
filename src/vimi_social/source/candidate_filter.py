@@ -151,10 +151,10 @@ def _selected_indices(
     return tuple(by_key[(candidate.source, candidate.source_id)] for candidate in filtered)
 
 
-def _align_optional[_T](
-    values: tuple[_T, ...] | None,
+def _align_optional[T](
+    values: tuple[T, ...] | None,
     indices: tuple[int, ...],
-) -> tuple[_T, ...] | None:
+) -> tuple[T, ...] | None:
     if values is None:
         return None
     return tuple(values[index] for index in indices)
