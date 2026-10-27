@@ -109,7 +109,7 @@ class BudgetCappedRefillConnector:
                 _candidate(
                     "long-budget-1",
                     duration_ms=600_000,
-                    text_value="long budget candidate unique one",
+                    text_value="bangkok night market long video budget candidate unique one",
                 ),
                 *(
                     _candidate(
@@ -147,7 +147,9 @@ class ExhaustedRefillConnector:
                     _candidate(
                         "long-exhausted-1",
                         duration_ms=600_000,
-                        text_value="long exhausted candidate unique one",
+                        text_value=(
+                            "bangkok night market long video exhausted candidate unique one"
+                        ),
                     ),
                 ),
                 next_token="page-2",
@@ -179,7 +181,9 @@ class AmbiguousRefillFailureConnector:
                     _candidate(
                         "long-ambiguous-1",
                         duration_ms=600_000,
-                        text_value="long ambiguous candidate unique one",
+                        text_value=(
+                            "bangkok night market long video ambiguous candidate unique one"
+                        ),
                     ),
                 ),
                 next_token="page-2",
