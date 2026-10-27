@@ -62,9 +62,6 @@ async def test_x_recent_search_follows_next_token_and_keeps_already_read_overflo
         )
     )
 
-    # X requires at least 10 posts per page. The second request therefore reads
-    # 10 even though only 5 remained in the nominal budget. Those posts have
-    # already been returned/billed, so ViMi keeps them instead of discarding them.
     assert len(candidates) == 20
     assert [candidate.source_id for candidate in candidates] == [str(i) for i in range(1, 21)]
     assert len(requests) == 2
@@ -251,4 +248,37 @@ async def test_x_search_keeps_next_token_when_page_has_no_convertible_candidates
     assert isinstance(candidates, SourceSearchCandidates)
     assert candidates == ()
     assert candidates.next_token == "page-3"
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_x_empty_candidate_page_advances_token_before_later_rate_limit() -> None:
+    calls = 0
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            payload = _page(1, 10, next_token="page-3")
+            payload["includes"] = {"media": []}
+            return httpx.Response(200, json=payload)
+        return httpx.Response(429, headers={"retry-after": "60"})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = XSourceConnector("test-token", client=http_client)
+
+    candidates = await connector.search(
+        ScoutSearchRequest(
+            intent="gay twink porno",
+            requested_sources=("x",),
+            preferred_languages=("en",),
+            max_results=20,
+            pagination_token="page-2",
+        )
+    )
+
+    assert isinstance(candidates, SourceSearchCandidates)
+    assert candidates == ()
+    assert candidates.next_token == "page-3"
+    assert calls == 2
     await http_client.aclose()
