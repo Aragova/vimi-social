@@ -18,7 +18,7 @@ def upgrade() -> None:
             ADD CONSTRAINT destination_account_connected_member_fk
                 FOREIGN KEY (tenant_id, connected_user_id)
                 REFERENCES workspace_membership(tenant_id, user_id)
-                ON DELETE SET NULL;
+                ON DELETE SET NULL (connected_user_id);
 
         CREATE UNIQUE INDEX destination_account_connected_user_platform_unique
             ON destination_account (tenant_id, platform, connected_user_id)
