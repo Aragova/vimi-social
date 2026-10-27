@@ -46,34 +46,6 @@ def select_preview_evidence_candidates(
     return tuple(selected)
 
 
-def apply_preview_selection_metadata(
-    candidates: tuple[CandidateContent, ...],
-    selected: tuple[CandidateContent, ...],
-) -> tuple[CandidateContent, ...]:
-    """Persist preview routing provenance on the candidates sent to final ranking."""
-
-    selected_metadata = {
-        (candidate.source, candidate.source_id): candidate.connector_metadata
-        for candidate in selected
-    }
-    result: list[CandidateContent] = []
-    for candidate in candidates:
-        key = (candidate.source, candidate.source_id)
-        metadata = dict(candidate.connector_metadata)
-        routing_metadata = selected_metadata.get(key)
-        metadata["preview_evidence_selected"] = routing_metadata is not None
-        if routing_metadata is not None:
-            metadata["preview_evidence_reason"] = routing_metadata[
-                "preview_evidence_reason"
-            ]
-            if "preview_evidence_gate_margin" in routing_metadata:
-                metadata["preview_evidence_gate_margin"] = routing_metadata[
-                    "preview_evidence_gate_margin"
-                ]
-        result.append(replace(candidate, connector_metadata=metadata))
-    return tuple(result)
-
-
 def _gate_margin(candidate: CandidateContent) -> float | None:
     gate = _metadata_float(candidate, "curator_text_gate_score")
     minimum = _metadata_float(candidate, "curator_minimum_text_relevance_score")
