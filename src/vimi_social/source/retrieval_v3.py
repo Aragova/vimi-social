@@ -85,6 +85,10 @@ class ConceptQueryPlanner(MultilingualQueryPlanner):
             if language.strip()
         }
         emitted: set[tuple[str, ...]] = set()
+        # PersonalizedQueryPlanner, when present, owns level 0. Every round emitted by
+        # this V3 delegate gets a unique, monotonically increasing level so continuation
+        # state can never confuse an earlier concept cursor with a later broad round.
+        next_round_level = 1
 
         for variant in plan.query_variants:
             concepts = _concept_variants(variant)
@@ -105,18 +109,20 @@ class ConceptQueryPlanner(MultilingualQueryPlanner):
             yield ScoutQueryRound(
                 query_variants=concepts,
                 preferred_languages=round_languages,
-                relaxation_level=0,
+                relaxation_level=next_round_level,
                 specificity=specificity,
                 strategy="provider_concept_recall",
                 max_pages=1,
             )
+            next_round_level += 1
 
         async for search_round in self._delegate.search_rounds(
             plan,
             intent,
             preferred_languages,
         ):
-            yield search_round
+            yield replace(search_round, relaxation_level=next_round_level)
+            next_round_level += 1
 
 
 class RetrievalV3ScoutActivities(PersonalizedScoutActivities):
