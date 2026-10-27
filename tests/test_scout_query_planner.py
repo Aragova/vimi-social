@@ -123,6 +123,7 @@ async def test_english_query_broadens_language_without_dropping_constraint() -> 
         ("Bangkok night market beautiful",),
     ]
     assert [item.preferred_languages for item in rounds] == [("en",), ()]
+    assert [item.relaxation_level for item in rounds] == [0, 1]
     assert [item.specificity for item in rounds] == [1.0, 1.0]
     assert [item.strategy for item in rounds] == [
         "full_intent_primary",
@@ -147,6 +148,7 @@ async def test_cyrillic_en_only_uses_full_translation_then_language_broadening()
         ("Bangkok at night",),
     ]
     assert [item.preferred_languages for item in rounds] == [("en",), ()]
+    assert [item.relaxation_level for item in rounds] == [0, 1]
     assert [item.strategy for item in rounds] == [
         "full_intent_translated",
         "full_intent_language_broadening",
@@ -171,6 +173,7 @@ async def test_multilingual_planner_falls_back_without_dropping_terms() -> None:
         ("ночной Бангкок",),
     ]
     assert [item.preferred_languages for item in rounds] == [("ru",), ()]
+    assert [item.relaxation_level for item in rounds] == [0, 1]
 
 
 @pytest.mark.asyncio
