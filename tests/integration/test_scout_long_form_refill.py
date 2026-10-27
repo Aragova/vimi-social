@@ -14,7 +14,11 @@ from vimi_social.domain.source import (
 )
 from vimi_social.source.activities import ScoutActivities
 from vimi_social.source.candidate_filter import FilteringCandidateCurator
-from vimi_social.source.connectors import SourceConnectorRegistry, SourceSearchCandidates
+from vimi_social.source.connectors import (
+    SourceConnectorRegistry,
+    SourceConnectorUnavailable,
+    SourceSearchCandidates,
+)
 from vimi_social.source.repository import SourceTaskRepository
 from vimi_social.source.service import SourceTaskService
 from vimi_social.telegram.identity import TelegramIdentityResolver, TelegramUpdateGuard
@@ -161,8 +165,37 @@ class ExhaustedRefillConnector:
         raise AssertionError("Exhausted refill must not request another page")
 
 
+class AmbiguousRefillFailureConnector:
+    source_name = "x"
+
+    def __init__(self) -> None:
+        self.requests: list[ScoutSearchRequest] = []
+
+    async def search(self, request: ScoutSearchRequest) -> tuple[CandidateContent, ...]:
+        self.requests.append(request)
+        if request.pagination_token is None:
+            return SourceSearchCandidates(
+                (
+                    _candidate(
+                        "long-ambiguous-1",
+                        duration_ms=600_000,
+                        text_value="long ambiguous candidate unique one",
+                    ),
+                ),
+                next_token="page-2",
+            )
+        if request.pagination_token == "page-2":
+            raise SourceConnectorUnavailable("ambiguous refill transport failure")
+        raise AssertionError("Ambiguous refill must not request another page")
+
+
 async def _run_scout(
-    connector: LongFormRefillConnector | BudgetCappedRefillConnector | ExhaustedRefillConnector,
+    connector: (
+        LongFormRefillConnector
+        | BudgetCappedRefillConnector
+        | ExhaustedRefillConnector
+        | AmbiguousRefillFailureConnector
+    ),
     *,
     retrieval_budget: int,
     telegram_user_id: int,
@@ -263,6 +296,7 @@ async def test_scout_refills_same_x_round_until_long_form_target_is_met() -> Non
     )
     assert any(
         candidate.connector_metadata.get("x_continuation_generation") == 1
+        and candidate.connector_metadata.get("x_page_start_token") == "page-2"
         and candidate.connector_metadata.get("x_next_token") == "page-3"
         for candidate in persisted
     )
@@ -286,6 +320,7 @@ async def test_scout_refill_stops_at_budget_and_advances_cursor_past_rejected_pa
     carrier = persisted[0]
     assert carrier.duration_ms == 600_000
     assert carrier.connector_metadata.get("x_continuation_generation") == 1
+    assert carrier.connector_metadata.get("x_page_start_token") == "page-2"
     assert carrier.connector_metadata.get("x_next_token") == "page-3"
 
 
@@ -305,4 +340,26 @@ async def test_scout_refill_retires_stale_cursor_when_rejected_page_is_exhausted
     assert len(persisted) == 1
     carrier = persisted[0]
     assert carrier.connector_metadata.get("x_continuation_generation") == 1
+    assert carrier.connector_metadata.get("x_page_start_token") == "page-2"
+    assert "x_next_token" not in carrier.connector_metadata
+
+
+@pytest.mark.asyncio
+async def test_scout_refill_retires_cursor_after_ambiguous_provider_failure() -> None:
+    connector = AmbiguousRefillFailureConnector()
+    result, persisted = await _run_scout(
+        connector,
+        retrieval_budget=60,
+        telegram_user_id=930038204,
+        update_id=830038204,
+        message_id=938204,
+    )
+
+    assert len(connector.requests) == 2
+    assert connector.requests[1].pagination_token == "page-2"
+    assert result.candidate_count == 1
+    assert len(persisted) == 1
+    carrier = persisted[0]
+    assert carrier.connector_metadata.get("x_continuation_generation") == 1
+    assert carrier.connector_metadata.get("x_page_start_token") == "page-2"
     assert "x_next_token" not in carrier.connector_metadata
