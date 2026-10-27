@@ -16,6 +16,10 @@ from vimi_social.publication.x_adapter import (
 from vimi_social.source.interest_profile import build_interest_profile
 from vimi_social.source.interest_repository import UserInterestProfileRepository
 from vimi_social.source.repository import SourceTaskRepository
+from vimi_social.source.x_oauth_refresh import (
+    XOAuthRefreshUnavailable,
+    XOAuthTokenManager,
+)
 from vimi_social.source.x_user_context import (
     XUserContextClient,
     XUserContextReauthRequired,
@@ -35,6 +39,7 @@ class XInterestProfileActivities:
         interest_repository: UserInterestProfileRepository | None = None,
         credential_resolver: EnvironmentCredentialResolver | None = None,
         client: XUserContextClient | None = None,
+        oauth_token_manager: XOAuthTokenManager | None = None,
         profile_ttl: timedelta = timedelta(hours=6),
         home_timeline_limit: int = 50,
     ) -> None:
@@ -43,6 +48,7 @@ class XInterestProfileActivities:
         self._interest_repository = interest_repository or UserInterestProfileRepository()
         self._credential_resolver = credential_resolver or EnvironmentCredentialResolver()
         self._client = client or XUserContextClient()
+        self._oauth_token_manager = oauth_token_manager
         self._profile_ttl = max(timedelta(minutes=15), profile_ttl)
         self._home_timeline_limit = max(0, min(100, home_timeline_limit))
 
@@ -82,14 +88,22 @@ class XInterestProfileActivities:
             credential_ref = account.credential_ref
 
         try:
-            access_token = self._credential_resolver.resolve(credential_ref)
+            access_token = self._resolve_access_token(credential_ref)
         except DestinationCredentialError:
             return XInterestSyncResult(XInterestSyncState.UNAVAILABLE)
 
         try:
             snapshot = await self._client.fetch_snapshot(access_token)
         except XUserContextReauthRequired:
-            return XInterestSyncResult(XInterestSyncState.REAUTH_REQUIRED)
+            refreshed = await self._refresh_access_token(credential_ref, access_token)
+            if refreshed is None:
+                return XInterestSyncResult(XInterestSyncState.REAUTH_REQUIRED)
+            try:
+                snapshot = await self._client.fetch_snapshot(refreshed)
+            except XUserContextReauthRequired:
+                return XInterestSyncResult(XInterestSyncState.REAUTH_REQUIRED)
+            except XUserContextUnavailable:
+                return XInterestSyncResult(XInterestSyncState.UNAVAILABLE)
         except XUserContextUnavailable:
             return XInterestSyncResult(XInterestSyncState.UNAVAILABLE)
 
@@ -150,7 +164,7 @@ class XInterestProfileActivities:
             external_user_id = profile.external_account_id
 
         try:
-            access_token = self._credential_resolver.resolve(credential_ref)
+            access_token = self._resolve_access_token(credential_ref)
         except DestinationCredentialError:
             return XTimelineSeedResult(failure_code="CREDENTIAL_UNAVAILABLE")
 
@@ -161,7 +175,19 @@ class XInterestProfileActivities:
                 max_results=self._home_timeline_limit,
             )
         except XUserContextReauthRequired:
-            return XTimelineSeedResult(failure_code="REAUTH_REQUIRED")
+            refreshed = await self._refresh_access_token(credential_ref, access_token)
+            if refreshed is None:
+                return XTimelineSeedResult(failure_code="REAUTH_REQUIRED")
+            try:
+                candidates, posts_read = await self._client.fetch_home_timeline_candidates(
+                    refreshed,
+                    external_user_id,
+                    max_results=self._home_timeline_limit,
+                )
+            except XUserContextReauthRequired:
+                return XTimelineSeedResult(failure_code="REAUTH_REQUIRED")
+            except (XUserContextScopeUnavailable, XUserContextUnavailable):
+                return XTimelineSeedResult(failure_code="TIMELINE_UNAVAILABLE")
         except (XUserContextScopeUnavailable, XUserContextUnavailable):
             return XTimelineSeedResult(failure_code="TIMELINE_UNAVAILABLE")
 
@@ -169,6 +195,27 @@ class XInterestProfileActivities:
             candidates=candidates,
             posts_read=posts_read,
         )
+
+    def _resolve_access_token(self, credential_ref: str) -> str:
+        manager = self._oauth_token_manager
+        if manager is not None and manager.supports(credential_ref):
+            managed = manager.current_access_token().strip()
+            if managed:
+                return managed
+        return self._credential_resolver.resolve(credential_ref)
+
+    async def _refresh_access_token(
+        self,
+        credential_ref: str,
+        rejected_access_token: str,
+    ) -> str | None:
+        manager = self._oauth_token_manager
+        if manager is None or not manager.supports(credential_ref):
+            return None
+        try:
+            return await manager.refresh_after_rejection(rejected_access_token)
+        except XOAuthRefreshUnavailable:
+            return None
 
     def _authorized_task(self, workflow_input: ScoutWorkflowInput) -> SourceTask:
         operation_key = OperationKey(workflow_input.operation_key)
