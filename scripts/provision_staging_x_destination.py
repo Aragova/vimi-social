@@ -1,6 +1,7 @@
 import argparse
 from uuid import UUID
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from vimi_social.db.base import build_engine
@@ -45,7 +46,20 @@ def main() -> int:
                 external_account_id=args.external_account_id,
                 display_name=args.display_name,
                 credential_ref=args.credential_ref,
-                connected_user_id=connected_user_id,
+            )
+            session.execute(
+                text(
+                    """
+                    UPDATE destination_account
+                    SET connected_user_id = :user_id,
+                        updated_at = clock_timestamp()
+                    WHERE id = :account_id
+                    """
+                ),
+                {
+                    "user_id": str(connected_user_id),
+                    "account_id": str(account.id),
+                },
             )
         print(
             "Provisioned X destination "
