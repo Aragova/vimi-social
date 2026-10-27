@@ -48,7 +48,11 @@ def _candidate(source_id: str, *, duration_ms: int, text_value: str) -> Candidat
         explicitness_score=None,
         provenance_hint="PUBLIC_X_POST_REUSE_RIGHTS_NOT_ESTABLISHED",
         availability="DISCOVERED_METADATA_ONLY",
-        connector_metadata={"media_key": f"7_{source_id}", "x_search_scope": "all", "x_search_query": "test"},
+        connector_metadata={
+            "media_key": f"7_{source_id}",
+            "x_search_scope": "all",
+            "x_search_query": "test",
+        },
     )
 
 
