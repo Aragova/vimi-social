@@ -2,6 +2,7 @@ import math
 import re
 from collections.abc import Iterable
 from dataclasses import replace
+from typing import TypeVar
 
 from vimi_social.domain.source import CandidateContent
 from vimi_social.source.curator import CandidateCurator
@@ -10,6 +11,7 @@ _MIN_VIDEO_DURATION_MS = 60_000
 _URL = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 _MENTION = re.compile(r"(?<!\w)@[\w_]+", re.UNICODE)
 _TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
+_T = TypeVar("_T")
 
 
 def filter_scout_candidates(
@@ -100,7 +102,7 @@ class FilteringCandidateCurator(CandidateCurator):
             query_variants=query_variants,
             preferred_languages=preferred_languages,
             limit=len(filtered),
-            semantic_scores=_align_required(semantic_scores, indices),
+            semantic_scores=_align_optional(semantic_scores, indices),
             visual_scores=_align_optional(visual_scores, indices),
             preview_ocr_texts=_align_optional(preview_ocr_texts, indices),
             preview_ocr_semantic_scores=_align_optional(
@@ -151,19 +153,10 @@ def _selected_indices(
     return tuple(by_key[(candidate.source, candidate.source_id)] for candidate in filtered)
 
 
-def _align_required(
-    values: tuple[float, ...] | None,
-    indices: tuple[int, ...],
-) -> tuple[float, ...] | None:
-    if values is None:
-        return None
-    return tuple(values[index] for index in indices)
-
-
 def _align_optional(
-    values: tuple[object, ...] | None,
+    values: tuple[_T, ...] | None,
     indices: tuple[int, ...],
-) -> tuple[object, ...] | None:
+) -> tuple[_T, ...] | None:
     if values is None:
         return None
     return tuple(values[index] for index in indices)
