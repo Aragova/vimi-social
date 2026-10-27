@@ -73,10 +73,11 @@ class CandidateCurator:
             candidate_minimum = _candidate_minimum_relevance(candidate, minimum_relevance)
             candidate_minimums[index] = candidate_minimum
             semantic_relevance = semantic_relevances[index]
-            if (
+            enforce_precision_gate = (
                 semantic_relevance is not None
-                and text_gate_scores[index] < candidate_minimum
-            ):
+                or _requires_full_intent_fallback_gate(candidate)
+            )
+            if enforce_precision_gate and text_gate_scores[index] < candidate_minimum:
                 continue
             eligible_indices.append(index)
 
@@ -208,6 +209,16 @@ def _candidate_minimum_relevance(candidate: CandidateContent, configured: float)
         _RETRIEVAL_BROADENING_SPAN * (1.0 - specificity)
     )
     return round(max(configured_minimum, min(1.0, dynamic_minimum)), 6)
+
+
+def _requires_full_intent_fallback_gate(candidate: CandidateContent) -> bool:
+    raw_specificity = candidate.connector_metadata.get("retrieval_specificity")
+    if (
+        not isinstance(raw_specificity, int | float)
+        or isinstance(raw_specificity, bool)
+    ):
+        return False
+    return float(raw_specificity) < 1.0
 
 
 def _score_based_text_relevance(lexical: float, semantic: float | None) -> float:
