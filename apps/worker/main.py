@@ -12,8 +12,11 @@ from vimi_social.media.delivery import MediaPreparationDeliveryActivities
 from vimi_social.publication.delivery import PublicationDeliveryActivities
 from vimi_social.publication.preview import PublicationPreviewActivities
 from vimi_social.source.activities import ScoutActivities
+from vimi_social.source.candidate_filter import (
+    FilteringCandidateCurator,
+    FilteringScoutContinuationActivities,
+)
 from vimi_social.source.connectors import SourceConnectorRegistry
-from vimi_social.source.continuation import ScoutContinuationActivities
 from vimi_social.source.query_planner import (
     EnglishIntentTranslator,
     FallbackEnglishIntentTranslator,
@@ -84,6 +87,7 @@ async def run() -> None:
     else:
         translator = None
     query_planner = MultilingualQueryPlanner(translator)
+    scout_curator = FilteringCandidateCurator()
 
     messenger: TelegramMessenger | None = None
     if settings.telegram_bot_token:
@@ -97,6 +101,7 @@ async def run() -> None:
         registry,
         messenger,
         query_planner=query_planner,
+        curator=scout_curator,
         semantic_scorer=local_ai_client,
         visual_scorer=visual_ai_client,
         preview_ocr_extractor=visual_ai_client,
@@ -107,11 +112,12 @@ async def run() -> None:
         retrieval_round_limit=settings.scout_retrieval_round_limit,
         preview_evidence_limit=settings.scout_preview_evidence_limit,
     )
-    scout_continuation = ScoutContinuationActivities(
+    scout_continuation = FilteringScoutContinuationActivities(
         session_factory,
         registry,
         messenger,
         query_planner=query_planner,
+        curator=scout_curator,
         semantic_scorer=local_ai_client,
         semantic_minimum_relevance=settings.semantic_relevance_min_score,
         batch_size=settings.scout_retrieval_round_limit,
