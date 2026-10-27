@@ -37,19 +37,19 @@ _CONCEPT_STOPWORDS = {
     "the",
     "to",
     "with",
-    "в",
-    "для",
-    "и",
-    "из",
-    "или",
-    "к",
-    "на",
-    "о",
-    "об",
-    "по",
-    "про",
-    "с",
-    "со",
+    "\u0432",
+    "\u0434\u043b\u044f",
+    "\u0438",
+    "\u0438\u0437",
+    "\u0438\u043b\u0438",
+    "\u043a",
+    "\u043d\u0430",
+    "\u043e",
+    "\u043e\u0431",
+    "\u043f\u043e",
+    "\u043f\u0440\u043e",
+    "\u0441",
+    "\u0441\u043e",
 }
 _CONCEPT_VARIANT_LIMIT = 3
 _RELEVANT_TARGET = 10
@@ -95,7 +95,10 @@ class ConceptQueryPlanner(MultilingualQueryPlanner):
             specificity = min(1.0, 2 / max(1, len(tokens)))
             if all(concept.isascii() for concept in concepts) and "en" in normalized_languages:
                 round_languages = ("en",)
-            elif any(not concept.isascii() for concept in concepts) and "ru" in normalized_languages:
+            elif (
+                any(not concept.isascii() for concept in concepts)
+                and "ru" in normalized_languages
+            ):
                 round_languages = ("ru",)
             else:
                 round_languages = ()
