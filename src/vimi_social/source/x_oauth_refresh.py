@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -30,6 +31,7 @@ class XOAuthTokenManager:
     ) -> None:
         self._access_token = (access_token or "").strip()
         self._bootstrap_refresh_token = (refresh_token or "").strip()
+        self._authorization_id = _authorization_id(self._bootstrap_refresh_token)
         self._client_id = (client_id or "").strip()
         self._client_secret = (client_secret or "").strip()
         self._state_path = state_path
@@ -128,18 +130,48 @@ class XOAuthTokenManager:
         return access_token
 
     def _read_refresh_token(self) -> str:
+        if not self._authorization_id:
+            return ""
         try:
-            if self._state_path.is_file():
-                return self._state_path.read_text().strip()
+            if not self._state_path.is_file():
+                return ""
+            raw = self._state_path.read_text()
         except OSError:
             return ""
-        return ""
+        try:
+            payload_obj: object = json.loads(raw)
+        except json.JSONDecodeError:
+            # Legacy unbound state cannot safely win over a newly configured
+            # authorization. Fall back to the bootstrap token and rewrite state
+            # in the bound format after the next successful refresh.
+            return ""
+        if not isinstance(payload_obj, dict):
+            return ""
+        payload = cast(dict[str, object], payload_obj)
+        authorization_raw = payload.get("authorization_id")
+        token_raw = payload.get("refresh_token")
+        authorization_id = (
+            authorization_raw.strip() if isinstance(authorization_raw, str) else ""
+        )
+        refresh_token = token_raw.strip() if isinstance(token_raw, str) else ""
+        if authorization_id != self._authorization_id:
+            return ""
+        return refresh_token
 
     def _persist_refresh_token(self, refresh_token: str) -> None:
+        if not self._authorization_id:
+            raise XOAuthRefreshUnavailable("X OAuth authorization identity is unavailable")
+        payload = json.dumps(
+            {
+                "authorization_id": self._authorization_id,
+                "refresh_token": refresh_token,
+            },
+            separators=(",", ":"),
+        )
         try:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
             temporary = self._state_path.with_name(f".{self._state_path.name}.tmp")
-            temporary.write_text(refresh_token + "\n")
+            temporary.write_text(payload + "\n")
             temporary.chmod(0o600)
             temporary.replace(self._state_path)
             self._state_path.chmod(0o600)
@@ -151,3 +183,10 @@ class XOAuthTokenManager:
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
+
+
+def _authorization_id(refresh_token: str) -> str:
+    token = refresh_token.strip()
+    if not token:
+        return ""
+    return hashlib.sha256(token.encode()).hexdigest()
