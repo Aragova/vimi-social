@@ -64,6 +64,8 @@ async def test_concept_planner_searches_token_pairs_before_broad_or() -> None:
     )
     assert rounds[0].preferred_languages == ("en",)
     assert rounds[0].max_pages == 1
+    assert [item.relaxation_level for item in rounds] == list(range(1, len(rounds) + 1))
+    assert len({item.relaxation_level for item in rounds}) == len(rounds)
     assert any(search_round.strategy == "provider_or_primary" for search_round in rounds[1:])
 
 
