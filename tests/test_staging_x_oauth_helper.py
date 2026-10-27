@@ -36,6 +36,11 @@ def test_authorization_url_contains_required_oauth_values() -> None:
     assert "state=state-value" in url
     assert "code_challenge=challenge-value" in url
     assert "media.write" in url
+    assert "follows.read" in url
+    assert "like.read" in url
+    assert "list.read" in url
+    assert "bookmark.read" in url
+    assert "offline.access" in url
 
 
 def test_write_env_value_replaces_only_requested_key(tmp_path: Path) -> None:
