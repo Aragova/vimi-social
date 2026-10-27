@@ -13,26 +13,31 @@ def select_preview_evidence_candidates(
     guaranteed_head: int = _PREVIEW_GUARANTEED_HEAD,
     uncertainty_margin: float = _PREVIEW_UNCERTAINTY_MARGIN,
 ) -> tuple[CandidateContent, ...]:
-    """Select preview candidates while protecting the visible head of the ranking.
+    """Select preview candidates while protecting the global visible ranking head.
 
     The first Telegram page is always eligible for preview evidence. Candidates below
     that head are routed to SigLIP/OCR only when their score-based relevance is close
-    to the precision gate. Missing gate metadata is treated as uncertainty so a
-    metadata regression fails toward more evidence rather than silently less.
+    to the precision gate. The persisted provisional ``curator_rank`` is used instead
+    of batch-local position so transport batching cannot create extra protected heads.
+    Missing rank or gate metadata is treated as uncertainty so a metadata regression
+    fails toward more evidence rather than silently less.
     """
 
     cap = max(0, limit)
     if cap == 0 or not candidates:
         return ()
 
-    head_size = min(max(0, guaranteed_head), len(candidates), cap)
+    bounded_head = max(0, guaranteed_head)
     bounded_margin = max(0.0, min(1.0, uncertainty_margin))
     selected: list[CandidateContent] = []
 
-    for position, candidate in enumerate(candidates):
+    for candidate in candidates:
         reason: str | None = None
+        rank = _metadata_rank(candidate)
         gate_margin = _gate_margin(candidate)
-        if position < head_size:
+        if rank is None:
+            reason = "ranking_uncertain"
+        elif rank <= bounded_head:
             reason = "ranking_head"
         elif gate_margin is None or gate_margin <= bounded_margin:
             reason = "text_uncertain"
@@ -44,6 +49,13 @@ def select_preview_evidence_candidates(
             break
 
     return tuple(selected)
+
+
+def _metadata_rank(candidate: CandidateContent) -> int | None:
+    value = candidate.connector_metadata.get("curator_rank")
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        return None
+    return value
 
 
 def _gate_margin(candidate: CandidateContent) -> float | None:
