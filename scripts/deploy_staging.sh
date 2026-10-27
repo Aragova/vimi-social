@@ -80,10 +80,12 @@ compose up -d --wait postgres
 run_one_shot db-provision
 run_one_shot migrate
 
-# Ensure the persistent media volume belongs to the non-root runtime UID. Keep the
-# named completed service container so depends_on: service_completed_successfully
-# joins the exact deployment step instead of launching an implicit second run.
+# Ensure persistent media and X OAuth state volumes belong to the non-root runtime
+# UID. Keep the named completed service containers so depends_on:
+# service_completed_successfully joins these exact deployment steps instead of
+# launching implicit second runs.
 run_one_shot media-init
+run_one_shot x-oauth-init
 
 # Temporal may take a short period to become ready; durable workers are configured
 # with restart policies and will reconnect rather than requiring external mutation retries.
