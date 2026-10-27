@@ -119,6 +119,19 @@ services:
     networks:
       - backend
 
+  x-oauth-init:
+    image: vimi-social:${VIMI_IMAGE_TAG:-staging}
+    user: "0:0"
+    command:
+      - sh
+      - -c
+      - mkdir -p /var/lib/vimi/x-oauth && chown -R 10001:10001 /var/lib/vimi/x-oauth && chmod 0700 /var/lib/vimi/x-oauth
+    volumes:
+      - x-oauth-state:/var/lib/vimi/x-oauth
+    restart: "no"
+    networks:
+      - backend
+
   local-ai:
     image: vimi-social-local-ai:${VIMI_IMAGE_TAG:-staging}
     build:
@@ -274,13 +287,21 @@ services:
     environment:
       <<: *runtime-environment
       VIMI_DEST_X_PRIMARY_TOKEN: ${VIMI_DEST_X_PRIMARY_TOKEN:?VIMI_DEST_X_PRIMARY_TOKEN is required}
+      VIMI_DEST_X_PRIMARY_REFRESH_TOKEN: ${VIMI_DEST_X_PRIMARY_REFRESH_TOKEN:-}
+      VIMI_X_OAUTH_CLIENT_ID: ${VIMI_X_OAUTH_CLIENT_ID:-}
+      VIMI_X_OAUTH_CLIENT_SECRET: ${VIMI_X_OAUTH_CLIENT_SECRET:-}
+      VIMI_X_OAUTH_STATE_PATH: /var/lib/vimi/x-oauth/primary-refresh-token
+      VIMI_X_OAUTH_REFRESH_INTERVAL_SECONDS: ${VIMI_X_OAUTH_REFRESH_INTERVAL_SECONDS:-5400}
     command: ["python", "apps/destination-worker/main.py"]
     volumes:
       - media-data:/var/lib/vimi/media:ro
+      - x-oauth-state:/var/lib/vimi/x-oauth
     depends_on:
       migrate:
         condition: service_completed_successfully
       media-init:
+        condition: service_completed_successfully
+      x-oauth-init:
         condition: service_completed_successfully
       temporal:
         condition: service_healthy
@@ -345,5 +366,6 @@ volumes:
   postgres-data:
   media-data:
   ai-model-cache:
+  x-oauth-state:
   caddy-data:
   caddy-config:
