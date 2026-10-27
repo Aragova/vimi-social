@@ -24,6 +24,7 @@ _CURRENT_HOME_TIMELINE_SEEDS: ContextVar[tuple[CandidateContent, ...]] = Context
     "vimi_current_home_timeline_seeds",
     default=(),
 )
+_X_MIN_PAGE_SIZE = 10
 
 
 class HomeTimelineSeedRegistry(SourceConnectorRegistry):
@@ -34,15 +35,44 @@ class HomeTimelineSeedRegistry(SourceConnectorRegistry):
         delegate: SourceConnectorRegistry,
         *,
         seed_getter: Callable[[], tuple[CandidateContent, ...]] | None = None,
+        provider_read_budget: int | None = None,
     ) -> None:
         self._delegate = delegate
         self._seed_getter = seed_getter or _CURRENT_HOME_TIMELINE_SEEDS.get
+        self._provider_read_budget = (
+            None if provider_read_budget is None else max(0, provider_read_budget)
+        )
 
     def route(self, requested_sources: tuple[str, ...]) -> tuple[SourceConnector, ...]:
+        shared_budget = (
+            None
+            if self._provider_read_budget is None
+            else _ProviderReadBudget(self._provider_read_budget)
+        )
         return tuple(
-            _HomeTimelineSeedConnector(connector, self._seed_getter)
+            _HomeTimelineSeedConnector(
+                connector,
+                self._seed_getter,
+                provider_read_budget=shared_budget,
+            )
             for connector in self._delegate.route(requested_sources)
         )
+
+
+class _ProviderReadBudget:
+    def __init__(self, limit: int) -> None:
+        self._remaining = max(0, limit)
+
+    def constrain(self, request: ScoutSearchRequest) -> ScoutSearchRequest | None:
+        if self._remaining < _X_MIN_PAGE_SIZE:
+            return None
+        allowed = min(request.max_results, self._remaining)
+        if allowed < _X_MIN_PAGE_SIZE:
+            return None
+        self._remaining -= allowed
+        if allowed == request.max_results:
+            return request
+        return replace(request, max_results=allowed)
 
 
 class _HomeTimelineSeedConnector:
@@ -50,9 +80,12 @@ class _HomeTimelineSeedConnector:
         self,
         delegate: SourceConnector,
         seed_getter: Callable[[], tuple[CandidateContent, ...]],
+        *,
+        provider_read_budget: _ProviderReadBudget | None = None,
     ) -> None:
         self._delegate = delegate
         self._seed_getter = seed_getter
+        self._provider_read_budget = provider_read_budget
         self._seed_merge_pending = True
         self._deferred_failure: (
             SourceConnectorRateLimited
@@ -71,21 +104,27 @@ class _HomeTimelineSeedConnector:
             self._deferred_failure = None
             raise failure
 
-        if not self._seed_merge_pending:
-            return await self._delegate.search(request)
+        seeds: tuple[CandidateContent, ...] = ()
+        if self._seed_merge_pending:
+            self._seed_merge_pending = False
+            seeds = _prepare_home_timeline_seeds(self._seed_getter())
 
-        self._seed_merge_pending = False
-        seeds = _prepare_home_timeline_seeds(self._seed_getter())
-        if not seeds:
-            return await self._delegate.search(request)
+        provider_request = request
+        if self._provider_read_budget is not None:
+            constrained = self._provider_read_budget.constrain(request)
+            if constrained is None:
+                return seeds
+            provider_request = constrained
 
         try:
-            provider_result = await self._delegate.search(request)
+            provider_result = await self._delegate.search(provider_request)
         except (
             SourceConnectorRateLimited,
             SourceConnectorRejected,
             SourceConnectorUnavailable,
         ) as exc:
+            if not seeds:
+                raise
             # Keep the independent timeline source usable when Search API fails.
             # Re-raise the same provider failure on the next round without making
             # another paid provider request so the base activity stops retrieval
@@ -93,6 +132,8 @@ class _HomeTimelineSeedConnector:
             self._deferred_failure = exc
             return seeds
 
+        if not seeds:
+            return provider_result
         return _merge_provider_result(provider_result, seeds)
 
 
