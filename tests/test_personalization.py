@@ -8,7 +8,7 @@ from vimi_social.domain.interest import UserInterestProfile
 from vimi_social.domain.source import AdultClassification, CandidateContent
 from vimi_social.source.personalization import (
     PersonalizedFilteringCandidateCurator,
-    _cache_taste_semantic_scores,
+    _cache_taste_semantic_scores,  # pyright: ignore[reportPrivateUsage]
 )
 
 
