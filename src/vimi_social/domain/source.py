@@ -119,6 +119,7 @@ class ScoutSearchRequest:
 class ScoutWorkflowInput:
     operation_key: str
     execution_token: str
+    interest_task_queue: str = "vimi-social-destination"
 
 
 @dataclass(frozen=True, slots=True)
