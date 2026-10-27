@@ -65,6 +65,20 @@ def test_continuation_uses_latest_successful_round_not_earlier_token() -> None:
     assert state.generation == 0
 
 
+def test_language_broadening_continuation_outranks_filtered_round() -> None:
+    candidates = (
+        _candidate("1", level=0, mode="en", token="filtered-token"),
+        _candidate("2", level=1, mode="", token="broadened-token"),
+    )
+
+    state = find_scout_continuation_state(candidates)
+
+    assert state is not None
+    assert state.next_token == "broadened-token"
+    assert state.relaxation_level == 1
+    assert state.preferred_languages == ()
+
+
 def test_continuation_is_unavailable_when_latest_round_is_exhausted() -> None:
     candidates = (
         _candidate("1", level=0, mode="ru+en", token="older-token"),
