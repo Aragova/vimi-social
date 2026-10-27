@@ -8,6 +8,7 @@ from vimi_social.db.tenant import tenant_transaction
 from vimi_social.domain.source import (
     AdultClassification,
     CandidateContent,
+    ScoutRunResult,
     ScoutSearchRequest,
     ScoutWorkflowInput,
 )
@@ -120,7 +121,7 @@ async def _run_scout(
     telegram_user_id: int,
     update_id: int,
     message_id: int,
-) -> tuple[object, tuple[CandidateContent, ...]]:
+) -> tuple[ScoutRunResult, tuple[CandidateContent, ...]]:
     engine = create_engine(_database_dsn())
     session_factory = sessionmaker[Session](
         bind=engine,
@@ -209,8 +210,14 @@ async def test_scout_refills_same_x_round_until_long_form_target_is_met() -> Non
     assert result.discovered_count == 22
     assert result.candidate_count == 10
     assert len(persisted) == 10
-    assert all(candidate.duration_ms is not None and candidate.duration_ms >= 60_000 for candidate in persisted)
-    assert all(candidate.connector_metadata.get("x_continuation_generation") == 1 for candidate in persisted)
+    assert all(
+        candidate.duration_ms is not None and candidate.duration_ms >= 60_000
+        for candidate in persisted
+    )
+    assert all(
+        candidate.connector_metadata.get("x_continuation_generation") == 1
+        for candidate in persisted
+    )
 
 
 @pytest.mark.asyncio
