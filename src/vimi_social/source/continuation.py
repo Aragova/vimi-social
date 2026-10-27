@@ -86,32 +86,32 @@ class ScoutContinuationActivities:
     ) -> ScoutRunResult:
         task = self._authorized_task(workflow_input)
         request_key = OperationKey(workflow_input.request_key)
-
-        existing = self._load_candidates(task)
-        continuation = find_scout_continuation_state(existing)
-        if continuation is None:
-            self._release_usage_if_reserved(task, request_key)
-            return self._result(task, existing, failure_code="NO_MORE_RESULTS")
-
-        expected_key = continuation_request_key(task.id, continuation.next_token)
-        if request_key != expected_key:
-            return self._result(task, existing, failure_code="STALE_CONTINUATION")
-
         attempt_token = uuid4()
-        if not self._claim_attempt(task, attempt_token):
-            self._retire_ambiguous_continuation(task, continuation)
+
+        existing, continuation, claim_failure = self._claim_current_attempt(
+            task,
+            request_key,
+            attempt_token,
+        )
+        if claim_failure == "NO_MORE_RESULTS":
+            self._release_usage_if_reserved(task, request_key)
+            return self._result(task, existing, failure_code=claim_failure)
+        if claim_failure == "STALE_CONTINUATION":
+            return self._result(task, existing, failure_code=claim_failure)
+        if claim_failure == "CONTINUATION_ATTEMPT_AMBIGUOUS":
+            self._release_usage_if_reserved(task, request_key)
             refreshed = self._load_candidates(task)
-            return self._result(
-                task,
-                refreshed,
-                failure_code="CONTINUATION_ATTEMPT_AMBIGUOUS",
-            )
+            return self._result(task, refreshed, failure_code=claim_failure)
+        if continuation is None:
+            raise RuntimeError("continuation claim succeeded without continuation state")
 
         try:
             connector = self._registry.route(("x",))[0]
         except SourceConnectorUnavailable:
+            # No provider I/O occurred. Keep the deterministic reservation RESERVED
+            # so the same continuation token can be retried after the connector
+            # returns instead of reusing an uncommittable RELEASED reservation.
             self._clear_owned_attempt(task, attempt_token)
-            self._release_usage_if_reserved(task, request_key)
             raise ApplicationError(
                 "X source connector is unavailable",
                 non_retryable=True,
@@ -188,19 +188,12 @@ class ScoutContinuationActivities:
 
         next_token = _next_token_from_candidates(fetched)
         carrier = _advance_carrier(continuation, next_token)
-        with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
-            self._source_repository.replace_candidates(
-                session,
-                task_id=task.id,
-                tenant_id=task.tenant_id,
-                candidates=(carrier, *accepted),
-            )
-            if not self._attempt_store.clear_owned_completed_continuation(
-                session,
-                operation_key=task.operation_key,
-                attempt_token=attempt_token,
-            ):
-                raise RuntimeError("continuation attempt authority was lost before persistence")
+        self._persist_owned_continuation(
+            task,
+            attempt_token,
+            carrier,
+            accepted,
+        )
 
         refreshed = self._load_candidates(task)
         return ScoutRunResult(
@@ -300,16 +293,96 @@ class ScoutContinuationActivities:
                 )
             )
 
-    def _claim_attempt(self, task: SourceTask, attempt_token: UUID) -> bool:
+    def _claim_current_attempt(
+        self,
+        task: SourceTask,
+        request_key: OperationKey,
+        attempt_token: UUID,
+    ) -> tuple[
+        tuple[CandidateContent, ...],
+        ScoutContinuationState | None,
+        str | None,
+    ]:
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
-            return self._attempt_store.claim_completed_continuation(
+            self._attempt_store.lock_continuation_guard(
+                session,
+                operation_key=task.operation_key,
+            )
+            existing = restore_curator_order(
+                self._source_repository.list_candidates(
+                    session,
+                    task.id,
+                    limit=_MAX_CONTINUATION_CANDIDATES,
+                )
+            )
+            continuation = find_scout_continuation_state(existing)
+            if continuation is None:
+                return existing, None, "NO_MORE_RESULTS"
+
+            expected_key = continuation_request_key(task.id, continuation.next_token)
+            if request_key != expected_key:
+                return existing, continuation, "STALE_CONTINUATION"
+
+            if self._attempt_store.claim_completed_continuation(
                 session,
                 operation_key=task.operation_key,
                 attempt_token=attempt_token,
+            ):
+                return existing, continuation, None
+
+            # The same page already crossed a paid-I/O fence. Retire its token in
+            # the same serialized state transition; the stale owner can no longer
+            # persist after ownership is cleared.
+            carrier = _advance_carrier(continuation, None)
+            self._source_repository.replace_candidates(
+                session,
+                task_id=task.id,
+                tenant_id=task.tenant_id,
+                candidates=(carrier,),
             )
+            self._attempt_store.clear_ambiguous_completed_continuation(
+                session,
+                operation_key=task.operation_key,
+            )
+            return existing, continuation, "CONTINUATION_ATTEMPT_AMBIGUOUS"
+
+    def _persist_owned_continuation(
+        self,
+        task: SourceTask,
+        attempt_token: UUID,
+        carrier: CandidateContent,
+        accepted: tuple[CandidateContent, ...],
+    ) -> None:
+        with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
+            self._attempt_store.lock_continuation_guard(
+                session,
+                operation_key=task.operation_key,
+            )
+            if not self._attempt_store.lock_owned_completed_continuation(
+                session,
+                operation_key=task.operation_key,
+                attempt_token=attempt_token,
+            ):
+                raise RuntimeError("continuation attempt authority was lost before persistence")
+            self._source_repository.replace_candidates(
+                session,
+                task_id=task.id,
+                tenant_id=task.tenant_id,
+                candidates=(carrier, *accepted),
+            )
+            if not self._attempt_store.clear_owned_completed_continuation(
+                session,
+                operation_key=task.operation_key,
+                attempt_token=attempt_token,
+            ):
+                raise RuntimeError("continuation attempt authority was lost before persistence")
 
     def _clear_owned_attempt(self, task: SourceTask, attempt_token: UUID) -> None:
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
+            self._attempt_store.lock_continuation_guard(
+                session,
+                operation_key=task.operation_key,
+            )
             self._attempt_store.clear_owned_completed_continuation(
                 session,
                 operation_key=task.operation_key,
@@ -328,24 +401,6 @@ class ScoutContinuationActivities:
         ):
             self._usage_repository.release(session, request_key)
 
-    def _retire_ambiguous_continuation(
-        self,
-        task: SourceTask,
-        continuation: ScoutContinuationState,
-    ) -> None:
-        carrier = _advance_carrier(continuation, None)
-        with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
-            self._source_repository.replace_candidates(
-                session,
-                task_id=task.id,
-                tenant_id=task.tenant_id,
-                candidates=(carrier,),
-            )
-            self._attempt_store.clear_ambiguous_completed_continuation(
-                session,
-                operation_key=task.operation_key,
-            )
-
     def _retire_owned_continuation(
         self,
         task: SourceTask,
@@ -354,6 +409,16 @@ class ScoutContinuationActivities:
     ) -> None:
         carrier = _advance_carrier(continuation, None)
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
+            self._attempt_store.lock_continuation_guard(
+                session,
+                operation_key=task.operation_key,
+            )
+            if not self._attempt_store.lock_owned_completed_continuation(
+                session,
+                operation_key=task.operation_key,
+                attempt_token=attempt_token,
+            ):
+                raise RuntimeError("continuation attempt authority was lost while retiring token")
             self._source_repository.replace_candidates(
                 session,
                 task_id=task.id,
