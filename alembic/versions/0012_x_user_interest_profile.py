@@ -1,4 +1,4 @@
-"""Add tenant-isolated X user interest profiles for personalized Scout ranking."""
+"""Add user-bound X account linkage and personalized Scout taste profiles."""
 
 from collections.abc import Sequence
 
@@ -13,6 +13,17 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.execute(
         """
+        ALTER TABLE destination_account
+            ADD COLUMN connected_user_id uuid NULL,
+            ADD CONSTRAINT destination_account_connected_member_fk
+                FOREIGN KEY (tenant_id, connected_user_id)
+                REFERENCES workspace_membership(tenant_id, user_id)
+                ON DELETE SET NULL;
+
+        CREATE UNIQUE INDEX destination_account_connected_user_platform_unique
+            ON destination_account (tenant_id, platform, connected_user_id)
+            WHERE connected_user_id IS NOT NULL;
+
         CREATE TABLE x_user_interest_profile (
             tenant_id uuid NOT NULL REFERENCES tenant(id) ON DELETE CASCADE,
             user_id uuid NOT NULL,
@@ -52,4 +63,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute("DROP TABLE IF EXISTS x_user_interest_profile;")
+    op.execute(
+        """
+        DROP TABLE IF EXISTS x_user_interest_profile;
+        DROP INDEX IF EXISTS destination_account_connected_user_platform_unique;
+        ALTER TABLE destination_account
+            DROP CONSTRAINT IF EXISTS destination_account_connected_member_fk,
+            DROP COLUMN IF EXISTS connected_user_id;
+        """
+    )
