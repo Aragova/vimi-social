@@ -127,7 +127,7 @@ class FilteringCandidateCurator(CandidateCurator):
                     _metadata_float(metadata, "curator_lexical_relevance_score", 0.0),
                     duration_preference,
                     _metadata_float(metadata, "curator_quality_score", 0.0),
-                    -int(metadata.get("curator_rank", 0)),
+                    -_metadata_int(metadata, "curator_rank", 0),
                     updated,
                 )
             )
@@ -213,6 +213,13 @@ def _metadata_float(metadata: dict[str, object], key: str, default: float) -> fl
     value = metadata.get(key)
     if isinstance(value, int | float) and not isinstance(value, bool):
         return float(value)
+    return default
+
+
+def _metadata_int(metadata: dict[str, object], key: str, default: int) -> int:
+    value = metadata.get(key)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
     return default
 
 
