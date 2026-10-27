@@ -53,6 +53,18 @@ class ScoutAttemptStore:
         state = self.current_state(session, operation_key=operation_key)
         return ScoutAttemptClaim(claimed=False, state=state)
 
+    def lock_continuation_guard(
+        self,
+        session: Session,
+        *,
+        operation_key: OperationKey,
+    ) -> None:
+        """Serialize continuation state transitions for one source task."""
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:operation_key, 0))"),
+            {"operation_key": operation_key.value},
+        ).scalar_one()
+
     def claim_completed_continuation(
         self,
         session: Session,
@@ -78,6 +90,31 @@ class ScoutAttemptStore:
             },
         ).scalar_one_or_none()
         return claimed is not None
+
+    def lock_owned_completed_continuation(
+        self,
+        session: Session,
+        *,
+        operation_key: OperationKey,
+        attempt_token: UUID,
+    ) -> bool:
+        row = session.execute(
+            text(
+                """
+                SELECT 1
+                FROM source_task
+                WHERE operation_key = :operation_key
+                  AND state = 'COMPLETED'
+                  AND scout_attempt_token = CAST(:attempt_token AS uuid)
+                FOR UPDATE
+                """
+            ),
+            {
+                "operation_key": operation_key.value,
+                "attempt_token": str(attempt_token),
+            },
+        ).scalar_one_or_none()
+        return row == 1
 
     def clear_owned_completed_continuation(
         self,
