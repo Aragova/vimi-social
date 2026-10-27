@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID
 
 from vimi_social.domain.identity import TenantId
@@ -137,5 +138,6 @@ def _metadata_float(candidate: CandidateContent, key: str) -> float:
 def _metadata_strings(candidate: CandidateContent, key: str) -> tuple[str, ...]:
     value = candidate.connector_metadata.get(key)
     assert isinstance(value, list)
-    assert all(isinstance(item, str) for item in value)
-    return tuple(item for item in value if isinstance(item, str))
+    items = cast(list[object], value)
+    assert all(isinstance(item, str) for item in items)
+    return tuple(item for item in items if isinstance(item, str))
