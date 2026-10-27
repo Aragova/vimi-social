@@ -75,6 +75,8 @@ class ScoutSearchRequest:
     preferred_languages: tuple[str, ...]
     query_variants: tuple[str, ...] = ()
     max_results: int = 10
+    pagination_token: str | None = None
+    search_scope: str | None = None
 
     def __post_init__(self) -> None:
         if not self.intent.strip():
@@ -83,12 +85,26 @@ class ScoutSearchRequest:
             raise ValueError("Scout max_results must be between 1 and 1000")
         if any(not query.strip() for query in self.query_variants):
             raise ValueError("Scout query variants must not contain empty values")
+        if self.pagination_token is not None and not self.pagination_token.strip():
+            raise ValueError("Scout pagination token must not be empty")
+        if self.search_scope is not None and self.search_scope not in {"recent", "all"}:
+            raise ValueError("Scout search scope must be 'recent' or 'all'")
 
 
 @dataclass(frozen=True, slots=True)
 class ScoutWorkflowInput:
     operation_key: str
     execution_token: str
+
+
+@dataclass(frozen=True, slots=True)
+class ScoutContinuationWorkflowInput:
+    operation_key: str
+    execution_token: str
+    request_key: str
+    telegram_update_id: int
+    telegram_message_id: int
+    telegram_chat_id: int
 
 
 @dataclass(frozen=True, slots=True)

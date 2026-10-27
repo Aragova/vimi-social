@@ -15,12 +15,11 @@ class ScoutAttemptClaim:
 
 
 class ScoutAttemptStore:
-    """Database fence for one paid Scout connector execution.
+    """Database fence for paid Scout connector executions.
 
-    Only a task in QUEUED may acquire the fence. A retry that observes an
-    already-running attempt must not call the connector again; it converts the
-    ambiguous in-flight outcome to UNKNOWN so the stale owner can no longer
-    persist candidates or a terminal success/failure afterward.
+    Initial Scout owns the task while it is SCOUTING. Manual continuations keep
+    the task COMPLETED but reuse ``scout_attempt_token`` as an execution fence so
+    a worker crash after provider I/O cannot blindly repeat the same paid page.
     """
 
     def claim(
@@ -53,6 +52,117 @@ class ScoutAttemptStore:
 
         state = self.current_state(session, operation_key=operation_key)
         return ScoutAttemptClaim(claimed=False, state=state)
+
+    def lock_continuation_guard(
+        self,
+        session: Session,
+        *,
+        operation_key: OperationKey,
+    ) -> None:
+        """Serialize continuation state transitions for one source task."""
+        session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:operation_key, 0))"),
+            {"operation_key": operation_key.value},
+        ).scalar_one()
+
+    def claim_completed_continuation(
+        self,
+        session: Session,
+        *,
+        operation_key: OperationKey,
+        attempt_token: UUID,
+    ) -> bool:
+        claimed = session.execute(
+            text(
+                """
+                UPDATE source_task
+                SET scout_attempt_token = CAST(:attempt_token AS uuid),
+                    updated_at = clock_timestamp()
+                WHERE operation_key = :operation_key
+                  AND state = 'COMPLETED'
+                  AND scout_attempt_token IS NULL
+                RETURNING id::text
+                """
+            ),
+            {
+                "operation_key": operation_key.value,
+                "attempt_token": str(attempt_token),
+            },
+        ).scalar_one_or_none()
+        return claimed is not None
+
+    def lock_owned_completed_continuation(
+        self,
+        session: Session,
+        *,
+        operation_key: OperationKey,
+        attempt_token: UUID,
+    ) -> bool:
+        row = session.execute(
+            text(
+                """
+                SELECT 1
+                FROM source_task
+                WHERE operation_key = :operation_key
+                  AND state = 'COMPLETED'
+                  AND scout_attempt_token = CAST(:attempt_token AS uuid)
+                FOR UPDATE
+                """
+            ),
+            {
+                "operation_key": operation_key.value,
+                "attempt_token": str(attempt_token),
+            },
+        ).scalar_one_or_none()
+        return row == 1
+
+    def clear_owned_completed_continuation(
+        self,
+        session: Session,
+        *,
+        operation_key: OperationKey,
+        attempt_token: UUID,
+    ) -> bool:
+        cleared = session.execute(
+            text(
+                """
+                UPDATE source_task
+                SET scout_attempt_token = NULL,
+                    updated_at = clock_timestamp()
+                WHERE operation_key = :operation_key
+                  AND state = 'COMPLETED'
+                  AND scout_attempt_token = CAST(:attempt_token AS uuid)
+                RETURNING id::text
+                """
+            ),
+            {
+                "operation_key": operation_key.value,
+                "attempt_token": str(attempt_token),
+            },
+        ).scalar_one_or_none()
+        return cleared is not None
+
+    def clear_ambiguous_completed_continuation(
+        self,
+        session: Session,
+        *,
+        operation_key: OperationKey,
+    ) -> bool:
+        cleared = session.execute(
+            text(
+                """
+                UPDATE source_task
+                SET scout_attempt_token = NULL,
+                    updated_at = clock_timestamp()
+                WHERE operation_key = :operation_key
+                  AND state = 'COMPLETED'
+                  AND scout_attempt_token IS NOT NULL
+                RETURNING id::text
+                """
+            ),
+            {"operation_key": operation_key.value},
+        ).scalar_one_or_none()
+        return cleared is not None
 
     def fail_queued(
         self,

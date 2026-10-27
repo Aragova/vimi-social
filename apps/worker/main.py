@@ -13,6 +13,7 @@ from vimi_social.publication.delivery import PublicationDeliveryActivities
 from vimi_social.publication.preview import PublicationPreviewActivities
 from vimi_social.source.activities import ScoutActivities
 from vimi_social.source.connectors import SourceConnectorRegistry
+from vimi_social.source.continuation import ScoutContinuationActivities
 from vimi_social.source.query_planner import (
     EnglishIntentTranslator,
     FallbackEnglishIntentTranslator,
@@ -25,7 +26,7 @@ from vimi_social.telegram.outgoing import TelegramMessenger, TelegramOutgoingSto
 from vimi_social.workflows.destination_publication import DestinationPublicationWorkflow
 from vimi_social.workflows.media_preparation import MediaPreparationWorkflow
 from vimi_social.workflows.publication import PublicationWorkflow
-from vimi_social.workflows.scout import ScoutWorkflow
+from vimi_social.workflows.scout import ScoutContinuationWorkflow, ScoutWorkflow
 
 
 async def run() -> None:
@@ -44,7 +45,10 @@ async def run() -> None:
     registry = SourceConnectorRegistry()
     x_connector: XSourceConnector | None = None
     if settings.x_bearer_token:
-        x_connector = XSourceConnector(settings.x_bearer_token)
+        x_connector = XSourceConnector(
+            settings.x_bearer_token,
+            search_scope=settings.x_search_scope,
+        )
         registry.register(x_connector)
 
     local_ai_client: LocalAiClient | None = None
@@ -103,6 +107,15 @@ async def run() -> None:
         retrieval_round_limit=settings.scout_retrieval_round_limit,
         preview_evidence_limit=settings.scout_preview_evidence_limit,
     )
+    scout_continuation = ScoutContinuationActivities(
+        session_factory,
+        registry,
+        messenger,
+        query_planner=query_planner,
+        semantic_scorer=local_ai_client,
+        semantic_minimum_relevance=settings.semantic_relevance_min_score,
+        batch_size=settings.scout_retrieval_round_limit,
+    )
     media_delivery = MediaPreparationDeliveryActivities(
         session_factory,
         messenger,
@@ -116,12 +129,15 @@ async def run() -> None:
         workflows=[
             PublicationWorkflow,
             ScoutWorkflow,
+            ScoutContinuationWorkflow,
             MediaPreparationWorkflow,
             DestinationPublicationWorkflow,
         ],
         activities=[
             scout_activities.execute_scout_task,
             scout_activities.deliver_scout_results,
+            scout_continuation.continue_scout_results,
+            scout_continuation.deliver_scout_continuation,
             media_delivery.deliver_media_preparation_result,
             publication_preview.prepare_publication_preview,
             publication_delivery.deliver_publication_result,

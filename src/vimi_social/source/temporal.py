@@ -4,8 +4,11 @@ from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
-from vimi_social.domain.source import ScoutWorkflowInput
-from vimi_social.workflows.scout import ScoutWorkflow
+from vimi_social.domain.source import (
+    ScoutContinuationWorkflowInput,
+    ScoutWorkflowInput,
+)
+from vimi_social.workflows.scout import ScoutContinuationWorkflow, ScoutWorkflow
 
 
 class TemporalScoutWorkflowStarter:
@@ -29,6 +32,22 @@ class TemporalScoutWorkflowStarter:
                 id=operation_key,
                 task_queue=self._task_queue,
                 id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            )
+        except WorkflowAlreadyStartedError:
+            return
+
+    async def start_continuation(
+        self,
+        workflow_input: ScoutContinuationWorkflowInput,
+    ) -> None:
+        client = await self._get_client()
+        try:
+            await client.start_workflow(
+                ScoutContinuationWorkflow.run,
+                workflow_input,
+                id=workflow_input.request_key,
+                task_queue=self._task_queue,
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
             )
         except WorkflowAlreadyStartedError:
             return

@@ -4,6 +4,22 @@ from typing import Protocol
 from vimi_social.domain.source import CandidateContent, ScoutSearchRequest
 
 
+class SourceSearchCandidates(tuple[CandidateContent, ...]):
+    """Tuple-compatible search result with provider pagination state."""
+
+    next_token: str | None
+
+    def __new__(
+        cls,
+        candidates: Iterable[CandidateContent] = (),
+        *,
+        next_token: str | None = None,
+    ) -> "SourceSearchCandidates":
+        result = super().__new__(cls, candidates)
+        result.next_token = next_token
+        return result
+
+
 class SourceConnectorError(RuntimeError):
     pass
 

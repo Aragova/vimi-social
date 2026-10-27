@@ -4,6 +4,7 @@ from uuid import UUID
 from vimi_social.domain.international import UiLocale
 from vimi_social.domain.source import CandidateContent, ScoutRunResult, SourceTaskState
 from vimi_social.i18n.catalog import MessageKey, translate
+from vimi_social.source.continuation_state import find_scout_continuation_state
 from vimi_social.telegram.menus import InlineButton, OutgoingMessage
 
 _RESULT_SUMMARY_LIMIT = 80
@@ -111,6 +112,16 @@ def build_scout_result_page(
             )
     if navigation:
         keyboard.append(tuple(navigation))
+
+    if task_id is not None and find_scout_continuation_state(candidates) is not None:
+        keyboard.append(
+            (
+                InlineButton(
+                    translate(MessageKey.MORE_RESULTS, locale),
+                    f"scout:more:{task_id}",
+                ),
+            )
+        )
 
     keyboard.append(
         (InlineButton(translate(MessageKey.SEARCH_MORE, locale), "source:ai_search"),)
