@@ -2,8 +2,10 @@ import math
 import re
 from collections.abc import Iterable
 from dataclasses import replace
+from uuid import UUID
 
-from vimi_social.domain.source import CandidateContent
+from vimi_social.domain.source import CandidateContent, SourceTask
+from vimi_social.source.continuation import ScoutContinuationActivities
 from vimi_social.source.curator import CandidateCurator
 
 _MIN_VIDEO_DURATION_MS = 60_000
@@ -18,7 +20,7 @@ def filter_scout_candidates(
     existing: Iterable[CandidateContent] = (),
     minimum_video_duration_ms: int = _MIN_VIDEO_DURATION_MS,
 ) -> tuple[CandidateContent, ...]:
-    """Drop short videos and conservative near-duplicates before expensive ranking.
+    """Drop short videos and conservative near-duplicates before preview ranking.
 
     Unknown durations fail open because provider metadata can be incomplete. Known video
     durations below the configured minimum are rejected. Near-duplicate suppression is
@@ -31,7 +33,7 @@ def filter_scout_candidates(
     existing_candidates = tuple(existing)
     seen_ids = {(candidate.source, candidate.source_id) for candidate in existing_candidates}
     protected_texts = tuple(
-        text for candidate in existing_candidates if (text := _canonical_text(candidate))
+        text for candidate in existing_candidates if (text := _canonical_text(candidate))[0]
     )
 
     result: list[CandidateContent] = []
@@ -47,11 +49,11 @@ def filter_scout_candidates(
             continue
 
         canonical = _canonical_text(candidate)
-        if canonical and any(_near_duplicate(canonical, known) for known in protected_texts):
+        if canonical[0] and any(_near_duplicate(canonical, known) for known in protected_texts):
             continue
 
         duplicate_index: int | None = None
-        if canonical:
+        if canonical[0]:
             for index, known in enumerate(result_texts):
                 if _near_duplicate(canonical, known):
                     duplicate_index = index
@@ -140,6 +142,27 @@ class FilteringCandidateCurator(CandidateCurator):
         return tuple(result)
 
 
+class FilteringScoutContinuationActivities(ScoutContinuationActivities):
+    """Persist continuation pages without re-introducing short or duplicate spam."""
+
+    def _persist_owned_continuation(
+        self,
+        task: SourceTask,
+        attempt_token: UUID,
+        carrier: CandidateContent,
+        accepted: tuple[CandidateContent, ...],
+    ) -> None:
+        existing = self._load_candidates(task)
+        filtered = filter_scout_candidates(accepted, existing=existing)
+        filtered = _offset_ranks(filtered, len(existing))
+        super()._persist_owned_continuation(
+            task,
+            attempt_token,
+            carrier,
+            filtered,
+        )
+
+
 def _selected_indices(
     candidates: tuple[CandidateContent, ...],
     filtered: tuple[CandidateContent, ...],
@@ -158,6 +181,18 @@ def _align_optional[T](
     if values is None:
         return None
     return tuple(values[index] for index in indices)
+
+
+def _offset_ranks(
+    candidates: tuple[CandidateContent, ...],
+    offset: int,
+) -> tuple[CandidateContent, ...]:
+    result: list[CandidateContent] = []
+    for rank, candidate in enumerate(candidates, start=offset + 1):
+        metadata = dict(candidate.connector_metadata)
+        metadata["curator_rank"] = rank
+        result.append(replace(candidate, connector_metadata=metadata))
+    return tuple(result)
 
 
 def _duration_preference_score(candidate: CandidateContent) -> float:
