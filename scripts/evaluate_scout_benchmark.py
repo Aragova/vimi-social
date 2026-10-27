@@ -10,7 +10,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Evaluate a recorded ViMi Scout benchmark without provider calls."
     )
-    parser.add_argument("benchmark", type=Path, help="Path to a version-1 Scout benchmark JSON file")
+    parser.add_argument(
+        "benchmark",
+        type=Path,
+        help="Path to a version-1 Scout benchmark JSON file",
+    )
     args = parser.parse_args()
 
     benchmark = load_benchmark(args.benchmark)
