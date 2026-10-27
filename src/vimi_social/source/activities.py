@@ -687,7 +687,7 @@ def _apply_continuation_state(
         metadata.pop(key, None)
     metadata.update(state)
     updated = replace(carrier, connector_metadata=metadata)
-    return candidates[:carrier_index] + (updated,) + candidates[carrier_index + 1 :]
+    return (*candidates[:carrier_index], updated, *candidates[carrier_index + 1 :])
 
 
 def _deduplicate(candidates: list[CandidateContent]) -> tuple[CandidateContent, ...]:
