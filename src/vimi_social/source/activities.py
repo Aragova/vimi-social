@@ -12,6 +12,7 @@ from vimi_social.domain.identity import OperationKey
 from vimi_social.domain.international import UiLocale
 from vimi_social.domain.source import (
     CandidateContent,
+    ScoutRefillContinuationState,
     ScoutRunResult,
     ScoutSearchRequest,
     ScoutWorkflowInput,
@@ -23,6 +24,7 @@ from vimi_social.source.connectors import (
     SourceConnectorRegistry,
     SourceConnectorRejected,
     SourceConnectorUnavailable,
+    SourceSearchCandidates,
 )
 from vimi_social.source.curator import CandidateCurator, restore_curator_order
 from vimi_social.source.ocr import PreviewOcrExtractor, PreviewOcrUnavailable
@@ -48,6 +50,18 @@ from vimi_social.usage.repository import UsageRepository
 _LOCAL_AI_BATCH_LIMIT = 100
 _SCOUT_RELEVANT_TARGET = 10
 _X_MIN_PAGE_SIZE = 10
+_CONTINUATION_CARRIER_KEYS = (
+    "retrieval_query",
+    "retrieval_query_variants",
+    "retrieval_relaxation_level",
+    "retrieval_specificity",
+    "retrieval_language_mode",
+    "x_search_scope",
+    "x_search_query",
+    "x_next_token",
+    "x_page_start_token",
+    "x_continuation_generation",
+)
 
 
 class ScoutActivities:
@@ -145,6 +159,7 @@ class ScoutActivities:
         )
         discovered: list[CandidateContent] = []
         retrieval_spent = 0
+        continuation_states: list[ScoutRefillContinuationState] = []
 
         async for search_round in self._query_planner.search_rounds(
             query_plan,
@@ -152,36 +167,90 @@ class ScoutActivities:
             task.preferred_languages,
         ):
             source_failure_code: str | None = None
+            target_met = False
             for connector in connectors:
-                remaining_budget = self._retrieval_budget - retrieval_spent
-                if remaining_budget < _X_MIN_PAGE_SIZE:
-                    break
+                pagination_token: str | None = None
+                continuation_generation = 0
+                round_continuation_state: ScoutRefillContinuationState | None = None
 
-                request_limit = min(remaining_budget, self._retrieval_round_limit)
-                request = ScoutSearchRequest(
-                    intent=task.user_intent,
-                    requested_sources=task.requested_sources,
-                    preferred_languages=search_round.preferred_languages,
-                    query_variants=search_round.query_variants,
-                    max_results=request_limit,
-                )
-                # Reserve the external-read budget before the request. Even a
-                # partial/failed paginated call may already have consumed provider reads.
-                retrieval_spent += request_limit
-                try:
-                    round_candidates = await connector.search(request)
-                    discovered.extend(
-                        _with_retrieval_provenance(candidate, search_round)
-                        for candidate in round_candidates
+                while True:
+                    remaining_budget = self._retrieval_budget - retrieval_spent
+                    if remaining_budget < _X_MIN_PAGE_SIZE:
+                        break
+
+                    request_limit = min(remaining_budget, self._retrieval_round_limit)
+                    request = ScoutSearchRequest(
+                        intent=task.user_intent,
+                        requested_sources=task.requested_sources,
+                        preferred_languages=search_round.preferred_languages,
+                        query_variants=search_round.query_variants,
+                        max_results=request_limit,
+                        pagination_token=pagination_token,
                     )
-                except SourceConnectorRateLimited:
-                    source_failure_code = "SOURCE_RATE_LIMITED"
+                    # Reserve the external-read budget before every provider call. Even a
+                    # partial/failed paginated call may already have consumed provider reads.
+                    retrieval_spent += request_limit
+                    try:
+                        round_candidates = await connector.search(request)
+                        discovered.extend(
+                            _with_retrieval_provenance(
+                                candidate,
+                                search_round,
+                                continuation_generation=continuation_generation,
+                            )
+                            for candidate in round_candidates
+                        )
+                    except SourceConnectorRateLimited:
+                        source_failure_code = "SOURCE_RATE_LIMITED"
+                        break
+                    except SourceConnectorRejected:
+                        source_failure_code = "SOURCE_ACCESS_REJECTED"
+                        break
+                    except SourceConnectorUnavailable:
+                        source_failure_code = "SOURCE_UNAVAILABLE"
+                        if pagination_token is not None and round_continuation_state is not None:
+                            round_continuation_state = _retire_ambiguous_refill_state(
+                                round_continuation_state,
+                                page_start_token=pagination_token,
+                                continuation_generation=continuation_generation,
+                            )
+                        break
+
+                    if isinstance(round_candidates, SourceSearchCandidates):
+                        round_continuation_state = _capture_continuation_state(
+                            round_candidates,
+                            search_round,
+                            requested_token=pagination_token,
+                            continuation_generation=continuation_generation,
+                            previous=round_continuation_state,
+                        )
+
+                    round_relevant = await self._rank_relevant_pool(
+                        query_plan.query_variants,
+                        task.preferred_languages,
+                        discovered,
+                    )
+                    if len(round_relevant) >= _SCOUT_RELEVANT_TARGET:
+                        target_met = True
+                        break
+                    if retrieval_spent >= self._retrieval_budget:
+                        break
+
+                    next_token = (
+                        round_candidates.next_token
+                        if isinstance(round_candidates, SourceSearchCandidates)
+                        else None
+                    )
+                    if next_token is None or next_token == pagination_token:
+                        break
+                    pagination_token = next_token
+                    continuation_generation += 1
+
+                if round_continuation_state is not None:
+                    continuation_states.append(round_continuation_state)
+                if source_failure_code is not None or target_met:
                     break
-                except SourceConnectorRejected:
-                    source_failure_code = "SOURCE_ACCESS_REJECTED"
-                    break
-                except SourceConnectorUnavailable:
-                    source_failure_code = "SOURCE_UNAVAILABLE"
+                if retrieval_spent >= self._retrieval_budget:
                     break
 
             if source_failure_code is not None and not discovered:
@@ -192,32 +261,7 @@ class ScoutActivities:
                 )
             if source_failure_code is not None:
                 break
-
-            # A cascade round is paid for once it reaches the provider. Before
-            # broadening the query again, cheaply evaluate the whole accumulated
-            # pool against the original full intent. Ten relevant candidates are
-            # a STOP target, not a display cap: every relevant candidate already
-            # returned by this and earlier paid rounds is kept for final ranking.
-            round_normalized = _deduplicate(discovered)
-            round_semantic_scores: tuple[float, ...] | None = None
-            if self._semantic_scorer is not None and round_normalized:
-                try:
-                    round_semantic_scores = await self._score_semantic_candidates(
-                        query_plan.query_variants,
-                        round_normalized,
-                    )
-                except SemanticRelevanceUnavailable:
-                    round_semantic_scores = None
-
-            round_relevant = self._curator.rank(
-                round_normalized,
-                query_variants=query_plan.query_variants,
-                preferred_languages=task.preferred_languages,
-                limit=max(1, len(round_normalized)),
-                semantic_scores=round_semantic_scores,
-                minimum_relevance=self._semantic_minimum_relevance,
-            )
-            if len(round_relevant) >= _SCOUT_RELEVANT_TARGET:
+            if target_met:
                 break
             if retrieval_spent >= self._retrieval_budget:
                 break
@@ -297,6 +341,8 @@ class ScoutActivities:
             preview_ocr_weight=self._preview_ocr_weight,
             minimum_relevance=self._semantic_minimum_relevance,
         )
+        for continuation_state in continuation_states:
+            curated = _apply_continuation_state(curated, continuation_state)
         with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
             if not self._attempt_store.lock_owned_attempt(
                 session,
@@ -330,6 +376,32 @@ class ScoutActivities:
             state=SourceTaskState.COMPLETED,
             discovered_count=len(discovered),
             candidate_count=len(persisted),
+        )
+
+    async def _rank_relevant_pool(
+        self,
+        query_variants: tuple[str, ...],
+        preferred_languages: tuple[str, ...],
+        discovered: list[CandidateContent],
+    ) -> tuple[CandidateContent, ...]:
+        normalized = _deduplicate(discovered)
+        semantic_scores: tuple[float, ...] | None = None
+        if self._semantic_scorer is not None and normalized:
+            try:
+                semantic_scores = await self._score_semantic_candidates(
+                    query_variants,
+                    normalized,
+                )
+            except SemanticRelevanceUnavailable:
+                semantic_scores = None
+
+        return self._curator.rank(
+            normalized,
+            query_variants=query_variants,
+            preferred_languages=preferred_languages,
+            limit=max(1, len(normalized)),
+            semantic_scores=semantic_scores,
+            minimum_relevance=self._semantic_minimum_relevance,
         )
 
     async def _score_semantic_candidates(
@@ -559,6 +631,8 @@ class ScoutActivities:
 def _with_retrieval_provenance(
     candidate: CandidateContent,
     search_round: ScoutQueryRound,
+    *,
+    continuation_generation: int = 0,
 ) -> CandidateContent:
     metadata = dict(candidate.connector_metadata)
     metadata["retrieval_query"] = search_round.query_variants[0]
@@ -566,7 +640,104 @@ def _with_retrieval_provenance(
     metadata["retrieval_relaxation_level"] = search_round.relaxation_level
     metadata["retrieval_specificity"] = search_round.specificity
     metadata["retrieval_language_mode"] = "+".join(search_round.preferred_languages)
+    metadata["x_continuation_generation"] = continuation_generation
     return replace(candidate, connector_metadata=metadata)
+
+
+def _metadata_text(metadata: dict[str, object], key: str) -> str | None:
+    value = metadata.get(key)
+    return value if isinstance(value, str) and value else None
+
+
+def _capture_continuation_state(
+    candidates: SourceSearchCandidates,
+    search_round: ScoutQueryRound,
+    *,
+    requested_token: str | None,
+    continuation_generation: int,
+    previous: ScoutRefillContinuationState | None,
+) -> ScoutRefillContinuationState:
+    search_scope = previous.search_scope if previous is not None else None
+    search_query = previous.search_query if previous is not None else None
+    if candidates:
+        provider_metadata = dict(candidates[0].connector_metadata)
+        search_scope = _metadata_text(provider_metadata, "x_search_scope") or search_scope
+        search_query = _metadata_text(provider_metadata, "x_search_query") or search_query
+
+    return ScoutRefillContinuationState(
+        retrieval_query=search_round.query_variants[0],
+        retrieval_query_variants=search_round.query_variants,
+        retrieval_relaxation_level=search_round.relaxation_level,
+        retrieval_specificity=search_round.specificity,
+        retrieval_language_mode="+".join(search_round.preferred_languages),
+        continuation_generation=continuation_generation,
+        page_start_token=requested_token,
+        next_token=candidates.next_token,
+        search_scope=search_scope,
+        search_query=search_query,
+    )
+
+
+def _retire_ambiguous_refill_state(
+    state: ScoutRefillContinuationState,
+    *,
+    page_start_token: str,
+    continuation_generation: int,
+) -> ScoutRefillContinuationState:
+    return replace(
+        state,
+        page_start_token=page_start_token,
+        next_token=None,
+        continuation_generation=continuation_generation,
+    )
+
+
+def _continuation_state_metadata(state: ScoutRefillContinuationState) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "retrieval_query": state.retrieval_query,
+        "retrieval_query_variants": list(state.retrieval_query_variants),
+        "retrieval_relaxation_level": state.retrieval_relaxation_level,
+        "retrieval_specificity": state.retrieval_specificity,
+        "retrieval_language_mode": state.retrieval_language_mode,
+        "x_continuation_generation": state.continuation_generation,
+    }
+    if state.search_scope is not None:
+        metadata["x_search_scope"] = state.search_scope
+    if state.search_query is not None:
+        metadata["x_search_query"] = state.search_query
+    if state.page_start_token is not None:
+        metadata["x_page_start_token"] = state.page_start_token
+    if state.next_token is not None:
+        metadata["x_next_token"] = state.next_token
+    return metadata
+
+
+def _apply_continuation_state(
+    candidates: tuple[CandidateContent, ...],
+    state: ScoutRefillContinuationState,
+) -> tuple[CandidateContent, ...]:
+    if not candidates:
+        return candidates
+
+    carrier_index: int | None = None
+    for index, candidate in enumerate(candidates):
+        metadata = candidate.connector_metadata
+        if (
+            metadata.get("retrieval_relaxation_level") == state.retrieval_relaxation_level
+            and metadata.get("retrieval_language_mode") == state.retrieval_language_mode
+        ):
+            carrier_index = index
+            break
+    if carrier_index is None:
+        return candidates
+
+    carrier = candidates[carrier_index]
+    metadata = dict(carrier.connector_metadata)
+    for key in _CONTINUATION_CARRIER_KEYS:
+        metadata.pop(key, None)
+    metadata.update(_continuation_state_metadata(state))
+    updated = replace(carrier, connector_metadata=metadata)
+    return (*candidates[:carrier_index], updated, *candidates[carrier_index + 1 :])
 
 
 def _deduplicate(candidates: list[CandidateContent]) -> tuple[CandidateContent, ...]:

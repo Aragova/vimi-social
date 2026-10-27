@@ -69,6 +69,30 @@ class CandidateContent:
 
 
 @dataclass(frozen=True, slots=True)
+class ScoutRefillContinuationState:
+    retrieval_query: str
+    retrieval_query_variants: tuple[str, ...]
+    retrieval_relaxation_level: int
+    retrieval_specificity: float
+    retrieval_language_mode: str
+    continuation_generation: int
+    page_start_token: str | None
+    next_token: str | None
+    search_scope: str | None = None
+    search_query: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.retrieval_query.strip():
+            raise ValueError("Scout refill retrieval query must not be empty")
+        if not self.retrieval_query_variants:
+            raise ValueError("Scout refill query variants must not be empty")
+        if self.retrieval_relaxation_level < 0:
+            raise ValueError("Scout refill relaxation level must not be negative")
+        if self.continuation_generation < 0:
+            raise ValueError("Scout refill generation must not be negative")
+
+
+@dataclass(frozen=True, slots=True)
 class ScoutSearchRequest:
     intent: str
     requested_sources: tuple[str, ...]
