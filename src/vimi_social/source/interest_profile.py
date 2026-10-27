@@ -9,12 +9,29 @@ from vimi_social.domain.source import CandidateContent
 _TOKEN = re.compile(r"[^\W_]+(?:[-'][^\W_]+)*", re.UNICODE)
 _HASHTAG = re.compile(r"(?<!\w)#([^\s#]+)", re.UNICODE)
 _URL = re.compile(r"https?://\S+", re.IGNORECASE)
+_PROFILE_NOISE = {
+    "all",
+    "content",
+    "follow",
+    "here",
+    "just",
+    "like",
+    "more",
+    "newvideo",
+    "only",
+    "promo",
+    "today",
+    "video",
+    "videos",
+    "wait",
+}
 _STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
     "in", "is", "it", "of", "on", "or", "that", "the", "this", "to",
     "with", "you", "your", "\u0432", "\u0434\u043b\u044f", "\u0438", "\u0438\u0437",
     "\u0438\u043b\u0438", "\u043d\u0430", "\u043e", "\u043e\u0431", "\u043e\u0442",
     "\u043f\u043e", "\u043f\u0440\u043e", "\u0441", "\u0441\u043e", "\u0447\u0442\u043e",
+    *_PROFILE_NOISE,
 }
 _MAX_TERMS = 160
 _MAX_HASHTAGS = 96
@@ -22,6 +39,7 @@ _MAX_AUTHORS = 160
 _SUMMARY_TERMS = 48
 _SUMMARY_HASHTAGS = 16
 _SEMANTIC_AFFINITY_WEIGHT = 0.50
+_PERSONALIZED_RETRIEVAL_LIMIT = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +62,7 @@ def build_interest_profile(snapshot: XInterestSnapshot) -> InterestProfileDraft:
         normalized = _URL.sub(" ", text).casefold()
         for raw_hashtag in _HASHTAG.findall(normalized):
             hashtag = raw_hashtag.strip(".,:;!?()[]{}\"'").casefold()
-            if hashtag:
+            if hashtag and hashtag not in _PROFILE_NOISE:
                 hashtags[hashtag] += weight
         for token in _TOKEN.findall(normalized):
             cleaned = token.casefold().strip("-'_")
@@ -111,6 +129,71 @@ def build_interest_summary(profile: UserInterestProfile) -> str | None:
     if not parts:
         return None
     return "user interests: " + " ".join(parts)
+
+
+def build_personalized_retrieval_terms(
+    profile: UserInterestProfile | None,
+    query_variants: tuple[str, ...],
+    *,
+    limit: int = _PERSONALIZED_RETRIEVAL_LIMIT,
+) -> tuple[str, ...]:
+    """Select profile terms lexically related to the full intent for one bounded X recall round."""
+
+    if profile is None or limit < 1:
+        return ()
+
+    query_tokens = tuple(
+        dict.fromkeys(
+            token.casefold().strip("-'_")
+            for variant in query_variants
+            for token in _TOKEN.findall(variant)
+            if len(token.strip("-'_")) >= 3
+            and token.casefold().strip("-_") not in _STOPWORDS
+        )
+    )
+    if not query_tokens:
+        return ()
+
+    ranked: dict[str, tuple[float, float, int]] = {}
+    for source_priority, values in (
+        (1, profile.hashtag_weights),
+        (0, profile.term_weights),
+    ):
+        for raw_key, raw_weight in values.items():
+            key = raw_key.casefold().strip().strip("#").strip("-'_")
+            if (
+                len(key) < 3
+                or key in _PROFILE_NOISE
+                or key.isdigit()
+                or not isinstance(raw_weight, int | float)
+                or isinstance(raw_weight, bool)
+            ):
+                continue
+            weight = max(0.0, min(1.0, float(raw_weight)))
+            if weight <= 0:
+                continue
+            relatedness = max(
+                (_lexical_relatedness(key, token) for token in query_tokens),
+                default=0.0,
+            )
+            if relatedness <= 0:
+                continue
+            score = weight * relatedness
+            current = ranked.get(key)
+            candidate = (score, weight, source_priority)
+            if current is None or candidate > current:
+                ranked[key] = candidate
+
+    ordered = sorted(
+        ranked.items(),
+        key=lambda item: (
+            -item[1][0],
+            -item[1][1],
+            -item[1][2],
+            item[0],
+        ),
+    )
+    return tuple(key for key, _ in ordered[:limit])
 
 
 def apply_interest_profile(
@@ -233,11 +316,21 @@ def _ranked_keys(values: Mapping[str, float], limit: int) -> tuple[str, ...]:
         (
             (key.strip(), float(value))
             for key, value in values.items()
-            if key.strip() and float(value) > 0
+            if key.strip()
+            and key.casefold().strip("#") not in _PROFILE_NOISE
+            and float(value) > 0
         ),
         key=lambda item: (-item[1], item[0]),
     )
     return tuple(key for key, _ in ranked[:limit])
+
+
+def _lexical_relatedness(profile_term: str, query_token: str) -> float:
+    if profile_term == query_token:
+        return 1.0
+    if query_token in profile_term or profile_term in query_token:
+        return 0.9
+    return 0.0
 
 
 def _mapping_score(values: Mapping[str, float], key: str) -> float:
