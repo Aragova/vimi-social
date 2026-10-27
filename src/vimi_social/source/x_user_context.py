@@ -1,4 +1,5 @@
 from collections.abc import Iterable
+from datetime import datetime
 from typing import cast
 
 import httpx
@@ -9,6 +10,9 @@ from vimi_social.domain.interest import (
     XInterestSnapshot,
     XInterestUser,
 )
+from vimi_social.domain.source import AdultClassification, CandidateContent
+
+X_HOME_TIMELINE_SEED_LIMIT = 50
 
 
 class XUserContextReauthRequired(RuntimeError):
@@ -24,7 +28,7 @@ class XUserContextScopeUnavailable(RuntimeError):
 
 
 class XUserContextClient:
-    """Read a bounded, privacy-minimized sample from one OAuth user context."""
+    """Read bounded, privacy-minimized data from one OAuth user context."""
 
     def __init__(
         self,
@@ -128,6 +132,37 @@ class XUserContextClient:
             list_posts=tuple(list_posts),
             unavailable_sources=tuple(dict.fromkeys(unavailable)),
         )
+
+    async def fetch_home_timeline_candidates(
+        self,
+        access_token: str,
+        user_id: str,
+        *,
+        max_results: int = X_HOME_TIMELINE_SEED_LIMIT,
+    ) -> tuple[tuple[CandidateContent, ...], int]:
+        token = access_token.strip()
+        normalized_user_id = user_id.strip()
+        if not token:
+            raise XUserContextReauthRequired("X user-context access token is empty")
+        if not normalized_user_id:
+            raise XUserContextUnavailable("X home timeline user id is empty")
+        limit = max(10, min(100, max_results))
+        payload = await self._get(
+            f"/2/users/{normalized_user_id}/timelines/reverse_chronological",
+            headers={"Authorization": f"Bearer {token}"},
+            params={
+                "max_results": str(limit),
+                "tweet.fields": (
+                    "attachments,author_id,created_at,lang,possibly_sensitive,public_metrics"
+                ),
+                "expansions": "attachments.media_keys",
+                "media.fields": (
+                    "alt_text,duration_ms,height,media_key,preview_image_url,type,url,variants,width"
+                ),
+            },
+        )
+        posts = _data_list(payload)
+        return _parse_home_timeline_candidates(payload), len(posts)
 
     async def _optional_collection(
         self,
@@ -283,6 +318,181 @@ def _deduplicate_lists(items: Iterable[XInterestList]) -> tuple[XInterestList, .
         seen.add(item.id)
         result.append(item)
     return tuple(result)
+
+
+def _parse_home_timeline_candidates(
+    payload: dict[str, object],
+) -> tuple[CandidateContent, ...]:
+    includes_obj = payload.get("includes")
+    includes = (
+        cast(dict[str, object], includes_obj)
+        if isinstance(includes_obj, dict)
+        else {}
+    )
+    media = _media_by_key(_object_list(includes.get("media")))
+    result: list[CandidateContent] = []
+    for item in _data_list(payload):
+        candidate = _home_timeline_candidate(item, media)
+        if candidate is not None:
+            result.append(candidate)
+    return tuple(result)
+
+
+def _home_timeline_candidate(
+    item: dict[str, object],
+    media: dict[str, dict[str, object]],
+) -> CandidateContent | None:
+    post_id = _optional_str(item.get("id"))
+    if post_id is None:
+        return None
+    text = _optional_str(item.get("text")) or ""
+    media_keys: tuple[str, ...] = ()
+    attachments_obj = item.get("attachments")
+    if isinstance(attachments_obj, dict):
+        attachments = cast(dict[object, object], attachments_obj)
+        raw_keys = attachments.get("media_keys")
+        if isinstance(raw_keys, list):
+            media_keys = tuple(
+                key for key in cast(list[object], raw_keys) if isinstance(key, str)
+            )
+    selected_media = _select_video_media(media_keys, media)
+    if selected_media is None:
+        return None
+    acquisition_url = _best_mp4_variant(selected_media.get("variants"))
+    possibly_sensitive = item.get("possibly_sensitive") is True
+    metadata: dict[str, object] = {
+        "media_key": _optional_str(selected_media.get("media_key")),
+        "preview_image_url": _optional_str(selected_media.get("preview_image_url")),
+        "media_url": _optional_str(selected_media.get("url")),
+        "language": _optional_str(item.get("lang")),
+        "acquisition_url": acquisition_url,
+        "acquisition_reference": "OFFICIAL_X_API_VIDEO_VARIANT",
+        "x_candidate_origin": "home_timeline",
+    }
+    return CandidateContent(
+        id=None,
+        source="x",
+        source_id=post_id,
+        source_url=f"https://x.com/i/web/status/{post_id}",
+        author=_optional_str(item.get("author_id")),
+        published_at=_parse_datetime(item.get("created_at")),
+        media_type="video",
+        duration_ms=_optional_int(selected_media.get("duration_ms")),
+        width=_optional_int(selected_media.get("width")),
+        height=_optional_int(selected_media.get("height")),
+        title=_truncate(text, 160) or None,
+        caption=text or None,
+        tags=(),
+        engagement=_public_metrics(item.get("public_metrics")),
+        adult_classification=(
+            AdultClassification.POSSIBLY_SENSITIVE
+            if possibly_sensitive
+            else AdultClassification.UNKNOWN
+        ),
+        explicitness_score=None,
+        provenance_hint="PUBLIC_X_POST_REUSE_RIGHTS_NOT_ESTABLISHED",
+        availability=(
+            "DISCOVERED_MEDIA_REFERENCE_AVAILABLE"
+            if acquisition_url is not None
+            else "DISCOVERED_METADATA_ONLY"
+        ),
+        connector_metadata=metadata,
+    )
+
+
+def _object_list(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        cast(dict[str, object], item)
+        for item in cast(list[object], value)
+        if isinstance(item, dict)
+    ]
+
+
+def _media_by_key(items: Iterable[dict[str, object]]) -> dict[str, dict[str, object]]:
+    result: dict[str, dict[str, object]] = {}
+    for item in items:
+        key = _optional_str(item.get("media_key"))
+        if key is not None:
+            result[key] = item
+    return result
+
+
+def _select_video_media(
+    media_keys: tuple[str, ...],
+    media: dict[str, dict[str, object]],
+) -> dict[str, object] | None:
+    for key in media_keys:
+        item = media.get(key)
+        if item is not None and item.get("type") == "video":
+            return item
+    return None
+
+
+def _best_mp4_variant(value: object) -> str | None:
+    if not isinstance(value, list):
+        return None
+    best_url: str | None = None
+    best_bitrate = -1
+    for raw in cast(list[object], value):
+        if not isinstance(raw, dict):
+            continue
+        variant = cast(dict[object, object], raw)
+        if variant.get("content_type") != "video/mp4":
+            continue
+        url = variant.get("url")
+        if not isinstance(url, str) or not url:
+            continue
+        raw_bitrate = variant.get("bit_rate")
+        bitrate = (
+            raw_bitrate
+            if isinstance(raw_bitrate, int) and not isinstance(raw_bitrate, bool)
+            else 0
+        )
+        if best_url is None or bitrate > best_bitrate:
+            best_url = url
+            best_bitrate = bitrate
+    return best_url
+
+
+def _public_metrics(value: object) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    metrics = cast(dict[object, object], value)
+    result: dict[str, int] = {}
+    for key in (
+        "like_count",
+        "reply_count",
+        "retweet_count",
+        "quote_count",
+        "bookmark_count",
+        "impression_count",
+    ):
+        raw = metrics.get(key)
+        if isinstance(raw, int) and not isinstance(raw, bool):
+            result[key] = raw
+    return result
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _optional_int(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def _truncate(value: str, limit: int) -> str:
+    normalized = " ".join(value.split())
+    return normalized if len(normalized) <= limit else normalized[: limit - 1].rstrip() + "…"
 
 
 def _optional_str(value: object) -> str | None:
