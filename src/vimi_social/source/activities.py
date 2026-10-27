@@ -171,6 +171,7 @@ class ScoutActivities:
             for connector in connectors:
                 pagination_token: str | None = None
                 continuation_generation = 0
+                pages_read = 0
                 round_continuation_state: ScoutRefillContinuationState | None = None
 
                 while True:
@@ -192,6 +193,7 @@ class ScoutActivities:
                     retrieval_spent += request_limit
                     try:
                         round_candidates = await connector.search(request)
+                        pages_read += 1
                         discovered.extend(
                             _with_retrieval_provenance(
                                 candidate,
@@ -234,6 +236,8 @@ class ScoutActivities:
                         target_met = True
                         break
                     if retrieval_spent >= self._retrieval_budget:
+                        break
+                    if search_round.max_pages is not None and pages_read >= search_round.max_pages:
                         break
 
                     next_token = (
