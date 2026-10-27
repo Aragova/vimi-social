@@ -90,8 +90,6 @@ class ScoutRefillContinuationState:
             raise ValueError("Scout refill relaxation level must not be negative")
         if self.continuation_generation < 0:
             raise ValueError("Scout refill generation must not be negative")
-        if not self.retrieval_language_mode.strip():
-            raise ValueError("Scout refill language mode must not be empty")
 
 
 @dataclass(frozen=True, slots=True)
