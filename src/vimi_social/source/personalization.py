@@ -1,4 +1,4 @@
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextvars import ContextVar, Token
 from dataclasses import replace
 from uuid import UUID
@@ -25,10 +25,15 @@ from vimi_social.source.curator import CandidateCurator
 from vimi_social.source.interest_profile import (
     apply_interest_profile,
     build_interest_summary,
+    build_personalized_retrieval_terms,
 )
 from vimi_social.source.interest_repository import UserInterestProfileRepository
 from vimi_social.source.ocr import PreviewOcrExtractor
-from vimi_social.source.query_planner import MultilingualQueryPlanner
+from vimi_social.source.query_planner import (
+    MultilingualQueryPlanner,
+    ScoutQueryPlan,
+    ScoutQueryRound,
+)
 from vimi_social.source.repository import SourceTaskRepository
 from vimi_social.source.scout_attempts import ScoutAttemptStore
 from vimi_social.source.semantic import (
@@ -49,6 +54,64 @@ _CURRENT_TASTE_SEMANTIC: ContextVar[dict[tuple[str, str], float] | None] = Conte
 )
 _PERSONAL_AFFINITY_WEIGHT = 0.10
 _LOCAL_AI_BATCH_LIMIT = 100
+
+
+class PersonalizedQueryPlanner(MultilingualQueryPlanner):
+    """Prepend one bounded profile-guided recall round without increasing the total budget."""
+
+    def __init__(
+        self,
+        delegate: MultilingualQueryPlanner,
+        *,
+        profile_getter: Callable[[], UserInterestProfile | None] | None = None,
+    ) -> None:
+        self._delegate = delegate
+        self._profile_getter = profile_getter or _CURRENT_PROFILE.get
+
+    async def plan(
+        self,
+        intent: str,
+        preferred_languages: tuple[str, ...],
+    ) -> ScoutQueryPlan:
+        return await self._delegate.plan(intent, preferred_languages)
+
+    async def search_rounds(
+        self,
+        plan: ScoutQueryPlan,
+        intent: str,
+        preferred_languages: tuple[str, ...],
+    ) -> AsyncIterator[ScoutQueryRound]:
+        profile_terms = build_personalized_retrieval_terms(
+            self._profile_getter(),
+            plan.query_variants,
+        )
+        if len(profile_terms) >= 2:
+            normalized_languages = {
+                language.strip().lower()
+                for language in preferred_languages
+                if language.strip()
+            }
+            round_languages = (
+                ("en",)
+                if "en" in normalized_languages
+                and all(term.isascii() for term in profile_terms)
+                else ()
+            )
+            yield ScoutQueryRound(
+                query_variants=profile_terms,
+                preferred_languages=round_languages,
+                relaxation_level=0,
+                specificity=1 / len(profile_terms),
+                strategy="profile_personalized_recall",
+                max_pages=1,
+            )
+
+        async for search_round in self._delegate.search_rounds(
+            plan,
+            intent,
+            preferred_languages,
+        ):
+            yield search_round
 
 
 class PersonalizedFilteringCandidateCurator(FilteringCandidateCurator):
@@ -162,6 +225,9 @@ class PersonalizedScoutActivities(ScoutActivities):
         preview_evidence_limit: int = 50,
         interest_repository: UserInterestProfileRepository | None = None,
     ) -> None:
+        personalized_planner = PersonalizedQueryPlanner(
+            query_planner or MultilingualQueryPlanner()
+        )
         super().__init__(
             session_factory,
             registry,
@@ -169,7 +235,7 @@ class PersonalizedScoutActivities(ScoutActivities):
             source_repository=source_repository,
             usage_repository=usage_repository,
             attempt_store=attempt_store,
-            query_planner=query_planner,
+            query_planner=personalized_planner,
             curator=curator,
             semantic_scorer=semantic_scorer,
             visual_scorer=visual_scorer,
@@ -245,6 +311,9 @@ class PersonalizedFilteringScoutContinuationActivities(
         batch_size: int = 30,
         interest_repository: UserInterestProfileRepository | None = None,
     ) -> None:
+        personalized_planner = PersonalizedQueryPlanner(
+            query_planner or MultilingualQueryPlanner()
+        )
         super().__init__(
             session_factory,
             registry,
@@ -252,7 +321,7 @@ class PersonalizedFilteringScoutContinuationActivities(
             source_repository=source_repository,
             usage_repository=usage_repository,
             attempt_store=attempt_store,
-            query_planner=query_planner,
+            query_planner=personalized_planner,
             curator=curator,
             semantic_scorer=semantic_scorer,
             semantic_minimum_relevance=semantic_minimum_relevance,
