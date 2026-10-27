@@ -93,7 +93,7 @@ class XSourceConnector:
                     scope=scope,
                 )
             except SourceConnectorUnavailable:
-                if candidates:
+                if posts_read > 0:
                     # A transport/5xx failure is ambiguous: the provider may have
                     # processed this page even though its response was lost. Keep
                     # already-returned candidates but never expose the failed page's
@@ -102,9 +102,10 @@ class XSourceConnector:
                     break
                 raise
             except (SourceConnectorRateLimited, SourceConnectorRejected):
-                if candidates:
+                if posts_read > 0:
                     # 429/401/403 are definitive no-data responses. The current
-                    # page token remains safe to retry manually later.
+                    # page token remains safe to retry manually later, even when
+                    # earlier successful pages produced no convertible candidates.
                     continuation_token = page_token
                     break
                 raise
