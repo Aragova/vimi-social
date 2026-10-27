@@ -24,6 +24,22 @@ def write_env_value(path: Path, key: str, value: str) -> None:
     path.chmod(0o600)
 
 
+def upsert_env_value(path: Path, key: str, value: str) -> None:
+    lines = path.read_text().splitlines()
+    updated: list[str] = []
+    found = False
+    for line in lines:
+        if line.startswith(f"{key}="):
+            updated.append(f"{key}={value}")
+            found = True
+        else:
+            updated.append(line)
+    if not found:
+        updated.append(f"{key}={value}")
+    path.write_text("\n".join(updated) + "\n")
+    path.chmod(0o600)
+
+
 def request_target(line: str) -> str | None:
     parts = line.split('"')
     if len(parts) < 2:
