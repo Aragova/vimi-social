@@ -86,6 +86,23 @@ class _PaginatedXConnector:
         )
 
 
+class _RecordingXConnector:
+    source_name = "x"
+
+    def __init__(self) -> None:
+        self.request_limits: list[int] = []
+
+    async def search(self, request: ScoutSearchRequest) -> tuple[CandidateContent, ...]:
+        self.request_limits.append(request.max_results)
+        return (
+            _candidate(
+                f"provider-{len(self.request_limits)}",
+                text="gay porn twink young provider result",
+                duration_ms=600_000,
+            ),
+        )
+
+
 @pytest.mark.asyncio
 async def test_concept_planner_searches_token_pairs_before_broad_or() -> None:
     planner = ConceptQueryPlanner(MultilingualQueryPlanner())
@@ -247,3 +264,35 @@ async def test_timeline_seed_merge_preserves_provider_pagination() -> None:
     assert [candidate.source_id for candidate in result] == ["provider", "timeline"]
     assert result[0].connector_metadata["x_search_scope"] == "all"
     assert result[0].connector_metadata["x_search_query"] == "(gay twink) has:videos"
+
+
+@pytest.mark.asyncio
+async def test_home_timeline_registry_caps_provider_reads_without_capping_seed_pool() -> None:
+    seed = _candidate(
+        "timeline",
+        text="gay porn twink young timeline video",
+        duration_ms=600_000,
+    )
+    provider = _RecordingXConnector()
+    registry = HomeTimelineSeedRegistry(
+        SourceConnectorRegistry((provider,)),
+        seed_getter=lambda: (seed,),
+        provider_read_budget=40,
+    )
+    connector = registry.route(("x",))[0]
+    request = ScoutSearchRequest(
+        intent="gay porn twink young",
+        requested_sources=("x",),
+        preferred_languages=("en",),
+        query_variants=("gay porn twink young",),
+        max_results=30,
+    )
+
+    first = await connector.search(request)
+    second = await connector.search(request)
+    third = await connector.search(request)
+
+    assert [candidate.source_id for candidate in first] == ["provider-1", "timeline"]
+    assert [candidate.source_id for candidate in second] == ["provider-2"]
+    assert third == ()
+    assert provider.request_limits == [30, 10]
