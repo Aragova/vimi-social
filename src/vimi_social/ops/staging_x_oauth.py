@@ -2,7 +2,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 AUTHORIZATION_ENDPOINT = "https://x.com/i/oauth2/authorize"
-DEFAULT_SCOPES = "tweet.read tweet.write users.read media.write offline.access"
+DEFAULT_SCOPES = (
+    "tweet.read tweet.write users.read follows.read like.read list.read bookmark.read "
+    "media.write offline.access"
+)
 
 
 def write_env_value(path: Path, key: str, value: str) -> None:
