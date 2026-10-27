@@ -294,7 +294,7 @@ async def test_scout_refill_retires_stale_cursor_when_rejected_page_is_exhausted
     connector = ExhaustedRefillConnector()
     result, persisted = await _run_scout(
         connector,
-        retrieval_budget=90,
+        retrieval_budget=60,
         telegram_user_id=930038203,
         update_id=830038203,
         message_id=938203,
