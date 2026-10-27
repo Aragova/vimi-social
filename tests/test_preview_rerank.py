@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -107,9 +109,11 @@ async def test_local_ai_routes_visual_and_ocr_only_to_adaptive_subset() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         requested_paths.append(request.url.path)
-        payload = request.read().decode()
-        assert '"10.jpg"' not in payload
-        assert '"11.jpg"' in payload
+        payload = json.loads(request.read())
+        preview_urls = payload["preview_image_urls"]
+        assert "https://images.example/10.jpg" not in preview_urls
+        assert "https://images.example/11.jpg" in preview_urls
+        assert len(preview_urls) == 11
         if request.url.path == "/v1/visual-score":
             return httpx.Response(200, json={"scores": [0.1] * 11})
         if request.url.path == "/v1/preview-ocr":
