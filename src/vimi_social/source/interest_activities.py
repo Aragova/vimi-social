@@ -8,7 +8,7 @@ from temporalio import activity
 from vimi_social.db.tenant import tenant_transaction
 from vimi_social.domain.identity import OperationKey
 from vimi_social.domain.interest import XInterestSyncResult, XInterestSyncState
-from vimi_social.domain.source import ScoutWorkflowInput, SourceTask
+from vimi_social.domain.source import ScoutWorkflowInput, SourceTask, XTimelineSeedResult
 from vimi_social.publication.x_adapter import (
     DestinationCredentialError,
     EnvironmentCredentialResolver,
@@ -19,12 +19,13 @@ from vimi_social.source.repository import SourceTaskRepository
 from vimi_social.source.x_user_context import (
     XUserContextClient,
     XUserContextReauthRequired,
+    XUserContextScopeUnavailable,
     XUserContextUnavailable,
 )
 
 
 class XInterestProfileActivities:
-    """Refresh an explainable X taste profile without exposing OAuth secrets to Scout."""
+    """Read X user context on the credential-owning destination worker."""
 
     def __init__(
         self,
@@ -35,6 +36,7 @@ class XInterestProfileActivities:
         credential_resolver: EnvironmentCredentialResolver | None = None,
         client: XUserContextClient | None = None,
         profile_ttl: timedelta = timedelta(hours=6),
+        home_timeline_limit: int = 50,
     ) -> None:
         self._session_factory = session_factory
         self._source_repository = source_repository or SourceTaskRepository()
@@ -42,6 +44,7 @@ class XInterestProfileActivities:
         self._credential_resolver = credential_resolver or EnvironmentCredentialResolver()
         self._client = client or XUserContextClient()
         self._profile_ttl = max(timedelta(minutes=15), profile_ttl)
+        self._home_timeline_limit = max(0, min(100, home_timeline_limit))
 
     @activity.defn(name="sync_x_user_interest_profile")
     async def sync_x_user_interest_profile(
@@ -112,6 +115,59 @@ class XInterestProfileActivities:
             XInterestSyncState.SYNCED,
             sample_size=profile.sample_size,
             unavailable_sources=snapshot.unavailable_sources,
+        )
+
+    @activity.defn(name="fetch_x_home_timeline_seed")
+    async def fetch_x_home_timeline_seed(
+        self,
+        workflow_input: ScoutWorkflowInput,
+    ) -> XTimelineSeedResult:
+        """Fetch one bounded personalized timeline page without exposing the token."""
+
+        if self._home_timeline_limit < 10:
+            return XTimelineSeedResult(failure_code="DISABLED_BY_BUDGET")
+        task = self._authorized_task(workflow_input)
+        with self._session_factory() as session, tenant_transaction(
+            session,
+            task.tenant_id,
+        ):
+            accounts = self._interest_repository.active_x_accounts_for_user(
+                session,
+                user_id=task.actor_user_id,
+            )
+            if not accounts:
+                return XTimelineSeedResult(failure_code="NO_ACCOUNT")
+            if len(accounts) != 1:
+                return XTimelineSeedResult(failure_code="MULTIPLE_ACCOUNTS")
+            account = accounts[0]
+            profile = self._interest_repository.get(
+                session,
+                user_id=task.actor_user_id,
+            )
+            if profile is None or profile.destination_account_id != account.id:
+                return XTimelineSeedResult(failure_code="NO_PROFILE")
+            credential_ref = account.credential_ref
+            external_user_id = profile.external_account_id
+
+        try:
+            access_token = self._credential_resolver.resolve(credential_ref)
+        except DestinationCredentialError:
+            return XTimelineSeedResult(failure_code="CREDENTIAL_UNAVAILABLE")
+
+        try:
+            candidates, posts_read = await self._client.fetch_home_timeline_candidates(
+                access_token,
+                external_user_id,
+                max_results=self._home_timeline_limit,
+            )
+        except XUserContextReauthRequired:
+            return XTimelineSeedResult(failure_code="REAUTH_REQUIRED")
+        except (XUserContextScopeUnavailable, XUserContextUnavailable):
+            return XTimelineSeedResult(failure_code="TIMELINE_UNAVAILABLE")
+
+        return XTimelineSeedResult(
+            candidates=candidates,
+            posts_read=posts_read,
         )
 
     def _authorized_task(self, workflow_input: ScoutWorkflowInput) -> SourceTask:
