@@ -14,6 +14,7 @@ from vimi_social.domain.source import AdultClassification, CandidateContent
 from vimi_social.source.interest_profile import (
     apply_interest_profile,
     build_interest_profile,
+    build_interest_summary,
 )
 
 
@@ -108,6 +109,14 @@ def test_bookmarks_contribute_stronger_taste_signal_than_likes_and_following() -
     assert draft.sample_size == 5
 
 
+def test_interest_summary_uses_only_compact_persisted_aggregates() -> None:
+    summary = build_interest_summary(_profile())
+
+    assert summary == "user interests: twink cinematic"
+    assert "x-user-1" not in summary
+    assert "fav-author" not in summary
+
+
 def test_candidate_affinity_is_explainable_and_zero_for_unrelated_content() -> None:
     matching = apply_interest_profile(
         _candidate(
@@ -127,6 +136,26 @@ def test_candidate_affinity_is_explainable_and_zero_for_unrelated_content() -> N
     assert "author:fav-author" in reasons
     assert "hashtag:twink" in reasons
     assert _metadata_float(unrelated, "personal_affinity_score") == 0.0
+
+
+def test_e5_semantic_affinity_blends_with_explainable_signals() -> None:
+    candidate = apply_interest_profile(
+        _candidate(
+            "semantic",
+            "A completely different wording for the same preference",
+            author="other-author",
+        ),
+        _profile(),
+        semantic_affinity=0.8,
+    )
+
+    assert _metadata_float(candidate, "personal_affinity_lexical_score") == 0.0
+    assert _metadata_float(candidate, "personal_affinity_semantic_score") == 0.8
+    assert _metadata_float(candidate, "personal_affinity_score") == 0.4
+    assert "semantic:e5" in _metadata_strings(
+        candidate,
+        "personal_affinity_reasons",
+    )
 
 
 def _metadata_float(candidate: CandidateContent, key: str) -> float:
