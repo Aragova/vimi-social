@@ -8,11 +8,43 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from vimi_social.domain.identity import TenantId
-from vimi_social.domain.interest import UserInterestProfile
+from vimi_social.domain.interest import (
+    UserInterestProfile,
+    XInterestAccountBinding,
+)
 from vimi_social.source.interest_profile import InterestProfileDraft
 
 
 class UserInterestProfileRepository:
+    def active_x_accounts_for_user(
+        self,
+        session: Session,
+        *,
+        user_id: UUID,
+    ) -> tuple[XInterestAccountBinding, ...]:
+        rows = session.execute(
+            text(
+                """
+                SELECT id, external_account_id, credential_ref
+                FROM destination_account
+                WHERE platform = 'x'
+                  AND state = 'ACTIVE'
+                  AND connected_user_id = :user_id
+                ORDER BY created_at, id
+                """
+            ),
+            {"user_id": str(user_id)},
+        ).mappings().all()
+        return tuple(
+            XInterestAccountBinding(
+                id=_uuid(mapped["id"], "destination account id"),
+                external_account_id=str(mapped["external_account_id"]),
+                credential_ref=str(mapped["credential_ref"]),
+            )
+            for row in rows
+            for mapped in (cast(Mapping[str, object], row),)
+        )
+
     def get(
         self,
         session: Session,
@@ -102,7 +134,10 @@ class UserInterestProfileRepository:
                     draft.author_weights,
                     separators=(",", ":"),
                 ),
-                "source_stats": json.dumps(draft.source_stats, separators=(",", ":")),
+                "source_stats": json.dumps(
+                    draft.source_stats,
+                    separators=(",", ":"),
+                ),
                 "sample_size": draft.sample_size,
             },
         ).mappings().one()
@@ -129,7 +164,11 @@ def _float_mapping(value: object) -> dict[str, float]:
         return {}
     result: dict[str, float] = {}
     for key, raw in cast(dict[object, object], value).items():
-        if isinstance(key, str) and isinstance(raw, int | float) and not isinstance(raw, bool):
+        if (
+            isinstance(key, str)
+            and isinstance(raw, int | float)
+            and not isinstance(raw, bool)
+        ):
             result[key] = max(0.0, min(1.0, float(raw)))
     return result
 
