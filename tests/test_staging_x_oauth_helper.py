@@ -4,6 +4,7 @@ from vimi_social.ops.staging_x_oauth import (
     authorization_url,
     callback_code,
     request_target,
+    upsert_env_value,
     write_env_value,
 )
 
@@ -64,5 +65,22 @@ def test_write_env_value_replaces_only_requested_key(tmp_path: Path) -> None:
         "VIMI_PUBLIC_HOST=staging.usevimi.ru\n"
         "VIMI_DEST_X_PRIMARY_TOKEN=new-token\n"
         "VIMI_X_BEARER_TOKEN=source-token\n"
+    )
+    assert env_file.stat().st_mode & 0o777 == 0o600
+
+
+def test_upsert_env_value_appends_missing_refresh_setting(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env.staging"
+    env_file.write_text("VIMI_DEST_X_PRIMARY_TOKEN=access-token\n")
+
+    upsert_env_value(
+        env_file,
+        "VIMI_DEST_X_PRIMARY_REFRESH_TOKEN",
+        "refresh-token",
+    )
+
+    assert env_file.read_text() == (
+        "VIMI_DEST_X_PRIMARY_TOKEN=access-token\n"
+        "VIMI_DEST_X_PRIMARY_REFRESH_TOKEN=refresh-token\n"
     )
     assert env_file.stat().st_mode & 0o777 == 0o600
