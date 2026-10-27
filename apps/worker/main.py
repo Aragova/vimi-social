@@ -12,7 +12,10 @@ from vimi_social.media.delivery import MediaPreparationDeliveryActivities
 from vimi_social.publication.delivery import PublicationDeliveryActivities
 from vimi_social.publication.preview import PublicationPreviewActivities
 from vimi_social.source.connectors import SourceConnectorRegistry
-from vimi_social.source.home_timeline import HomeTimelineRetrievalV3ScoutActivities
+from vimi_social.source.home_timeline import (
+    HomeTimelineRetrievalV3ScoutActivities,
+    HomeTimelineSeedRegistry,
+)
 from vimi_social.source.personalization import (
     PersonalizedFilteringScoutContinuationActivities,
 )
@@ -111,7 +114,7 @@ async def run() -> None:
     )
     scout_activities = HomeTimelineRetrievalV3ScoutActivities(
         session_factory,
-        registry,
+        HomeTimelineSeedRegistry(registry),
         messenger,
         query_planner=query_planner,
         curator=scout_curator,
