@@ -195,6 +195,27 @@ On the nginx co-host staging topology, the helper can capture the callback autom
 PYTHONPATH=src python3 scripts/configure_staging_x_oauth.py
 ```
 
+After either authorization flow succeeds, recreate the destination worker before any personalization or publication smoke test. The OAuth helper updates `.env.staging`, while a running container keeps its previous environment until it is recreated.
+
+For standalone staging:
+
+```bash
+docker compose \
+  --env-file .env.staging \
+  -f infra/docker/docker-compose.staging.yml \
+  up -d --no-deps --force-recreate destination-worker
+```
+
+For nginx co-host staging, include the co-host override:
+
+```bash
+docker compose \
+  --env-file .env.staging \
+  -f infra/docker/docker-compose.staging.yml \
+  -f infra/docker/docker-compose.staging.cohost.yml \
+  up -d --no-deps --force-recreate destination-worker
+```
+
 Then provision the X destination and explicitly bind it to the workspace user who authorized that X account. `--user-id` is mandatory; the helper intentionally does not query `workspace_membership` through the application role.
 
 ```bash
