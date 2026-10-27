@@ -233,10 +233,7 @@ def _ranked_keys(values: Mapping[str, float], limit: int) -> tuple[str, ...]:
         (
             (key.strip(), float(value))
             for key, value in values.items()
-            if key.strip()
-            and isinstance(value, int | float)
-            and not isinstance(value, bool)
-            and float(value) > 0
+            if key.strip() and float(value) > 0
         ),
         key=lambda item: (-item[1], item[0]),
     )
