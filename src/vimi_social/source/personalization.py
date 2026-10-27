@@ -1,10 +1,12 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextvars import ContextVar, Token
-from typing import cast
+from dataclasses import replace
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from vimi_social.db.tenant import tenant_transaction
+from vimi_social.domain.identity import TenantId
 from vimi_social.domain.interest import UserInterestProfile
 from vimi_social.domain.source import (
     CandidateContent,
@@ -38,7 +40,7 @@ _PERSONAL_AFFINITY_WEIGHT = 0.10
 
 
 class PersonalizedFilteringCandidateCurator(FilteringCandidateCurator):
-    """Boost relevant candidates using the current user's explainable taste profile."""
+    """Apply a bounded taste boost only after the normal relevance gates pass."""
 
     def rank(
         self,
@@ -55,13 +57,18 @@ class PersonalizedFilteringCandidateCurator(FilteringCandidateCurator):
         preview_ocr_weight: float = 0.10,
         minimum_relevance: float = 0.0,
     ) -> tuple[CandidateContent, ...]:
+        if limit < 1:
+            return ()
+
         profile = _CURRENT_PROFILE.get()
-        enriched = tuple(apply_interest_profile(candidate, profile) for candidate in candidates)
+        enriched = tuple(
+            apply_interest_profile(candidate, profile) for candidate in candidates
+        )
         ranked = super().rank(
             enriched,
             query_variants=query_variants,
             preferred_languages=preferred_languages,
-            limit=max(1, len(enriched)) if enriched else limit,
+            limit=len(enriched),
             semantic_scores=semantic_scores,
             visual_scores=visual_scores,
             preview_ocr_texts=preview_ocr_texts,
@@ -70,10 +77,12 @@ class PersonalizedFilteringCandidateCurator(FilteringCandidateCurator):
             preview_ocr_weight=preview_ocr_weight,
             minimum_relevance=minimum_relevance,
         )
-        if limit < 1 or not ranked:
+        if not ranked:
             return ()
 
-        rescored: list[tuple[float, float, float, float, int, CandidateContent]] = []
+        rescored: list[
+            tuple[float, float, float, float, float, float, int, CandidateContent]
+        ] = []
         for index, candidate in enumerate(ranked):
             metadata = dict(candidate.connector_metadata)
             relevance = _metadata_float(metadata, "curator_relevance_score", 0.0)
@@ -84,67 +93,31 @@ class PersonalizedFilteringCandidateCurator(FilteringCandidateCurator):
             )
             metadata["curator_personal_affinity_score"] = affinity
             metadata["curator_personalized_score"] = personalized
-            updated = candidate.__class__(
-                id=candidate.id,
-                source=candidate.source,
-                source_id=candidate.source_id,
-                source_url=candidate.source_url,
-                author=candidate.author,
-                published_at=candidate.published_at,
-                media_type=candidate.media_type,
-                duration_ms=candidate.duration_ms,
-                width=candidate.width,
-                height=candidate.height,
-                title=candidate.title,
-                caption=candidate.caption,
-                tags=candidate.tags,
-                engagement=candidate.engagement,
-                adult_classification=candidate.adult_classification,
-                explicitness_score=candidate.explicitness_score,
-                provenance_hint=candidate.provenance_hint,
-                availability=candidate.availability,
-                connector_metadata=metadata,
-            )
+            updated = replace(candidate, connector_metadata=metadata)
             rescored.append(
                 (
                     personalized,
                     relevance,
-                    _metadata_float(metadata, "curator_semantic_relevance_score", -1.0),
+                    _metadata_float(
+                        metadata,
+                        "curator_semantic_relevance_score",
+                        -1.0,
+                    ),
+                    _metadata_float(metadata, "curator_lexical_relevance_score", 0.0),
                     _metadata_float(metadata, "curator_duration_preference_score", 0.0),
+                    _metadata_float(metadata, "curator_quality_score", 0.0),
                     -index,
                     updated,
                 )
             )
 
-        rescored.sort(key=lambda item: item[:5], reverse=True)
+        rescored.sort(key=lambda item: item[:7], reverse=True)
         result: list[CandidateContent] = []
         for rank, item in enumerate(rescored[:limit], start=1):
-            candidate = item[5]
+            candidate = item[7]
             metadata = dict(candidate.connector_metadata)
             metadata["curator_rank"] = rank
-            result.append(
-                candidate.__class__(
-                    id=candidate.id,
-                    source=candidate.source,
-                    source_id=candidate.source_id,
-                    source_url=candidate.source_url,
-                    author=candidate.author,
-                    published_at=candidate.published_at,
-                    media_type=candidate.media_type,
-                    duration_ms=candidate.duration_ms,
-                    width=candidate.width,
-                    height=candidate.height,
-                    title=candidate.title,
-                    caption=candidate.caption,
-                    tags=candidate.tags,
-                    engagement=candidate.engagement,
-                    adult_classification=candidate.adult_classification,
-                    explicitness_score=candidate.explicitness_score,
-                    provenance_hint=candidate.provenance_hint,
-                    availability=candidate.availability,
-                    connector_metadata=metadata,
-                )
-            )
+            result.append(replace(candidate, connector_metadata=metadata))
         return tuple(result)
 
 
@@ -190,28 +163,34 @@ class PersonalizedScoutActivities(ScoutActivities):
             retrieval_round_limit=retrieval_round_limit,
             preview_evidence_limit=preview_evidence_limit,
         )
-        self._interest_repository = interest_repository or UserInterestProfileRepository()
+        self._interest_repository = (
+            interest_repository or UserInterestProfileRepository()
+        )
 
-    async def execute_scout_task(self, workflow_input: ScoutWorkflowInput) -> ScoutRunResult:
+    async def execute_scout_task(
+        self,
+        workflow_input: ScoutWorkflowInput,
+    ) -> ScoutRunResult:
         task = self._authorized_task(workflow_input)
-        token = self._set_profile(task.actor_user_id, task.tenant_id.value)
+        token = self._set_profile(task.actor_user_id, task.tenant_id)
         try:
             return await super().execute_scout_task(workflow_input)
         finally:
             _CURRENT_PROFILE.reset(token)
 
-    def _set_profile(self, user_id: object, tenant_id: object) -> Token[UserInterestProfile | None]:
-        from vimi_social.domain.identity import TenantId
-        from uuid import UUID
-
-        resolved_user_id = cast(UUID, user_id)
-        resolved_tenant_id = TenantId.parse(str(tenant_id))
-        with self._session_factory() as session, tenant_transaction(session, resolved_tenant_id):
-            profile = self._interest_repository.get(session, user_id=resolved_user_id)
+    def _set_profile(
+        self,
+        user_id: UUID,
+        tenant_id: TenantId,
+    ) -> Token[UserInterestProfile | None]:
+        with self._session_factory() as session, tenant_transaction(session, tenant_id):
+            profile = self._interest_repository.get(session, user_id=user_id)
         return _CURRENT_PROFILE.set(profile)
 
 
-class PersonalizedFilteringScoutContinuationActivities(FilteringScoutContinuationActivities):
+class PersonalizedFilteringScoutContinuationActivities(
+    FilteringScoutContinuationActivities
+):
     def __init__(
         self,
         session_factory: Callable[[], Session],
@@ -241,15 +220,23 @@ class PersonalizedFilteringScoutContinuationActivities(FilteringScoutContinuatio
             semantic_minimum_relevance=semantic_minimum_relevance,
             batch_size=batch_size,
         )
-        self._interest_repository = interest_repository or UserInterestProfileRepository()
+        self._interest_repository = (
+            interest_repository or UserInterestProfileRepository()
+        )
 
     async def continue_scout_results(
         self,
         workflow_input: ScoutContinuationWorkflowInput,
     ) -> ScoutRunResult:
         task = self._authorized_task(workflow_input)
-        with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
-            profile = self._interest_repository.get(session, user_id=task.actor_user_id)
+        with self._session_factory() as session, tenant_transaction(
+            session,
+            task.tenant_id,
+        ):
+            profile = self._interest_repository.get(
+                session,
+                user_id=task.actor_user_id,
+            )
         token = _CURRENT_PROFILE.set(profile)
         try:
             return await super().continue_scout_results(workflow_input)
@@ -257,7 +244,11 @@ class PersonalizedFilteringScoutContinuationActivities(FilteringScoutContinuatio
             _CURRENT_PROFILE.reset(token)
 
 
-def _metadata_float(metadata: dict[str, object], key: str, default: float) -> float:
+def _metadata_float(
+    metadata: Mapping[str, object],
+    key: str,
+    default: float,
+) -> float:
     value = metadata.get(key)
     if isinstance(value, int | float) and not isinstance(value, bool):
         return float(value)
