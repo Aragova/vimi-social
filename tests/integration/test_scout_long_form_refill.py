@@ -48,7 +48,7 @@ def _candidate(source_id: str, *, duration_ms: int, text_value: str) -> Candidat
         explicitness_score=None,
         provenance_hint="PUBLIC_X_POST_REUSE_RIGHTS_NOT_ESTABLISHED",
         availability="DISCOVERED_METADATA_ONLY",
-        connector_metadata={"media_key": f"7_{source_id}"},
+        connector_metadata={"media_key": f"7_{source_id}", "x_search_scope": "all", "x_search_query": "test"},
     )
 
 
@@ -96,26 +96,69 @@ class BudgetCappedRefillConnector:
             raise AssertionError("Scout must not exceed the reserved retrieval budget")
         token = None if call == 1 else "page-2"
         assert request.pagination_token == token
-        candidates = (
-            _candidate(
-                f"long-budget-{call}",
-                duration_ms=600_000,
-                text_value=f"long budget candidate unique {call}",
-            ),
-            *(
+        if call == 1:
+            candidates = (
                 _candidate(
-                    f"short-budget-{call}-{index}",
+                    "long-budget-1",
+                    duration_ms=600_000,
+                    text_value="long budget candidate unique one",
+                ),
+                *(
+                    _candidate(
+                        f"short-budget-1-{index}",
+                        duration_ms=10_000,
+                        text_value=f"short budget spam one {index}",
+                    )
+                    for index in range(10)
+                ),
+            )
+            return SourceSearchCandidates(candidates, next_token="page-2")
+
+        shorts_only = tuple(
+            _candidate(
+                f"short-budget-2-{index}",
+                duration_ms=10_000,
+                text_value=f"short budget spam two {index}",
+            )
+            for index in range(10)
+        )
+        return SourceSearchCandidates(shorts_only, next_token="page-3")
+
+
+class ExhaustedRefillConnector:
+    source_name = "x"
+
+    def __init__(self) -> None:
+        self.requests: list[ScoutSearchRequest] = []
+
+    async def search(self, request: ScoutSearchRequest) -> tuple[CandidateContent, ...]:
+        self.requests.append(request)
+        if request.pagination_token is None:
+            return SourceSearchCandidates(
+                (
+                    _candidate(
+                        "long-exhausted-1",
+                        duration_ms=600_000,
+                        text_value="long exhausted candidate unique one",
+                    ),
+                ),
+                next_token="page-2",
+            )
+        if request.pagination_token == "page-2":
+            shorts_only = tuple(
+                _candidate(
+                    f"short-exhausted-2-{index}",
                     duration_ms=10_000,
-                    text_value=f"short budget spam {call} {index}",
+                    text_value=f"short exhausted spam two {index}",
                 )
                 for index in range(10)
-            ),
-        )
-        return SourceSearchCandidates(candidates, next_token=f"page-{call + 1}")
+            )
+            return SourceSearchCandidates(shorts_only, next_token=None)
+        raise AssertionError("Exhausted refill must not request another page")
 
 
 async def _run_scout(
-    connector: LongFormRefillConnector | BudgetCappedRefillConnector,
+    connector: LongFormRefillConnector | BudgetCappedRefillConnector | ExhaustedRefillConnector,
     *,
     retrieval_budget: int,
     telegram_user_id: int,
@@ -214,14 +257,15 @@ async def test_scout_refills_same_x_round_until_long_form_target_is_met() -> Non
         candidate.duration_ms is not None and candidate.duration_ms >= 60_000
         for candidate in persisted
     )
-    assert all(
+    assert any(
         candidate.connector_metadata.get("x_continuation_generation") == 1
+        and candidate.connector_metadata.get("x_next_token") == "page-3"
         for candidate in persisted
     )
 
 
 @pytest.mark.asyncio
-async def test_scout_refill_stops_at_existing_paid_read_budget() -> None:
+async def test_scout_refill_stops_at_budget_and_advances_cursor_past_rejected_page() -> None:
     connector = BudgetCappedRefillConnector()
     result, persisted = await _run_scout(
         connector,
@@ -233,6 +277,28 @@ async def test_scout_refill_stops_at_existing_paid_read_budget() -> None:
 
     assert len(connector.requests) == 2
     assert [request.max_results for request in connector.requests] == [30, 30]
-    assert result.candidate_count == 2
-    assert len(persisted) == 2
-    assert all(candidate.duration_ms == 600_000 for candidate in persisted)
+    assert result.candidate_count == 1
+    assert len(persisted) == 1
+    carrier = persisted[0]
+    assert carrier.duration_ms == 600_000
+    assert carrier.connector_metadata.get("x_continuation_generation") == 1
+    assert carrier.connector_metadata.get("x_next_token") == "page-3"
+
+
+@pytest.mark.asyncio
+async def test_scout_refill_retires_stale_cursor_when_rejected_page_is_exhausted() -> None:
+    connector = ExhaustedRefillConnector()
+    result, persisted = await _run_scout(
+        connector,
+        retrieval_budget=90,
+        telegram_user_id=930038203,
+        update_id=830038203,
+        message_id=938203,
+    )
+
+    assert len(connector.requests) == 2
+    assert result.candidate_count == 1
+    assert len(persisted) == 1
+    carrier = persisted[0]
+    assert carrier.connector_metadata.get("x_continuation_generation") == 1
+    assert "x_next_token" not in carrier.connector_metadata
