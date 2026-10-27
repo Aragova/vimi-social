@@ -1,4 +1,4 @@
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import timedelta
 from uuid import UUID, uuid4
@@ -12,6 +12,7 @@ from vimi_social.domain.identity import OperationKey
 from vimi_social.domain.international import UiLocale
 from vimi_social.domain.source import (
     CandidateContent,
+    ScoutRefillContinuationState,
     ScoutRunResult,
     ScoutSearchRequest,
     ScoutWorkflowInput,
@@ -158,7 +159,7 @@ class ScoutActivities:
         )
         discovered: list[CandidateContent] = []
         retrieval_spent = 0
-        continuation_states: list[dict[str, object]] = []
+        continuation_states: list[ScoutRefillContinuationState] = []
 
         async for search_round in self._query_planner.search_rounds(
             query_plan,
@@ -170,7 +171,7 @@ class ScoutActivities:
             for connector in connectors:
                 pagination_token: str | None = None
                 continuation_generation = 0
-                round_continuation_state: dict[str, object] | None = None
+                round_continuation_state: ScoutRefillContinuationState | None = None
 
                 while True:
                     remaining_budget = self._retrieval_budget - retrieval_spent
@@ -643,66 +644,87 @@ def _with_retrieval_provenance(
     return replace(candidate, connector_metadata=metadata)
 
 
+def _metadata_text(metadata: dict[str, object], key: str) -> str | None:
+    value = metadata.get(key)
+    return value if isinstance(value, str) and value else None
+
+
 def _capture_continuation_state(
     candidates: SourceSearchCandidates,
     search_round: ScoutQueryRound,
     *,
     requested_token: str | None,
     continuation_generation: int,
-    previous: Mapping[str, object] | None,
-) -> dict[str, object]:
-    state = dict(previous or {})
+    previous: ScoutRefillContinuationState | None,
+) -> ScoutRefillContinuationState:
+    search_scope = previous.search_scope if previous is not None else None
+    search_query = previous.search_query if previous is not None else None
     if candidates:
-        provider_metadata = candidates[0].connector_metadata
-        for key in ("x_search_scope", "x_search_query"):
-            if key in provider_metadata:
-                state[key] = provider_metadata[key]
+        provider_metadata = dict(candidates[0].connector_metadata)
+        search_scope = _metadata_text(provider_metadata, "x_search_scope") or search_scope
+        search_query = _metadata_text(provider_metadata, "x_search_query") or search_query
 
-    state["retrieval_query"] = search_round.query_variants[0]
-    state["retrieval_query_variants"] = list(search_round.query_variants)
-    state["retrieval_relaxation_level"] = search_round.relaxation_level
-    state["retrieval_specificity"] = search_round.specificity
-    state["retrieval_language_mode"] = "+".join(search_round.preferred_languages)
-    state["x_continuation_generation"] = continuation_generation
-    if requested_token is not None:
-        state["x_page_start_token"] = requested_token
-    else:
-        state.pop("x_page_start_token", None)
-    if candidates.next_token:
-        state["x_next_token"] = candidates.next_token
-    else:
-        state.pop("x_next_token", None)
-    return state
+    return ScoutRefillContinuationState(
+        retrieval_query=search_round.query_variants[0],
+        retrieval_query_variants=search_round.query_variants,
+        retrieval_relaxation_level=search_round.relaxation_level,
+        retrieval_specificity=search_round.specificity,
+        retrieval_language_mode="+".join(search_round.preferred_languages),
+        continuation_generation=continuation_generation,
+        page_start_token=requested_token,
+        next_token=candidates.next_token,
+        search_scope=search_scope,
+        search_query=search_query,
+    )
 
 
 def _retire_ambiguous_refill_state(
-    state: Mapping[str, object],
+    state: ScoutRefillContinuationState,
     *,
     page_start_token: str,
     continuation_generation: int,
-) -> dict[str, object]:
-    retired = dict(state)
-    retired["x_page_start_token"] = page_start_token
-    retired.pop("x_next_token", None)
-    retired["x_continuation_generation"] = continuation_generation
-    return retired
+) -> ScoutRefillContinuationState:
+    return replace(
+        state,
+        page_start_token=page_start_token,
+        next_token=None,
+        continuation_generation=continuation_generation,
+    )
+
+
+def _continuation_state_metadata(state: ScoutRefillContinuationState) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "retrieval_query": state.retrieval_query,
+        "retrieval_query_variants": list(state.retrieval_query_variants),
+        "retrieval_relaxation_level": state.retrieval_relaxation_level,
+        "retrieval_specificity": state.retrieval_specificity,
+        "retrieval_language_mode": state.retrieval_language_mode,
+        "x_continuation_generation": state.continuation_generation,
+    }
+    if state.search_scope is not None:
+        metadata["x_search_scope"] = state.search_scope
+    if state.search_query is not None:
+        metadata["x_search_query"] = state.search_query
+    if state.page_start_token is not None:
+        metadata["x_page_start_token"] = state.page_start_token
+    if state.next_token is not None:
+        metadata["x_next_token"] = state.next_token
+    return metadata
 
 
 def _apply_continuation_state(
     candidates: tuple[CandidateContent, ...],
-    state: Mapping[str, object] | None,
+    state: ScoutRefillContinuationState,
 ) -> tuple[CandidateContent, ...]:
-    if not candidates or state is None:
+    if not candidates:
         return candidates
 
-    target_level = state.get("retrieval_relaxation_level")
-    target_language_mode = state.get("retrieval_language_mode")
     carrier_index: int | None = None
     for index, candidate in enumerate(candidates):
         metadata = candidate.connector_metadata
         if (
-            metadata.get("retrieval_relaxation_level") == target_level
-            and metadata.get("retrieval_language_mode") == target_language_mode
+            metadata.get("retrieval_relaxation_level") == state.retrieval_relaxation_level
+            and metadata.get("retrieval_language_mode") == state.retrieval_language_mode
         ):
             carrier_index = index
             break
@@ -713,7 +735,7 @@ def _apply_continuation_state(
     metadata = dict(carrier.connector_metadata)
     for key in _CONTINUATION_CARRIER_KEYS:
         metadata.pop(key, None)
-    metadata.update(state)
+    metadata.update(_continuation_state_metadata(state))
     updated = replace(carrier, connector_metadata=metadata)
     return (*candidates[:carrier_index], updated, *candidates[carrier_index + 1 :])
 
