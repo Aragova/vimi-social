@@ -4,6 +4,7 @@ import pytest
 from vimi_social.source.x_user_context import (
     XUserContextClient,
     XUserContextReauthRequired,
+    XUserContextUnavailable,
 )
 
 
@@ -104,6 +105,24 @@ async def test_optional_scope_failure_does_not_abort_whole_profile() -> None:
 
     assert snapshot.bookmarked_posts == ()
     assert "bookmarks" in snapshot.unavailable_sources
+
+
+@pytest.mark.asyncio
+async def test_transient_optional_source_failure_aborts_refresh() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/2/users/me":
+            return httpx.Response(200, json={"data": {"id": "me"}})
+        if request.url.path == "/2/users/me/liked_tweets":
+            return httpx.Response(429, json={"error": "rate-limited"})
+        return httpx.Response(200, json={"data": []})
+
+    async_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = XUserContextClient(client=async_client)
+    try:
+        with pytest.raises(XUserContextUnavailable):
+            await client.fetch_snapshot("user-token")
+    finally:
+        await async_client.aclose()
 
 
 @pytest.mark.asyncio
