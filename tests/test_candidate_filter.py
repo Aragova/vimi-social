@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from vimi_social.domain.source import AdultClassification, CandidateContent
 from vimi_social.source.candidate_filter import (
     FilteringCandidateCurator,
@@ -36,6 +38,33 @@ def _candidate(
             "acquisition_url": f"https://video.twimg.com/{source_id}.mp4",
         },
     )
+
+
+def _with_retrieval_state(
+    candidate: CandidateContent,
+    *,
+    level: int,
+    language_mode: str,
+    token: str | None,
+) -> CandidateContent:
+    metadata = dict(candidate.connector_metadata)
+    metadata.update(
+        {
+            "retrieval_query": "query",
+            "retrieval_query_variants": ["query"],
+            "retrieval_relaxation_level": level,
+            "retrieval_specificity": 1.0,
+            "retrieval_language_mode": language_mode,
+            "x_search_scope": "all",
+            "x_search_query": "query",
+            "x_continuation_generation": 0,
+        }
+    )
+    if token is None:
+        metadata.pop("x_next_token", None)
+    else:
+        metadata["x_next_token"] = token
+    return replace(candidate, connector_metadata=metadata)
 
 
 def test_filter_rejects_known_videos_shorter_than_one_minute() -> None:
@@ -123,6 +152,52 @@ def test_filter_suppresses_continuation_duplicate_against_existing_results() -> 
     filtered = filter_scout_candidates(new, existing=existing)
 
     assert [candidate.source_id for candidate in filtered] == ["fresh"]
+
+
+def test_filter_keeps_latest_cursor_when_older_longer_duplicate_wins() -> None:
+    caption = "Top and bottom Gay video promo repeated caption"
+    older = _with_retrieval_state(
+        _candidate("older", caption, duration_ms=900_000),
+        level=0,
+        language_mode="ru",
+        token="old-token",
+    )
+    newer = _with_retrieval_state(
+        _candidate("newer", caption, duration_ms=300_000),
+        level=0,
+        language_mode="ru+en",
+        token="latest-token",
+    )
+
+    filtered = filter_scout_candidates((older, newer))
+
+    assert [candidate.source_id for candidate in filtered] == ["older"]
+    metadata = filtered[0].connector_metadata
+    assert metadata["retrieval_language_mode"] == "ru+en"
+    assert metadata["x_next_token"] == "latest-token"
+
+
+def test_filter_clears_stale_cursor_when_latest_duplicate_round_is_exhausted() -> None:
+    caption = "Top and bottom Gay video promo repeated caption"
+    older = _with_retrieval_state(
+        _candidate("older", caption, duration_ms=900_000),
+        level=0,
+        language_mode="ru",
+        token="stale-token",
+    )
+    newer = _with_retrieval_state(
+        _candidate("newer", caption, duration_ms=300_000),
+        level=1,
+        language_mode="",
+        token=None,
+    )
+
+    filtered = filter_scout_candidates((older, newer))
+
+    assert [candidate.source_id for candidate in filtered] == ["older"]
+    metadata = filtered[0].connector_metadata
+    assert metadata["retrieval_relaxation_level"] == 1
+    assert "x_next_token" not in metadata
 
 
 def test_filtered_curator_removes_short_video_from_ranked_results() -> None:
