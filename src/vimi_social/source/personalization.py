@@ -22,13 +22,19 @@ from vimi_social.source.candidate_filter import (
 )
 from vimi_social.source.connectors import SourceConnectorRegistry
 from vimi_social.source.curator import CandidateCurator
-from vimi_social.source.interest_profile import apply_interest_profile
+from vimi_social.source.interest_profile import (
+    apply_interest_profile,
+    build_interest_summary,
+)
 from vimi_social.source.interest_repository import UserInterestProfileRepository
 from vimi_social.source.ocr import PreviewOcrExtractor
 from vimi_social.source.query_planner import MultilingualQueryPlanner
 from vimi_social.source.repository import SourceTaskRepository
 from vimi_social.source.scout_attempts import ScoutAttemptStore
-from vimi_social.source.semantic import SemanticRelevanceScorer
+from vimi_social.source.semantic import (
+    SemanticRelevanceScorer,
+    SemanticRelevanceUnavailable,
+)
 from vimi_social.source.visual import VisualRelevanceScorer
 from vimi_social.telegram.outgoing import TelegramMessenger
 from vimi_social.usage.repository import UsageRepository
@@ -37,7 +43,12 @@ _CURRENT_PROFILE: ContextVar[UserInterestProfile | None] = ContextVar(
     "vimi_current_interest_profile",
     default=None,
 )
+_CURRENT_TASTE_SEMANTIC: ContextVar[dict[tuple[str, str], float] | None] = ContextVar(
+    "vimi_current_taste_semantic",
+    default=None,
+)
 _PERSONAL_AFFINITY_WEIGHT = 0.10
+_LOCAL_AI_BATCH_LIMIT = 100
 
 
 class PersonalizedFilteringCandidateCurator(FilteringCandidateCurator):
@@ -62,8 +73,14 @@ class PersonalizedFilteringCandidateCurator(FilteringCandidateCurator):
             return ()
 
         profile = _CURRENT_PROFILE.get()
+        taste_semantic = _CURRENT_TASTE_SEMANTIC.get() or {}
         enriched = tuple(
-            apply_interest_profile(candidate, profile) for candidate in candidates
+            apply_interest_profile(
+                candidate,
+                profile,
+                semantic_affinity=taste_semantic.get(_candidate_key(candidate)),
+            )
+            for candidate in candidates
         )
         ranked = super().rank(
             enriched,
@@ -174,11 +191,30 @@ class PersonalizedScoutActivities(ScoutActivities):
         workflow_input: ScoutWorkflowInput,
     ) -> ScoutRunResult:
         task = self._authorized_task(workflow_input)
-        token = self._set_profile(task.actor_user_id, task.tenant_id)
+        profile_token = self._set_profile(task.actor_user_id, task.tenant_id)
+        taste_token = _CURRENT_TASTE_SEMANTIC.set({})
         try:
             return await super().execute_scout_task(workflow_input)
         finally:
-            _CURRENT_PROFILE.reset(token)
+            _CURRENT_TASTE_SEMANTIC.reset(taste_token)
+            _CURRENT_PROFILE.reset(profile_token)
+
+    async def _score_semantic_candidates(
+        self,
+        query_variants: tuple[str, ...],
+        candidates: tuple[CandidateContent, ...],
+    ) -> tuple[float, ...]:
+        query_scores = await super()._score_semantic_candidates(
+            query_variants,
+            candidates,
+        )
+        await _cache_taste_semantic_scores(
+            self._semantic_scorer,
+            _CURRENT_PROFILE.get(),
+            _CURRENT_TASTE_SEMANTIC.get(),
+            candidates,
+        )
+        return query_scores
 
     def _set_profile(
         self,
@@ -240,11 +276,70 @@ class PersonalizedFilteringScoutContinuationActivities(
                 session,
                 user_id=task.actor_user_id,
             )
-        token = _CURRENT_PROFILE.set(profile)
+        profile_token = _CURRENT_PROFILE.set(profile)
+        taste_token = _CURRENT_TASTE_SEMANTIC.set({})
         try:
             return await super().continue_scout_results(workflow_input)
         finally:
-            _CURRENT_PROFILE.reset(token)
+            _CURRENT_TASTE_SEMANTIC.reset(taste_token)
+            _CURRENT_PROFILE.reset(profile_token)
+
+    async def _score_semantic_candidates(
+        self,
+        query_variants: tuple[str, ...],
+        candidates: tuple[CandidateContent, ...],
+    ) -> tuple[float, ...]:
+        query_scores = await super()._score_semantic_candidates(
+            query_variants,
+            candidates,
+        )
+        await _cache_taste_semantic_scores(
+            self._semantic_scorer,
+            _CURRENT_PROFILE.get(),
+            _CURRENT_TASTE_SEMANTIC.get(),
+            candidates,
+        )
+        return query_scores
+
+
+async def _cache_taste_semantic_scores(
+    scorer: SemanticRelevanceScorer | None,
+    profile: UserInterestProfile | None,
+    cache: dict[tuple[str, str], float] | None,
+    candidates: tuple[CandidateContent, ...],
+) -> None:
+    if scorer is None or profile is None or cache is None or not candidates:
+        return
+    summary = build_interest_summary(profile)
+    if summary is None:
+        return
+
+    missing = tuple(
+        candidate
+        for candidate in candidates
+        if _candidate_key(candidate) not in cache
+    )
+    if not missing:
+        return
+
+    try:
+        for start in range(0, len(missing), _LOCAL_AI_BATCH_LIMIT):
+            batch = missing[start : start + _LOCAL_AI_BATCH_LIMIT]
+            scores = await scorer.score_candidates((summary,), batch)
+            if len(scores) != len(batch):
+                raise SemanticRelevanceUnavailable(
+                    "taste semantic batch alignment mismatch"
+                )
+            for candidate, score in zip(batch, scores, strict=True):
+                cache[_candidate_key(candidate)] = max(0.0, min(1.0, float(score)))
+    except SemanticRelevanceUnavailable:
+        # Taste semantics are optional. Query relevance and lexical taste signals
+        # continue to work when local E5 is temporarily unavailable.
+        return
+
+
+def _candidate_key(candidate: CandidateContent) -> tuple[str, str]:
+    return candidate.source, candidate.source_id
 
 
 def _metadata_float(
