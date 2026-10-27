@@ -19,6 +19,13 @@ def test_request_target_extracts_nginx_request_path() -> None:
 
 def test_callback_code_requires_matching_state() -> None:
     assert callback_code("/?state=expected&code=abc123", "expected") == "abc123"
+    assert (
+        callback_code(
+            "https://staging.usevimi.ru/?state=expected&code=abc123",
+            "expected",
+        )
+        == "abc123"
+    )
     assert callback_code("/?state=other&code=abc123", "expected") is None
     assert callback_code("/?state=expected", "expected") is None
 
