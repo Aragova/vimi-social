@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from vimi_social.domain.source import (
@@ -69,14 +71,17 @@ class _PaginatedXConnector:
 
     async def search(self, request: ScoutSearchRequest) -> tuple[CandidateContent, ...]:
         del request
+        provider = _candidate(
+            "provider",
+            text="gay porn twink young provider result",
+            duration_ms=600_000,
+        )
+        metadata = dict(provider.connector_metadata)
+        metadata["x_search_scope"] = "all"
+        metadata["x_search_query"] = "(gay twink) has:videos"
+        provider = replace(provider, connector_metadata=metadata)
         return SourceSearchCandidates(
-            (
-                _candidate(
-                    "provider",
-                    text="gay porn twink young provider result",
-                    duration_ms=600_000,
-                ),
-            ),
+            (provider,),
             next_token="provider-next",
         )
 
@@ -239,4 +244,6 @@ async def test_timeline_seed_merge_preserves_provider_pagination() -> None:
 
     assert isinstance(result, SourceSearchCandidates)
     assert result.next_token == "provider-next"
-    assert [candidate.source_id for candidate in result] == ["timeline", "provider"]
+    assert [candidate.source_id for candidate in result] == ["provider", "timeline"]
+    assert result[0].connector_metadata["x_search_scope"] == "all"
+    assert result[0].connector_metadata["x_search_query"] == "(gay twink) has:videos"
