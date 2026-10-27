@@ -14,6 +14,7 @@ from vimi_social.source.connectors import (
     SourceConnectorRateLimited,
     SourceConnectorRejected,
     SourceConnectorUnavailable,
+    SourceSearchCandidates,
 )
 
 _PLAIN_QUERY_TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
@@ -136,15 +137,18 @@ class XSourceConnector:
                 break
             page_token = token
 
-        return tuple(
-            _with_search_state(
-                candidate,
-                scope=scope,
-                query=query,
-                continuation_token=continuation_token,
-                requested_token=request.pagination_token,
-            )
-            for candidate in candidates
+        return SourceSearchCandidates(
+            (
+                _with_search_state(
+                    candidate,
+                    scope=scope,
+                    query=query,
+                    continuation_token=continuation_token,
+                    requested_token=request.pagination_token,
+                )
+                for candidate in candidates
+            ),
+            next_token=continuation_token,
         )
 
     async def _fetch_page(
