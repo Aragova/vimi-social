@@ -1,6 +1,6 @@
 import math
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from uuid import UUID
 
@@ -256,14 +256,14 @@ def _duration_preference_score(candidate: CandidateContent) -> float:
     return 0.90
 
 
-def _metadata_float(metadata: dict[str, object], key: str, default: float) -> float:
+def _metadata_float(metadata: Mapping[str, object], key: str, default: float) -> float:
     value = metadata.get(key)
     if isinstance(value, int | float) and not isinstance(value, bool):
         return float(value)
     return default
 
 
-def _metadata_int(metadata: dict[str, object], key: str, default: int) -> int:
+def _metadata_int(metadata: Mapping[str, object], key: str, default: int) -> int:
     value = metadata.get(key)
     if isinstance(value, int) and not isinstance(value, bool):
         return value
