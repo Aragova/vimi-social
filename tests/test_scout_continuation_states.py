@@ -76,3 +76,20 @@ def test_earlier_round_retirement_survives_unmatched_broader_round_state() -> No
     assert metadata["x_continuation_generation"] == 1
     assert metadata["x_page_start_token"] == "page-2"
     assert "x_next_token" not in metadata
+
+
+def test_refill_state_allows_unrestricted_language_mode() -> None:
+    state = ScoutRefillContinuationState(
+        retrieval_query="full intent",
+        retrieval_query_variants=("full intent",),
+        retrieval_relaxation_level=1,
+        retrieval_specificity=0.5,
+        retrieval_language_mode="",
+        continuation_generation=0,
+        page_start_token=None,
+        next_token="page-2",
+        search_scope="all",
+        search_query="full intent",
+    )
+
+    assert state.retrieval_language_mode == ""
