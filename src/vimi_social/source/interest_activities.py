@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -141,5 +141,5 @@ class XInterestProfileActivities:
 def _is_fresh(generated_at: datetime, ttl: timedelta) -> bool:
     value = generated_at
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return datetime.now(timezone.utc) - value <= ttl
+        value = value.replace(tzinfo=UTC)
+    return datetime.now(UTC) - value <= ttl
