@@ -1,3 +1,5 @@
+# pyright: reportPrivateUsage=false
+
 from vimi_social.domain.source import AdultClassification, CandidateContent
 from vimi_social.source.activities import _apply_continuation_state
 
