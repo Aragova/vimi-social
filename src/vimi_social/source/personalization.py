@@ -4,6 +4,7 @@ from dataclasses import replace
 from uuid import UUID
 
 from sqlalchemy.orm import Session
+from temporalio import activity
 
 from vimi_social.db.tenant import tenant_transaction
 from vimi_social.domain.identity import TenantId
@@ -167,6 +168,7 @@ class PersonalizedScoutActivities(ScoutActivities):
             interest_repository or UserInterestProfileRepository()
         )
 
+    @activity.defn(name="execute_scout_task")
     async def execute_scout_task(
         self,
         workflow_input: ScoutWorkflowInput,
@@ -224,6 +226,7 @@ class PersonalizedFilteringScoutContinuationActivities(
             interest_repository or UserInterestProfileRepository()
         )
 
+    @activity.defn(name="continue_scout_results")
     async def continue_scout_results(
         self,
         workflow_input: ScoutContinuationWorkflowInput,
