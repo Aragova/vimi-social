@@ -134,7 +134,10 @@ def _merge_provider_result(
     provider_result: tuple[CandidateContent, ...],
     seeds: tuple[CandidateContent, ...],
 ) -> tuple[CandidateContent, ...]:
-    combined = (*seeds, *provider_result)
+    # Keep the provider result first. ScoutActivities captures continuation metadata
+    # from the first returned candidate, so this preserves x_search_scope/query while
+    # still adding the independent Home Timeline seeds to the same ranking pool.
+    combined = (*provider_result, *seeds)
     if isinstance(provider_result, SourceSearchCandidates):
         return SourceSearchCandidates(combined, next_token=provider_result.next_token)
     return combined
