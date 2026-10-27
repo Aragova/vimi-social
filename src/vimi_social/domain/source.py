@@ -69,6 +69,17 @@ class CandidateContent:
 
 
 @dataclass(frozen=True, slots=True)
+class XTimelineSeedResult:
+    candidates: tuple[CandidateContent, ...] = ()
+    posts_read: int = 0
+    failure_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.posts_read < 0:
+            raise ValueError("X timeline seed posts_read must not be negative")
+
+
+@dataclass(frozen=True, slots=True)
 class ScoutRefillContinuationState:
     retrieval_query: str
     retrieval_query_variants: tuple[str, ...]
@@ -120,6 +131,12 @@ class ScoutWorkflowInput:
     operation_key: str
     execution_token: str
     interest_task_queue: str = "vimi-social-destination"
+    seed_candidates: tuple[CandidateContent, ...] = ()
+    seed_posts_read: int = 0
+
+    def __post_init__(self) -> None:
+        if self.seed_posts_read < 0:
+            raise ValueError("Scout seed_posts_read must not be negative")
 
 
 @dataclass(frozen=True, slots=True)
