@@ -70,8 +70,6 @@ class CountingTranslator:
         self.calls.append(intent)
         if intent == "Найди видео про ночной Бангкок":
             return "Bangkok night"
-        if intent == "Найди видео про ночной":
-            return "night"
         raise AssertionError(f"unexpected translation input: {intent}")
 
 
@@ -153,17 +151,12 @@ async def test_ai_search_task_is_durable_metered_and_activity_retry_is_idempoten
 
         assert first_result.candidate_count == 1
         assert second_result.candidate_count == 1
-        assert connector.calls == 4
+        assert connector.calls == 2
         assert connector.query_variants == [
             ("ночной Бангкок",),
             ("ночной Бангкок", "Bangkok night"),
-            ("ночной",),
-            ("ночной", "night"),
         ]
-        assert translator.calls == [
-            "Найди видео про ночной Бангкок",
-            "Найди видео про ночной",
-        ]
+        assert translator.calls == ["Найди видео про ночной Бангкок"]
 
         repository = SourceTaskRepository()
         with (

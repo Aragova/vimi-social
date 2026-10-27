@@ -17,9 +17,6 @@ _ENGLISH_COMMAND_PREFIX = re.compile(
     re.IGNORECASE,
 )
 _CYRILLIC = re.compile(r"[\u0400-\u04FF]")
-_RELAXATION_TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
-_X_BOOLEAN_WORDS = {"and", "or", "not"}
-_MAX_RELAXATION_LEVELS = 8
 
 
 class EnglishIntentTranslator(Protocol):
@@ -32,15 +29,26 @@ class ScoutQueryRound:
     preferred_languages: tuple[str, ...]
     relaxation_level: int
     specificity: float
+    strategy: str = "full_intent"
 
 
 @dataclass(frozen=True, slots=True)
 class ScoutQueryPlan:
+    normalized_intent: str
     query_variants: tuple[str, ...]
-    relaxation_queries: tuple[str, ...]
+    retrieval_queries: tuple[str, ...]
 
 
 class MultilingualQueryPlanner:
+    """Build conservative retrieval rounds that preserve the complete user intent.
+
+    Retrieval must not silently delete semantic constraints just to broaden recall. The
+    planner therefore keeps the normalized full intent intact and broadens only language
+    coverage. Translation is a reformulation, not a license to drop terms. More granular
+    constraint checks belong in downstream ranking/reranking stages where the original
+    intent remains available.
+    """
+
     def __init__(self, translator: EnglishIntentTranslator | None = None) -> None:
         self._translator = translator
 
@@ -50,7 +58,7 @@ class MultilingualQueryPlanner:
         preferred_languages: tuple[str, ...],
     ) -> ScoutQueryPlan:
         primary = normalize_search_intent(intent)
-        variants = [primary]
+        variants = [primary] if primary else []
 
         wants_english = "en" in {language.lower() for language in preferred_languages}
         if self._translator is not None and wants_english and _CYRILLIC.search(primary):
@@ -61,8 +69,9 @@ class MultilingualQueryPlanner:
                     variants.append(normalized)
 
         return ScoutQueryPlan(
+            normalized_intent=primary,
             query_variants=tuple(dict.fromkeys(variants)),
-            relaxation_queries=_progressive_prefixes(primary),
+            retrieval_queries=(primary,) if primary else (),
         )
 
     async def search_rounds(
@@ -71,13 +80,17 @@ class MultilingualQueryPlanner:
         intent: str,
         preferred_languages: tuple[str, ...],
     ) -> AsyncIterator[ScoutQueryRound]:
-        """Yield increasingly broad source-search rounds without weakening ranking intent.
+        """Yield full-intent rounds, broadening language scope rather than semantics.
 
-        Cyrillic searches first try the current Russian prefix alone, then the same
-        prefix together with its English translation. If fewer than the target number
-        of relevant candidates survive downstream curation, callers can continue to
-        the next prefix, which removes trailing keywords one step at a time.
+        A single-language request first keeps its provider language filter. If downstream
+        curation still has too few relevant candidates, the next round removes only that
+        language filter while retaining the complete normalized intent. Cyrillic RU+EN
+        requests instead broaden into the complete bilingual reformulation.
         """
+
+        del intent
+        if not plan.retrieval_queries:
+            return
 
         normalized_languages = tuple(
             dict.fromkeys(
@@ -88,66 +101,89 @@ class MultilingualQueryPlanner:
         )
         wants_english = "en" in normalized_languages
         wants_russian = "ru" in normalized_languages
+        query = plan.retrieval_queries[0]
+        is_cyrillic = _CYRILLIC.search(query) is not None
         translation_available = len(plan.query_variants) > 1
-        full_query = plan.relaxation_queries[0] if plan.relaxation_queries else ""
 
-        for index, query in enumerate(plan.relaxation_queries):
-            is_cyrillic = _CYRILLIC.search(query) is not None
-            specificity = _query_specificity(query, full_query)
-            if is_cyrillic and wants_russian:
+        if is_cyrillic:
+            if wants_russian:
                 yield ScoutQueryRound(
                     query_variants=(query,),
                     preferred_languages=("ru",),
-                    relaxation_level=index,
-                    specificity=specificity,
+                    relaxation_level=0,
+                    specificity=1.0,
+                    strategy="full_intent_primary",
                 )
 
-            if (
-                is_cyrillic
-                and wants_english
-                and self._translator is not None
-                and translation_available
-            ):
-                if index == 0:
-                    bilingual_variants = plan.query_variants
-                else:
-                    translated = await self._translator.translate_to_english(
-                        f"Найди видео про {query}"
-                    )
-                    if translated is None:
-                        translation_available = False
-                        continue
-                    normalized_translation = normalize_search_intent(translated)
-                    bilingual_variants = tuple(
-                        dict.fromkeys(
-                            variant
-                            for variant in (query, normalized_translation)
-                            if variant
-                        )
-                    )
-                if len(bilingual_variants) > 1:
+            if wants_english and translation_available:
+                english_variant = plan.query_variants[-1]
+                if wants_russian:
                     yield ScoutQueryRound(
-                        query_variants=bilingual_variants,
+                        query_variants=tuple(dict.fromkeys((query, english_variant))),
                         preferred_languages=("ru", "en"),
-                        relaxation_level=index,
-                        specificity=specificity,
+                        relaxation_level=0,
+                        specificity=1.0,
+                        strategy="full_intent_multilingual",
                     )
-                elif not wants_russian:
+                else:
                     yield ScoutQueryRound(
-                        query_variants=(query,),
-                        preferred_languages=normalized_languages,
-                        relaxation_level=index,
-                        specificity=specificity,
+                        query_variants=(english_variant,),
+                        preferred_languages=("en",),
+                        relaxation_level=0,
+                        specificity=1.0,
+                        strategy="full_intent_translated",
                     )
-                continue
+                    yield ScoutQueryRound(
+                        query_variants=(english_variant,),
+                        preferred_languages=(),
+                        relaxation_level=1,
+                        specificity=1.0,
+                        strategy="full_intent_language_broadening",
+                    )
+                return
 
-            if not is_cyrillic or not wants_russian:
+            if wants_russian:
                 yield ScoutQueryRound(
                     query_variants=(query,),
-                    preferred_languages=normalized_languages,
-                    relaxation_level=index,
-                    specificity=specificity,
+                    preferred_languages=(),
+                    relaxation_level=1,
+                    specificity=1.0,
+                    strategy="full_intent_language_broadening",
                 )
+                return
+
+            yield ScoutQueryRound(
+                query_variants=(query,),
+                preferred_languages=normalized_languages,
+                relaxation_level=0,
+                specificity=1.0,
+                strategy="full_intent_primary",
+            )
+            if len(normalized_languages) == 1:
+                yield ScoutQueryRound(
+                    query_variants=(query,),
+                    preferred_languages=(),
+                    relaxation_level=1,
+                    specificity=1.0,
+                    strategy="full_intent_language_broadening",
+                )
+            return
+
+        yield ScoutQueryRound(
+            query_variants=(query,),
+            preferred_languages=normalized_languages,
+            relaxation_level=0,
+            specificity=1.0,
+            strategy="full_intent_primary",
+        )
+        if len(normalized_languages) == 1:
+            yield ScoutQueryRound(
+                query_variants=(query,),
+                preferred_languages=(),
+                relaxation_level=1,
+                specificity=1.0,
+                strategy="full_intent_language_broadening",
+            )
 
 
 class FallbackEnglishIntentTranslator:
@@ -236,44 +272,6 @@ def normalize_search_intent(intent: str) -> str:
             normalized = stripped
             break
     return normalized
-
-
-def _relaxation_tokens(value: str) -> tuple[str, ...]:
-    return tuple(
-        token
-        for token in _RELAXATION_TOKEN.findall(value)
-        if token.casefold() not in _X_BOOLEAN_WORDS
-    )
-
-
-def _query_specificity(query: str, full_query: str) -> float:
-    full_tokens = _relaxation_tokens(full_query)
-    if not full_tokens:
-        return 1.0
-    query_tokens = _relaxation_tokens(query)
-    return round(min(1.0, len(query_tokens) / len(full_tokens)), 6)
-
-
-def _progressive_prefixes(value: str) -> tuple[str, ...]:
-    normalized = " ".join(value.split()).strip()
-    if not normalized:
-        return ()
-
-    tokens = _relaxation_tokens(normalized)
-    if not tokens:
-        return (normalized,)
-
-    if len(tokens) <= _MAX_RELAXATION_LEVELS:
-        lengths = range(len(tokens) - 1, 0, -1)
-    else:
-        lengths = range(_MAX_RELAXATION_LEVELS - 1, 0, -1)
-
-    result = [normalized]
-    for length in lengths:
-        relaxed = " ".join(tokens[:length])
-        if relaxed and relaxed.casefold() != result[-1].casefold():
-            result.append(relaxed)
-    return tuple(result)
 
 
 def _response_output_text(payload: dict[str, object]) -> str | None:
