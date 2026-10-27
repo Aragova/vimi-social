@@ -43,9 +43,10 @@ class MultilingualQueryPlanner:
     """Build conservative retrieval rounds that preserve the complete user intent.
 
     Retrieval must not silently delete semantic constraints just to broaden recall. The
-    planner therefore keeps the normalized full intent intact and uses translation as a
-    reformulation, not as a license to drop terms. More granular constraint checks belong
-    in downstream ranking/reranking stages where the original intent remains available.
+    planner therefore keeps the normalized full intent intact and broadens only language
+    coverage. Translation is a reformulation, not a license to drop terms. More granular
+    constraint checks belong in downstream ranking/reranking stages where the original
+    intent remains available.
     """
 
     def __init__(self, translator: EnglishIntentTranslator | None = None) -> None:
@@ -79,11 +80,12 @@ class MultilingualQueryPlanner:
         intent: str,
         preferred_languages: tuple[str, ...],
     ) -> AsyncIterator[ScoutQueryRound]:
-        """Yield full-intent source-search rounds without destructive relaxation.
+        """Yield full-intent rounds, broadening language scope rather than semantics.
 
-        For a Cyrillic RU+EN request, Scout first tries the complete Russian query and,
-        only when another round is needed, the complete bilingual reformulation. No round
-        removes trailing words or other constraints from the user's normalized intent.
+        A single-language request first keeps its provider language filter. If downstream
+        curation still has too few relevant candidates, the next round removes only that
+        language filter while retaining the complete normalized intent. Cyrillic RU+EN
+        requests instead broaden into the complete bilingual reformulation.
         """
 
         del intent
@@ -103,7 +105,53 @@ class MultilingualQueryPlanner:
         is_cyrillic = _CYRILLIC.search(query) is not None
         translation_available = len(plan.query_variants) > 1
 
-        if not is_cyrillic:
+        if is_cyrillic:
+            if wants_russian:
+                yield ScoutQueryRound(
+                    query_variants=(query,),
+                    preferred_languages=("ru",),
+                    relaxation_level=0,
+                    specificity=1.0,
+                    strategy="full_intent_primary",
+                )
+
+            if wants_english and translation_available:
+                english_variant = plan.query_variants[-1]
+                if wants_russian:
+                    yield ScoutQueryRound(
+                        query_variants=tuple(dict.fromkeys((query, english_variant))),
+                        preferred_languages=("ru", "en"),
+                        relaxation_level=0,
+                        specificity=1.0,
+                        strategy="full_intent_multilingual",
+                    )
+                else:
+                    yield ScoutQueryRound(
+                        query_variants=(english_variant,),
+                        preferred_languages=("en",),
+                        relaxation_level=0,
+                        specificity=1.0,
+                        strategy="full_intent_translated",
+                    )
+                    yield ScoutQueryRound(
+                        query_variants=(english_variant,),
+                        preferred_languages=(),
+                        relaxation_level=0,
+                        specificity=1.0,
+                        strategy="full_intent_language_broadening",
+                    )
+                return
+
+            if wants_russian:
+                yield ScoutQueryRound(
+                    query_variants=(query,),
+                    preferred_languages=(),
+                    relaxation_level=0,
+                    specificity=1.0,
+                    strategy="full_intent_language_broadening",
+                )
+                return
+
             yield ScoutQueryRound(
                 query_variants=(query,),
                 preferred_languages=normalized_languages,
@@ -111,45 +159,30 @@ class MultilingualQueryPlanner:
                 specificity=1.0,
                 strategy="full_intent_primary",
             )
+            if len(normalized_languages) == 1:
+                yield ScoutQueryRound(
+                    query_variants=(query,),
+                    preferred_languages=(),
+                    relaxation_level=0,
+                    specificity=1.0,
+                    strategy="full_intent_language_broadening",
+                )
             return
 
-        emitted = False
-        if wants_russian:
+        yield ScoutQueryRound(
+            query_variants=(query,),
+            preferred_languages=normalized_languages,
+            relaxation_level=0,
+            specificity=1.0,
+            strategy="full_intent_primary",
+        )
+        if len(normalized_languages) == 1:
             yield ScoutQueryRound(
                 query_variants=(query,),
-                preferred_languages=("ru",),
+                preferred_languages=(),
                 relaxation_level=0,
                 specificity=1.0,
-                strategy="full_intent_primary",
-            )
-            emitted = True
-
-        if wants_english and translation_available:
-            english_variant = plan.query_variants[-1]
-            if wants_russian:
-                query_variants = tuple(dict.fromkeys((query, english_variant)))
-                languages = ("ru", "en")
-                strategy = "full_intent_multilingual"
-            else:
-                query_variants = (english_variant,)
-                languages = ("en",)
-                strategy = "full_intent_translated"
-            yield ScoutQueryRound(
-                query_variants=query_variants,
-                preferred_languages=languages,
-                relaxation_level=0,
-                specificity=1.0,
-                strategy=strategy,
-            )
-            emitted = True
-
-        if not emitted:
-            yield ScoutQueryRound(
-                query_variants=(query,),
-                preferred_languages=normalized_languages,
-                relaxation_level=0,
-                specificity=1.0,
-                strategy="full_intent_primary",
+                strategy="full_intent_language_broadening",
             )
 
 
