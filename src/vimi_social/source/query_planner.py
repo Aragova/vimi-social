@@ -328,7 +328,7 @@ def _or_recall_round(
         relaxation_level=relaxation_level,
         specificity=specificity,
         strategy=strategy,
-        max_pages=_OR_RECALL_MAX_PAGES,
+        max_pages=_OR_RECALL_MAX_PAGES if len(tokens) >= 3 else None,
     )
 
 
