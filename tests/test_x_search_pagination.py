@@ -39,16 +39,13 @@ def _page(start: int, count: int, *, next_token: str | None = None) -> dict[str,
 
 
 @pytest.mark.asyncio
-async def test_x_recent_search_follows_next_token_and_keeps_already_read_overflow() -> None:
+async def test_x_search_stops_before_minimum_page_would_overshoot_budget() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        token = request.url.params.get("next_token")
-        if token is None:
-            return httpx.Response(200, json=_page(1, 10, next_token="page-2"))
-        assert token == "page-2"
-        return httpx.Response(200, json=_page(11, 10))
+        assert request.url.params.get("next_token") is None
+        return httpx.Response(200, json=_page(1, 10, next_token="page-2"))
 
     http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     connector = XSourceConnector("test-token", client=http_client)
@@ -62,13 +59,59 @@ async def test_x_recent_search_follows_next_token_and_keeps_already_read_overflo
         )
     )
 
-    assert len(candidates) == 20
-    assert [candidate.source_id for candidate in candidates] == [str(i) for i in range(1, 21)]
-    assert len(requests) == 2
-    assert requests[1].url.params["next_token"] == "page-2"
-    assert requests[1].url.params["max_results"] == "10"
+    assert len(candidates) == 10
+    assert [candidate.source_id for candidate in candidates] == [str(i) for i in range(1, 11)]
+    assert len(requests) == 1
+    assert requests[0].url.params["max_results"] == "15"
     assert candidates[0].connector_metadata["x_search_scope"] == "recent"
-    assert "x_next_token" not in candidates[0].connector_metadata
+    assert candidates[0].connector_metadata["x_next_token"] == "page-2"
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_x_search_keeps_next_token_when_30_budget_has_only_3_remaining() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.params.get("next_token") is None
+        return httpx.Response(200, json=_page(1, 27, next_token="page-2"))
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    connector = XSourceConnector("test-token", client=http_client, search_scope="all")
+
+    candidates = await connector.search(
+        ScoutSearchRequest(
+            intent="gay twink porno",
+            requested_sources=("x",),
+            preferred_languages=("en",),
+            max_results=30,
+            search_scope="all",
+        )
+    )
+
+    assert len(candidates) == 27
+    assert len(requests) == 1
+    assert requests[0].url.params["max_results"] == "30"
+    assert candidates[0].connector_metadata["x_next_token"] == "page-2"
+    await http_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_x_search_rejects_budget_below_provider_minimum() -> None:
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500)))
+    connector = XSourceConnector("test-token", client=http_client)
+
+    with pytest.raises(ValueError, match="read budget must be at least 10"):
+        await connector.search(
+            ScoutSearchRequest(
+                intent="gay twink porno",
+                requested_sources=("x",),
+                preferred_languages=("en",),
+                max_results=9,
+            )
+        )
+
     await http_client.aclose()
 
 
