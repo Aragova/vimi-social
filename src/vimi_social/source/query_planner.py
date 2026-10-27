@@ -47,6 +47,7 @@ _RECALL_STOPWORDS = {
     "\u0441\u043e",
 }
 _MAX_PROVIDER_OR_TERMS = 4
+_OR_RECALL_MAX_PAGES = 2
 
 
 class EnglishIntentTranslator(Protocol):
@@ -60,6 +61,7 @@ class ScoutQueryRound:
     relaxation_level: int
     specificity: float
     strategy: str = "full_intent"
+    max_pages: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,6 +328,7 @@ def _or_recall_round(
         relaxation_level=relaxation_level,
         specificity=specificity,
         strategy=strategy,
+        max_pages=_OR_RECALL_MAX_PAGES,
     )
 
 
@@ -345,6 +348,7 @@ def _anchor_round(
         relaxation_level=relaxation_level,
         specificity=1 / len(tokens),
         strategy="provider_anchor_fallback",
+        max_pages=None,
     )
 
 
