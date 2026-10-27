@@ -90,13 +90,12 @@ class XInterestProfileActivities:
         except XUserContextUnavailable:
             return XInterestSyncResult(XInterestSyncState.UNAVAILABLE)
 
+        # A successful provider read is cacheable even when the account has no
+        # usable taste signals yet. Persisting a neutral profile prevents every
+        # subsequent Scout run from repeating the same paid user-context reads.
+        # Provider failures above remain uncached, so an outage is never mistaken
+        # for a genuinely empty interest graph.
         draft = build_interest_profile(snapshot)
-        if draft.sample_size == 0:
-            return XInterestSyncResult(
-                XInterestSyncState.UNAVAILABLE,
-                unavailable_sources=snapshot.unavailable_sources,
-            )
-
         with self._session_factory() as session, tenant_transaction(
             session,
             task.tenant_id,
