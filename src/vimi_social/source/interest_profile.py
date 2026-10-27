@@ -12,13 +12,15 @@ _URL = re.compile(r"https?://\S+", re.IGNORECASE)
 _STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
     "in", "is", "it", "of", "on", "or", "that", "the", "this", "to",
-    "with", "you", "your", "\u0432", "\u0434\u043b\u044f", "\u0438", "\u0438\u0437",
-    "\u0438\u043b\u0438", "\u043d\u0430", "\u043e", "\u043e\u0431", "\u043e\u0442",
-    "\u043f\u043e", "\u043f\u0440\u043e", "\u0441", "\u0441\u043e", "\u0447\u0442\u043e",
+    "with", "you", "your", "в", "для", "и", "из", "или", "на", "о", "об", "от",
+    "по", "про", "с", "со", "что",
 }
 _MAX_TERMS = 160
 _MAX_HASHTAGS = 96
 _MAX_AUTHORS = 160
+_SUMMARY_TERMS = 48
+_SUMMARY_HASHTAGS = 16
+_SEMANTIC_AFFINITY_WEIGHT = 0.50
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,9 +97,26 @@ def build_interest_profile(snapshot: XInterestSnapshot) -> InterestProfileDraft:
     )
 
 
+def build_interest_summary(profile: UserInterestProfile) -> str | None:
+    """Build a compact semantic query from persisted, privacy-minimized aggregates."""
+
+    terms = _ranked_keys(profile.term_weights, _SUMMARY_TERMS)
+    hashtags = _ranked_keys(profile.hashtag_weights, _SUMMARY_HASHTAGS)
+    if not terms and not hashtags:
+        return None
+
+    parts = [*terms]
+    parts.extend(f"#{tag}" for tag in hashtags if tag not in terms)
+    if not parts:
+        return None
+    return "user interests: " + " ".join(parts)
+
+
 def apply_interest_profile(
     candidate: CandidateContent,
     profile: UserInterestProfile | None,
+    *,
+    semantic_affinity: float | None = None,
 ) -> CandidateContent:
     if profile is None:
         return candidate
@@ -151,13 +170,23 @@ def apply_interest_profile(
         else 0.0
     )
 
-    affinity = round(
-        min(
-            1.0,
-            (0.50 * author_score) + (0.30 * hashtag_score) + (0.20 * term_score),
-        ),
-        6,
+    lexical_affinity = min(
+        1.0,
+        (0.50 * author_score) + (0.30 * hashtag_score) + (0.20 * term_score),
     )
+    semantic_score = _semantic_score(semantic_affinity)
+    if semantic_affinity is None:
+        affinity = round(lexical_affinity, 6)
+    else:
+        affinity = round(
+            min(
+                1.0,
+                (_SEMANTIC_AFFINITY_WEIGHT * semantic_score)
+                + ((1.0 - _SEMANTIC_AFFINITY_WEIGHT) * lexical_affinity),
+            ),
+            6,
+        )
+
     reasons: list[str] = []
     if author_score > 0 and candidate.author:
         reasons.append(f"author:{candidate.author}")
@@ -170,9 +199,14 @@ def apply_interest_profile(
         if score <= 0 or len(reasons) >= 6:
             break
         reasons.append(f"term:{term}")
+    if semantic_affinity is not None and semantic_score > 0 and len(reasons) < 6:
+        reasons.append("semantic:e5")
 
     metadata = dict(candidate.connector_metadata)
     metadata["personal_affinity_score"] = affinity
+    metadata["personal_affinity_lexical_score"] = round(lexical_affinity, 6)
+    if semantic_affinity is not None:
+        metadata["personal_affinity_semantic_score"] = round(semantic_score, 6)
     metadata["personal_affinity_reasons"] = reasons
     metadata["personal_affinity_profile_sample_size"] = profile.sample_size
     metadata["personal_affinity_profile_generated_at"] = profile.generated_at.isoformat()
@@ -193,8 +227,29 @@ def _normalized_top(values: Mapping[str, float], limit: int) -> dict[str, float]
     }
 
 
+def _ranked_keys(values: Mapping[str, float], limit: int) -> tuple[str, ...]:
+    ranked = sorted(
+        (
+            (key.strip(), float(value))
+            for key, value in values.items()
+            if key.strip()
+            and isinstance(value, int | float)
+            and not isinstance(value, bool)
+            and float(value) > 0
+        ),
+        key=lambda item: (-item[1], item[0]),
+    )
+    return tuple(key for key, _ in ranked[:limit])
+
+
 def _mapping_score(values: Mapping[str, float], key: str) -> float:
     raw = values.get(key)
     if isinstance(raw, int | float) and not isinstance(raw, bool):
         return max(0.0, min(1.0, float(raw)))
     return 0.0
+
+
+def _semantic_score(value: float | None) -> float:
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return 0.0
+    return max(0.0, min(1.0, float(value)))
