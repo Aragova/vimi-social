@@ -34,8 +34,12 @@ class FakeTranslator:
         return "Gay porn twink young"
 
 
-def _candidate(source_id: str, *, duration_ms: int) -> CandidateContent:
-    text_value = f"Gay porn twink young long form scene {source_id}"
+def _candidate(
+    source_id: str,
+    *,
+    duration_ms: int,
+    text_value: str,
+) -> CandidateContent:
     return CandidateContent(
         id=None,
         source="x",
@@ -64,6 +68,18 @@ def _candidate(source_id: str, *, duration_ms: int) -> CandidateContent:
     )
 
 
+_BROAD_TEXTS = (
+    "Gay porn twink young beach travel sunset conversation documentary",
+    "Gay porn twink young studio interview fashion music portrait",
+    "Gay porn twink young city apartment morning lifestyle discussion",
+    "Gay porn twink young countryside road trip summer diary",
+    "Gay porn twink young gym training wellness behind scenes",
+    "Gay porn twink young hotel vacation pool evening story",
+    "Gay porn twink young festival backstage performance candid footage",
+    "Gay porn twink young home cooking weekend personal vlog",
+)
+
+
 class SparseExactThenBroadConnector:
     source_name = "x"
 
@@ -87,8 +103,20 @@ class SparseExactThenBroadConnector:
             assert request.preferred_languages == ("ru", "en")
             return SourceSearchCandidates(
                 (
-                    _candidate("exact-1", duration_ms=86_000),
-                    _candidate("exact-2", duration_ms=64_000),
+                    _candidate(
+                        "exact-1",
+                        duration_ms=86_000,
+                        text_value=(
+                            "Gay porn twink young first exact archival video profile interview"
+                        ),
+                    ),
+                    _candidate(
+                        "exact-2",
+                        duration_ms=64_000,
+                        text_value=(
+                            "Gay porn twink young second exact independent travel recording"
+                        ),
+                    ),
                 ),
                 next_token=None,
             )
@@ -102,8 +130,12 @@ class SparseExactThenBroadConnector:
             assert request.preferred_languages == ("en",)
             return SourceSearchCandidates(
                 tuple(
-                    _candidate(f"broad-{index}", duration_ms=300_000 + index * 1_000)
-                    for index in range(8)
+                    _candidate(
+                        f"broad-{index}",
+                        duration_ms=300_000 + index * 1_000,
+                        text_value=text_value,
+                    )
+                    for index, text_value in enumerate(_BROAD_TEXTS)
                 ),
                 next_token="unused-page-2",
             )
