@@ -24,6 +24,13 @@ class XInterestSyncResult:
 
 
 @dataclass(frozen=True, slots=True)
+class XInterestAccountBinding:
+    id: UUID
+    external_account_id: str
+    credential_ref: str
+
+
+@dataclass(frozen=True, slots=True)
 class XInterestUser:
     id: str
     username: str | None = None
