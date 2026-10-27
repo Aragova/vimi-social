@@ -66,21 +66,7 @@ class UserInterestProfileRepository:
         if row is None:
             return None
         mapped = cast(Mapping[str, object], row)
-        return UserInterestProfile(
-            tenant_id=TenantId.parse(str(mapped["tenant_id"])),
-            user_id=_uuid(mapped["user_id"], "profile user id"),
-            destination_account_id=_uuid(
-                mapped["destination_account_id"],
-                "profile destination account id",
-            ),
-            external_account_id=str(mapped["external_account_id"]),
-            term_weights=_float_mapping(mapped["term_weights"]),
-            hashtag_weights=_float_mapping(mapped["hashtag_weights"]),
-            author_weights=_float_mapping(mapped["author_weights"]),
-            source_stats=_int_mapping(mapped["source_stats"]),
-            sample_size=int(mapped["sample_size"]),
-            generated_at=_datetime(mapped["generated_at"]),
-        )
+        return _profile_from_row(mapped)
 
     def upsert(
         self,
@@ -141,22 +127,25 @@ class UserInterestProfileRepository:
                 "sample_size": draft.sample_size,
             },
         ).mappings().one()
-        mapped = cast(Mapping[str, object], row)
-        return UserInterestProfile(
-            tenant_id=TenantId.parse(str(mapped["tenant_id"])),
-            user_id=_uuid(mapped["user_id"], "profile user id"),
-            destination_account_id=_uuid(
-                mapped["destination_account_id"],
-                "profile destination account id",
-            ),
-            external_account_id=str(mapped["external_account_id"]),
-            term_weights=_float_mapping(mapped["term_weights"]),
-            hashtag_weights=_float_mapping(mapped["hashtag_weights"]),
-            author_weights=_float_mapping(mapped["author_weights"]),
-            source_stats=_int_mapping(mapped["source_stats"]),
-            sample_size=int(mapped["sample_size"]),
-            generated_at=_datetime(mapped["generated_at"]),
-        )
+        return _profile_from_row(cast(Mapping[str, object], row))
+
+
+def _profile_from_row(mapped: Mapping[str, object]) -> UserInterestProfile:
+    return UserInterestProfile(
+        tenant_id=TenantId.parse(str(mapped["tenant_id"])),
+        user_id=_uuid(mapped["user_id"], "profile user id"),
+        destination_account_id=_uuid(
+            mapped["destination_account_id"],
+            "profile destination account id",
+        ),
+        external_account_id=str(mapped["external_account_id"]),
+        term_weights=_float_mapping(mapped["term_weights"]),
+        hashtag_weights=_float_mapping(mapped["hashtag_weights"]),
+        author_weights=_float_mapping(mapped["author_weights"]),
+        source_stats=_int_mapping(mapped["source_stats"]),
+        sample_size=_nonnegative_int(mapped["sample_size"], "profile sample size"),
+        generated_at=_datetime(mapped["generated_at"]),
+    )
 
 
 def _float_mapping(value: object) -> dict[str, float]:
@@ -181,6 +170,12 @@ def _int_mapping(value: object) -> dict[str, int]:
         if isinstance(key, str) and isinstance(raw, int) and not isinstance(raw, bool):
             result[key] = max(0, raw)
     return result
+
+
+def _nonnegative_int(value: object, label: str) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return max(0, value)
+    raise RuntimeError(f"invalid {label}")
 
 
 def _uuid(value: object, label: str) -> UUID:
