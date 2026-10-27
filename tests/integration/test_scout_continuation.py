@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
+from temporalio.exceptions import ApplicationError
 
 from vimi_social.db.tenant import tenant_transaction
 from vimi_social.domain.source import (
@@ -70,6 +71,9 @@ class PagedConnector:
         if request.pagination_token == "page-2":
             assert request.search_scope == "all"
             return tuple(_candidate(f"2{i:02d}", next_token="page-3") for i in range(10))
+        if request.pagination_token == "page-3":
+            assert request.search_scope == "all"
+            return tuple(_candidate(f"3{i:02d}", next_token="page-4") for i in range(10))
         raise AssertionError(f"unexpected continuation token: {request.pagination_token}")
 
 
@@ -192,8 +196,50 @@ async def test_scout_continuation_reuses_token_once_and_appends_results() -> Non
         assert third_click is not None
         assert third_click.request_key != first_click.request_key
 
+        # A connector outage is proven-before-I/O. The deterministic reservation
+        # must remain retryable instead of becoming RELEASED and unusable.
+        unavailable = ScoutContinuationActivities(
+            session_factory,
+            SourceConnectorRegistry(),
+            messenger=None,
+            batch_size=30,
+        )
+        with pytest.raises(ApplicationError):
+            await unavailable.continue_scout_results(third_click)
+        assert connector.tokens == [None, "page-2"]
+
+        third_retry = service.prepare_ai_search_continuation(
+            principal,
+            task_id=task.id,
+            update_id=820000205,
+            message_id=301,
+            chat_id=chat_id,
+        )
+        assert third_retry is not None
+        assert third_retry.request_key == third_click.request_key
+
+        third_result = await continuation.continue_scout_results(third_retry)
+        assert connector.tokens == [None, "page-2", "page-3"]
+        assert third_result.candidate_count == 30
+
+        candidates = service.get_ai_search_candidates(principal, task.id)
+        assert candidates is not None
+        state = find_scout_continuation_state(candidates)
+        assert state is not None
+        assert state.next_token == "page-4"
+
+        fourth_click = service.prepare_ai_search_continuation(
+            principal,
+            task_id=task.id,
+            update_id=820000206,
+            message_id=301,
+            chat_id=chat_id,
+        )
+        assert fourth_click is not None
+        assert fourth_click.request_key != third_click.request_key
+
         # Simulate a worker that crossed the paid-I/O fence and then disappeared
-        # before persisting page 3. A later attempt must retire the token without
+        # before persisting page 4. A later attempt must retire the token without
         # issuing another X request.
         abandoned_attempt = uuid4()
         attempt_store = ScoutAttemptStore()
@@ -201,6 +247,10 @@ async def test_scout_continuation_reuses_token_once_and_appends_results() -> Non
             session_factory() as session,
             tenant_transaction(session, principal.context.tenant_id),
         ):
+            attempt_store.lock_continuation_guard(
+                session,
+                operation_key=task.operation_key,
+            )
             assert attempt_store.claim_completed_continuation(
                 session,
                 operation_key=task.operation_key,
@@ -208,7 +258,7 @@ async def test_scout_continuation_reuses_token_once_and_appends_results() -> Non
             )
 
         before_retry = list(connector.tokens)
-        ambiguous = await continuation.continue_scout_results(third_click)
+        ambiguous = await continuation.continue_scout_results(fourth_click)
         assert ambiguous.failure_code == "CONTINUATION_ATTEMPT_AMBIGUOUS"
         assert connector.tokens == before_retry
 
