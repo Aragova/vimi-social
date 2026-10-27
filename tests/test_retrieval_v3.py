@@ -5,7 +5,7 @@ from vimi_social.source.query_planner import MultilingualQueryPlanner
 from vimi_social.source.retrieval_v3 import (
     ConceptQueryPlanner,
     RetrievalV3CandidateCurator,
-    _retrieval_target_view,  # noqa: PLC2701
+    _retrieval_target_view,
 )
 
 
