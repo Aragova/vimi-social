@@ -133,7 +133,7 @@ class RetrievalV3ScoutActivities(PersonalizedScoutActivities):
             preferred_languages,
             discovered,
         )
-        return _retrieval_target_view(relevant)
+        return retrieval_target_view(relevant)
 
 
 class RetrievalV3CandidateCurator(PersonalizedFilteringCandidateCurator):
@@ -267,9 +267,11 @@ def _content_tokens(value: str) -> tuple[str, ...]:
     )
 
 
-def _retrieval_target_view(
+def retrieval_target_view(
     relevant: tuple[CandidateContent, ...],
 ) -> tuple[CandidateContent, ...]:
+    """Return the stop-decision view while preserving the full discovered pool."""
+
     if len(relevant) < _RELEVANT_TARGET:
         return relevant
 
