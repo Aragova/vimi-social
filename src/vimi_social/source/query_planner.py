@@ -17,6 +17,35 @@ _ENGLISH_COMMAND_PREFIX = re.compile(
     re.IGNORECASE,
 )
 _CYRILLIC = re.compile(r"[\u0400-\u04FF]")
+_RECALL_TOKEN = re.compile(r"[^\W_]+(?:[-'][^\W_]+)*", re.UNICODE)
+_RECALL_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "at",
+    "about",
+    "for",
+    "in",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "with",
+    "в",
+    "для",
+    "и",
+    "из",
+    "или",
+    "к",
+    "на",
+    "о",
+    "об",
+    "по",
+    "про",
+    "с",
+    "со",
+}
 
 
 class EnglishIntentTranslator(Protocol):
@@ -40,13 +69,13 @@ class ScoutQueryPlan:
 
 
 class MultilingualQueryPlanner:
-    """Build conservative retrieval rounds that preserve the complete user intent.
+    """Build retrieval rounds from exact intent to bounded recall broadening.
 
-    Retrieval must not silently delete semantic constraints just to broaden recall. The
-    planner therefore keeps the normalized full intent intact and broadens only language
-    coverage. Translation is a reformulation, not a license to drop terms. More granular
-    constraint checks belong in downstream ranking/reranking stages where the original
-    intent remains available.
+    Full-intent rounds always run first. If they do not yield enough curated candidates,
+    later rounds may broaden provider retrieval around a deterministic anchor term. The
+    original full query variants remain in ScoutQueryPlan and continue to drive semantic,
+    visual, OCR and final curator relevance, so retrieval broadening never replaces the
+    user's actual intent as the ranking target.
     """
 
     def __init__(self, translator: EnglishIntentTranslator | None = None) -> None:
@@ -80,13 +109,7 @@ class MultilingualQueryPlanner:
         intent: str,
         preferred_languages: tuple[str, ...],
     ) -> AsyncIterator[ScoutQueryRound]:
-        """Yield full-intent rounds, broadening language scope rather than semantics.
-
-        A single-language request first keeps its provider language filter. If downstream
-        curation still has too few relevant candidates, the next round removes only that
-        language filter while retaining the complete normalized intent. Cyrillic RU+EN
-        requests instead broaden into the complete bilingual reformulation.
-        """
+        """Yield exact rounds first, then bounded provider-recall broadening rounds."""
 
         del intent
         if not plan.retrieval_queries:
@@ -125,6 +148,11 @@ class MultilingualQueryPlanner:
                         specificity=1.0,
                         strategy="full_intent_multilingual",
                     )
+                    for recall_round in _controlled_recall_rounds(
+                        english_variant,
+                        preferred_languages=("en",),
+                    ):
+                        yield recall_round
                 else:
                     yield ScoutQueryRound(
                         query_variants=(english_variant,),
@@ -140,6 +168,11 @@ class MultilingualQueryPlanner:
                         specificity=1.0,
                         strategy="full_intent_language_broadening",
                     )
+                    for recall_round in _controlled_recall_rounds(
+                        english_variant,
+                        preferred_languages=(),
+                    ):
+                        yield recall_round
                 return
 
             if wants_russian:
@@ -150,6 +183,11 @@ class MultilingualQueryPlanner:
                     specificity=1.0,
                     strategy="full_intent_language_broadening",
                 )
+                for recall_round in _controlled_recall_rounds(
+                    query,
+                    preferred_languages=(),
+                ):
+                    yield recall_round
                 return
 
             yield ScoutQueryRound(
@@ -159,6 +197,7 @@ class MultilingualQueryPlanner:
                 specificity=1.0,
                 strategy="full_intent_primary",
             )
+            broadening_languages = normalized_languages
             if len(normalized_languages) == 1:
                 yield ScoutQueryRound(
                     query_variants=(query,),
@@ -167,6 +206,12 @@ class MultilingualQueryPlanner:
                     specificity=1.0,
                     strategy="full_intent_language_broadening",
                 )
+                broadening_languages = ()
+            for recall_round in _controlled_recall_rounds(
+                query,
+                preferred_languages=broadening_languages,
+            ):
+                yield recall_round
             return
 
         yield ScoutQueryRound(
@@ -176,6 +221,7 @@ class MultilingualQueryPlanner:
             specificity=1.0,
             strategy="full_intent_primary",
         )
+        broadening_languages = normalized_languages
         if len(normalized_languages) == 1:
             yield ScoutQueryRound(
                 query_variants=(query,),
@@ -184,6 +230,12 @@ class MultilingualQueryPlanner:
                 specificity=1.0,
                 strategy="full_intent_language_broadening",
             )
+            broadening_languages = ()
+        for recall_round in _controlled_recall_rounds(
+            query,
+            preferred_languages=broadening_languages,
+        ):
+            yield recall_round
 
 
 class FallbackEnglishIntentTranslator:
@@ -272,6 +324,70 @@ def normalize_search_intent(intent: str) -> str:
             normalized = stripped
             break
     return normalized
+
+
+def _controlled_recall_rounds(
+    value: str,
+    *,
+    preferred_languages: tuple[str, ...],
+) -> tuple[ScoutQueryRound, ...]:
+    tokens = _recall_content_tokens(value)
+    if len(tokens) < 3:
+        return ()
+
+    pivot_index = _recall_pivot_index(tokens)
+    pivot = tokens[pivot_index]
+    pair_variants: list[str] = []
+    pair_order = sorted(
+        (index for index in range(len(tokens)) if index != pivot_index),
+        key=lambda index: (abs(index - pivot_index), index),
+    )
+    for index in pair_order:
+        token = tokens[index]
+        phrase = f"{token} {pivot}" if index < pivot_index else f"{pivot} {token}"
+        pair_variants.append(phrase)
+
+    rounds = [
+        ScoutQueryRound(
+            query_variants=tuple(dict.fromkeys(pair_variants[:4])),
+            preferred_languages=preferred_languages,
+            relaxation_level=2,
+            specificity=min(1.0, 2 / len(tokens)),
+            strategy="controlled_recall_anchor_pairs",
+        )
+    ]
+    if len(tokens) >= 4:
+        rounds.append(
+            ScoutQueryRound(
+                query_variants=(pivot,),
+                preferred_languages=preferred_languages,
+                relaxation_level=3,
+                specificity=1 / len(tokens),
+                strategy="controlled_recall_anchor",
+            )
+        )
+    return tuple(rounds)
+
+
+def _recall_content_tokens(value: str) -> tuple[str, ...]:
+    tokens = [
+        token
+        for token in _RECALL_TOKEN.findall(value)
+        if token.casefold() not in _RECALL_STOPWORDS
+    ]
+    return tuple(dict.fromkeys(tokens))
+
+
+def _recall_pivot_index(tokens: tuple[str, ...]) -> int:
+    midpoint = (len(tokens) - 1) / 2
+    return min(
+        range(len(tokens)),
+        key=lambda index: (
+            abs(index - midpoint),
+            -len(tokens[index]),
+            index,
+        ),
+    )
 
 
 def _response_output_text(payload: dict[str, object]) -> str | None:
