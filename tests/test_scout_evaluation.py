@@ -1,5 +1,7 @@
 import json
+import math
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -31,11 +33,11 @@ def test_evaluate_case_reports_quality_cost_and_latency() -> None:
 
     metrics = evaluate_case(case, k=3)
 
-    assert metrics.precision_at_k == pytest.approx(2 / 3, abs=1e-6)
-    assert metrics.recall_at_k == pytest.approx(2 / 3, abs=1e-6)
-    assert metrics.ndcg_at_k == pytest.approx(0.9049495, abs=1e-6)
+    assert math.isclose(metrics.precision_at_k, 2 / 3, abs_tol=1e-6)
+    assert math.isclose(metrics.recall_at_k, 2 / 3, abs_tol=1e-6)
+    assert math.isclose(metrics.ndcg_at_k, 0.9049495, abs_tol=1e-6)
     assert metrics.relevant_retrieved == 2
-    assert metrics.relevant_per_paid_read == pytest.approx(2 / 30, abs=1e-6)
+    assert math.isclose(metrics.relevant_per_paid_read, 2 / 30, abs_tol=1e-6)
     assert metrics.latency_ms == 1250.5
     assert metrics.retrieved_count == 4
     assert metrics.judged_relevant_count == 3
@@ -125,20 +127,27 @@ def test_load_benchmark_uses_versioned_offline_schema(tmp_path: Path) -> None:
     assert benchmark.cases[0].intent == "Найди видео про ночной Бангкок"
     assert payload["case_count"] == 1
     assert payload["total_paid_reads"] == 30
-    assert payload["cases"] == [
-        {
-            "case_id": "night-bangkok-ru",
-            "precision_at_k": 0.1,
-            "recall_at_k": 0.5,
-            "ndcg_at_k": pytest.approx(0.787155, abs=1e-6),
-            "paid_reads": 30,
-            "relevant_retrieved": 1,
-            "relevant_per_paid_read": pytest.approx(1 / 30, abs=1e-6),
-            "latency_ms": 950.25,
-            "retrieved_count": 2,
-            "judged_relevant_count": 2,
-        }
-    ]
+
+    raw_cases = payload["cases"]
+    assert isinstance(raw_cases, list)
+    case_payload_obj = cast(list[object], raw_cases)[0]
+    assert isinstance(case_payload_obj, dict)
+    case_payload = cast(dict[str, object], case_payload_obj)
+    assert case_payload["case_id"] == "night-bangkok-ru"
+    assert case_payload["precision_at_k"] == 0.1
+    assert case_payload["recall_at_k"] == 0.5
+    assert case_payload["paid_reads"] == 30
+    assert case_payload["relevant_retrieved"] == 1
+    assert case_payload["latency_ms"] == 950.25
+    assert case_payload["retrieved_count"] == 2
+    assert case_payload["judged_relevant_count"] == 2
+
+    ndcg = case_payload["ndcg_at_k"]
+    efficiency = case_payload["relevant_per_paid_read"]
+    assert isinstance(ndcg, float)
+    assert isinstance(efficiency, float)
+    assert math.isclose(ndcg, 0.787155, abs_tol=1e-6)
+    assert math.isclose(efficiency, 1 / 30, abs_tol=1e-6)
 
 
 def test_benchmark_rejects_duplicate_ranked_ids() -> None:
