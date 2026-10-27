@@ -80,7 +80,7 @@ _BROAD_TEXTS = (
 )
 
 
-class SparseExactThenBroadConnector:
+class SparseOrRecallConnector:
     source_name = "x"
 
     def __init__(self) -> None:
@@ -91,30 +91,27 @@ class SparseExactThenBroadConnector:
         call = len(self.requests)
 
         if call == 1:
-            assert request.query_variants == ("Гей порно твинк молодые",)
+            assert request.query_variants == ("Гей", "порно", "твинк", "молодые")
             assert request.preferred_languages == ("ru",)
             return SourceSearchCandidates((), next_token=None)
 
         if call == 2:
-            assert request.query_variants == (
-                "Гей порно твинк молодые",
-                "Gay porn twink young",
-            )
-            assert request.preferred_languages == ("ru", "en")
+            assert request.query_variants == ("Gay", "porn", "twink", "young")
+            assert request.preferred_languages == ("en",)
             return SourceSearchCandidates(
                 (
                     _candidate(
                         "exact-1",
                         duration_ms=86_000,
                         text_value=(
-                            "Gay porn twink young first exact archival video profile interview"
+                            "Gay porn twink young first archival video profile interview"
                         ),
                     ),
                     _candidate(
                         "exact-2",
                         duration_ms=64_000,
                         text_value=(
-                            "Gay porn twink young second exact independent travel recording"
+                            "Gay porn twink young second independent travel recording"
                         ),
                     ),
                 ),
@@ -122,12 +119,8 @@ class SparseExactThenBroadConnector:
             )
 
         if call == 3:
-            assert request.query_variants == (
-                "porn twink",
-                "twink young",
-                "Gay twink",
-            )
-            assert request.preferred_languages == ("en",)
+            assert request.query_variants == ("Gay", "porn", "twink", "young")
+            assert request.preferred_languages == ()
             return SourceSearchCandidates(
                 tuple(
                     _candidate(
@@ -144,7 +137,7 @@ class SparseExactThenBroadConnector:
 
 
 @pytest.mark.asyncio
-async def test_sparse_exact_search_uses_controlled_recall_until_target() -> None:
+async def test_sparse_search_uses_word_level_or_recall_until_target() -> None:
     engine = create_engine(_database_dsn())
     session_factory = sessionmaker[Session](
         bind=engine,
@@ -191,7 +184,7 @@ async def test_sparse_exact_search_uses_controlled_recall_until_target() -> None
         assert task is not None
         assert task.preferred_languages == ("ru", "en")
 
-        connector = SparseExactThenBroadConnector()
+        connector = SparseOrRecallConnector()
         activities = ScoutActivities(
             session_factory,
             SourceConnectorRegistry([connector]),
@@ -229,7 +222,7 @@ async def test_sparse_exact_search_uses_controlled_recall_until_target() -> None
         ) == 8
         assert all(
             candidate.connector_metadata.get("retrieval_query_variants")
-            == ["porn twink", "twink young", "Gay twink"]
+            == ["Gay", "porn", "twink", "young"]
             for candidate in persisted
             if candidate.source_id.startswith("broad-")
         )
