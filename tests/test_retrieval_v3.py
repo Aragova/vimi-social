@@ -5,7 +5,7 @@ from vimi_social.source.query_planner import MultilingualQueryPlanner
 from vimi_social.source.retrieval_v3 import (
     ConceptQueryPlanner,
     RetrievalV3CandidateCurator,
-    _retrieval_target_view,
+    retrieval_target_view,
 )
 
 
@@ -77,7 +77,7 @@ def test_retrieval_target_stays_open_when_ten_results_are_only_one_to_five_minut
         for index in range(10)
     )
 
-    target_view = _retrieval_target_view(short_pool)
+    target_view = retrieval_target_view(short_pool)
 
     assert len(target_view) == 9
 
@@ -99,7 +99,7 @@ def test_retrieval_target_can_stop_after_three_preferred_long_form_results() -> 
         for index in range(7)
     )
 
-    target_view = _retrieval_target_view(candidates)
+    target_view = retrieval_target_view(candidates)
 
     assert len(target_view) == 10
 
@@ -128,9 +128,14 @@ def test_v3_ranking_demotes_link_farm_without_relevance_gate_bypass() -> None:
     )
 
     assert [candidate.source_id for candidate in ranked] == ["legitimate", "link-farm"]
-    assert ranked[0].connector_metadata["curator_spam_penalty_score"] == 0.0
-    assert ranked[1].connector_metadata["curator_spam_penalty_score"] > 0.0
-    assert (
-        ranked[0].connector_metadata["curator_v3_score"]
-        > ranked[1].connector_metadata["curator_v3_score"]
-    )
+    first_penalty = ranked[0].connector_metadata["curator_spam_penalty_score"]
+    second_penalty = ranked[1].connector_metadata["curator_spam_penalty_score"]
+    first_score = ranked[0].connector_metadata["curator_v3_score"]
+    second_score = ranked[1].connector_metadata["curator_v3_score"]
+    assert isinstance(first_penalty, int | float) and not isinstance(first_penalty, bool)
+    assert isinstance(second_penalty, int | float) and not isinstance(second_penalty, bool)
+    assert isinstance(first_score, int | float) and not isinstance(first_score, bool)
+    assert isinstance(second_score, int | float) and not isinstance(second_score, bool)
+    assert float(first_penalty) == 0.0
+    assert float(second_penalty) > 0.0
+    assert float(first_score) > float(second_score)
