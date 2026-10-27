@@ -52,7 +52,9 @@ def test_broadened_lexical_fallback_still_requires_full_intent_match() -> None:
     )
 
     assert [candidate.source_id for candidate in ranked] == ["full-intent"]
-    assert ranked[0].connector_metadata["curator_text_gate_score"] >= 0.60
+    gate_score = ranked[0].connector_metadata["curator_text_gate_score"]
+    assert isinstance(gate_score, float)
+    assert gate_score >= 0.60
 
 
 def test_exact_lexical_fallback_keeps_existing_fail_open_behavior() -> None:
