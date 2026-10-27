@@ -89,7 +89,7 @@ class PersonalizedFilteringCandidateCurator(FilteringCandidateCurator):
             relevance = _metadata_float(metadata, "curator_relevance_score", 0.0)
             affinity = _metadata_float(metadata, "personal_affinity_score", 0.0)
             personalized = round(
-                min(1.0, relevance + (_PERSONAL_AFFINITY_WEIGHT * affinity)),
+                relevance + (_PERSONAL_AFFINITY_WEIGHT * affinity),
                 6,
             )
             metadata["curator_personal_affinity_score"] = affinity
