@@ -76,7 +76,7 @@ async def test_multilingual_planner_normalizes_local_full_intent_translation() -
 
 
 @pytest.mark.asyncio
-async def test_ru_en_rounds_preserve_every_full_intent_constraint() -> None:
+async def test_ru_en_rounds_broaden_only_after_full_intent_rounds() -> None:
     intent = "Найди видео про Бангкок ночной рынок красивый"
     translator = FakeTranslator("Bangkok night market beautiful")
     planner = MultilingualQueryPlanner(translator)
@@ -93,22 +93,51 @@ async def test_ru_en_rounds_preserve_every_full_intent_constraint() -> None:
             "Бангкок ночной рынок красивый",
             "Bangkok night market beautiful",
         ),
+        ("night market", "market beautiful", "Bangkok market"),
+        ("market",),
     ]
     assert [item.preferred_languages for item in rounds] == [
         ("ru",),
         ("ru", "en"),
+        ("en",),
+        ("en",),
     ]
-    assert [item.relaxation_level for item in rounds] == [0, 0]
-    assert [item.specificity for item in rounds] == [1.0, 1.0]
+    assert [item.relaxation_level for item in rounds] == [0, 0, 2, 3]
+    assert [item.specificity for item in rounds] == [1.0, 1.0, 0.5, 0.25]
     assert [item.strategy for item in rounds] == [
         "full_intent_primary",
         "full_intent_multilingual",
+        "controlled_recall_anchor_pairs",
+        "controlled_recall_anchor",
     ]
     assert translator.calls == [intent]
 
 
 @pytest.mark.asyncio
-async def test_english_query_broadens_language_without_dropping_constraint() -> None:
+async def test_controlled_recall_uses_translated_anchor_for_sparse_query() -> None:
+    intent = "Гей порно твинк молодые"
+    translator = FakeTranslator("Gay porn twink young")
+    planner = MultilingualQueryPlanner(translator)
+    plan = await planner.plan(intent, ("ru", "en"))
+
+    rounds = [
+        round_item
+        async for round_item in planner.search_rounds(plan, intent, ("ru", "en"))
+    ]
+
+    assert [item.query_variants for item in rounds] == [
+        ("Гей порно твинк молодые",),
+        ("Гей порно твинк молодые", "Gay porn twink young"),
+        ("porn twink", "twink young", "Gay twink"),
+        ("twink",),
+    ]
+    assert [item.relaxation_level for item in rounds] == [0, 0, 2, 3]
+    assert rounds[2].preferred_languages == ("en",)
+    assert rounds[3].preferred_languages == ("en",)
+
+
+@pytest.mark.asyncio
+async def test_english_query_broadens_language_then_recall() -> None:
     planner = MultilingualQueryPlanner()
     intent = "Find videos about Bangkok night market beautiful"
     plan = await planner.plan(intent, ("en",))
@@ -121,13 +150,17 @@ async def test_english_query_broadens_language_without_dropping_constraint() -> 
     assert [item.query_variants for item in rounds] == [
         ("Bangkok night market beautiful",),
         ("Bangkok night market beautiful",),
+        ("night market", "market beautiful", "Bangkok market"),
+        ("market",),
     ]
-    assert [item.preferred_languages for item in rounds] == [("en",), ()]
-    assert [item.relaxation_level for item in rounds] == [0, 1]
-    assert [item.specificity for item in rounds] == [1.0, 1.0]
+    assert [item.preferred_languages for item in rounds] == [("en",), (), (), ()]
+    assert [item.relaxation_level for item in rounds] == [0, 1, 2, 3]
+    assert [item.specificity for item in rounds] == [1.0, 1.0, 0.5, 0.25]
     assert [item.strategy for item in rounds] == [
         "full_intent_primary",
         "full_intent_language_broadening",
+        "controlled_recall_anchor_pairs",
+        "controlled_recall_anchor",
     ]
 
 
@@ -156,7 +189,7 @@ async def test_cyrillic_en_only_uses_full_translation_then_language_broadening()
 
 
 @pytest.mark.asyncio
-async def test_multilingual_planner_falls_back_without_dropping_terms() -> None:
+async def test_multilingual_planner_falls_back_without_dropping_short_intent() -> None:
     translator = FakeTranslator(None)
     planner = MultilingualQueryPlanner(translator)
     intent = "Найди видео про ночной Бангкок"
