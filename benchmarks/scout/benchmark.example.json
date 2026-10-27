@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "k": 3,
+  "cases": [
+    {
+      "id": "night-bangkok-ru",
+      "intent": "Найди видео про ночной Бангкок",
+      "ranked_candidate_ids": ["x-101", "x-102", "x-103", "x-104"],
+      "judgments": {
+        "x-101": 3,
+        "x-102": 0,
+        "x-103": 2,
+        "x-105": 1
+      },
+      "paid_reads": 30,
+      "latency_ms": 1250.5
+    },
+    {
+      "id": "bangkok-archive-2020",
+      "intent": "Bangkok street video 2020",
+      "ranked_candidate_ids": ["x-201", "x-202", "x-203"],
+      "judgments": {
+        "x-201": 2,
+        "x-202": 3,
+        "x-203": 0
+      },
+      "paid_reads": 10,
+      "latency_ms": 875.0
+    }
+  ]
+}

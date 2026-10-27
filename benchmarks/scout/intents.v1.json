@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "night-bangkok-ru",
+      "intent": "Найди видео про ночной Бангкок",
+      "focus": ["multilingual", "semantic", "visual"]
+    },
+    {
+      "id": "night-bangkok-en",
+      "intent": "Bangkok at night",
+      "focus": ["english", "semantic", "visual"]
+    },
+    {
+      "id": "red-sports-car-rain",
+      "intent": "Красный спортивный автомобиль ночью под дождём",
+      "focus": ["multilingual", "attribute-binding", "visual"]
+    },
+    {
+      "id": "tokyo-street-food",
+      "intent": "Tokyo street food night market",
+      "focus": ["semantic", "scene", "quality"]
+    },
+    {
+      "id": "norway-aurora-ru",
+      "intent": "Северное сияние в Норвегии",
+      "focus": ["multilingual", "semantic", "visual"]
+    },
+    {
+      "id": "bangkok-archive-2020",
+      "intent": "Bangkok street video 2020",
+      "focus": ["archive", "temporal", "semantic"]
+    },
+    {
+      "id": "cat-piano-ru",
+      "intent": "Кот играет на пианино",
+      "focus": ["multilingual", "entity-action", "visual"]
+    },
+    {
+      "id": "tropical-island-drone-ru",
+      "intent": "Вид с дрона на тропический остров",
+      "focus": ["multilingual", "visual", "quality"]
+    }
+  ]
+}
