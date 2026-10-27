@@ -139,7 +139,10 @@ class XUserContextClient:
     ) -> list[dict[str, object]]:
         try:
             payload = await self._get(path, headers=headers, params=params)
-        except (XUserContextScopeUnavailable, XUserContextUnavailable):
+        except XUserContextScopeUnavailable:
+            # Missing/unsupported optional scopes are a valid partial snapshot.
+            # Transient provider failures deliberately propagate so callers do not
+            # overwrite a previously useful profile with a false empty snapshot.
             unavailable.append(label)
             return []
         return _data_list(payload)
