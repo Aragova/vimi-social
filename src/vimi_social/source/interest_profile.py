@@ -1,5 +1,6 @@
 import re
 from collections import Counter
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
 from vimi_social.domain.interest import UserInterestProfile, XInterestSnapshot
@@ -82,7 +83,14 @@ def build_interest_profile(snapshot: XInterestSnapshot) -> InterestProfileDraft:
 
     for user in snapshot.following:
         authors[user.id] += 1.0
-        add_text(" ".join(part for part in (user.name, user.username, user.description) if part), 0.8)
+        add_text(
+            " ".join(
+                part
+                for part in (user.name, user.username, user.description)
+                if part
+            ),
+            0.8,
+        )
 
     for post in snapshot.liked_posts:
         if post.author_id:
@@ -132,7 +140,11 @@ def apply_interest_profile(
 
     text = " ".join(
         part
-        for part in (candidate.title or "", candidate.caption or "", " ".join(candidate.tags))
+        for part in (
+            candidate.title or "",
+            candidate.caption or "",
+            " ".join(candidate.tags),
+        )
         if part
     ).casefold()
     hashtag_matches = tuple(
@@ -165,10 +177,17 @@ def apply_interest_profile(
         reverse=True,
     )
     top_term_values = [score for _, score in term_matches[:5]]
-    term_score = sum(top_term_values) / len(top_term_values) if top_term_values else 0.0
+    term_score = (
+        sum(top_term_values) / len(top_term_values)
+        if top_term_values
+        else 0.0
+    )
 
     affinity = round(
-        min(1.0, (0.50 * author_score) + (0.30 * hashtag_score) + (0.20 * term_score)),
+        min(
+            1.0,
+            (0.50 * author_score) + (0.30 * hashtag_score) + (0.20 * term_score),
+        ),
         6,
     )
     reasons: list[str] = []
@@ -205,10 +224,8 @@ def _normalized_top(counter: Counter[str], limit: int) -> dict[str, float]:
     }
 
 
-def _mapping_score(values: object, key: str) -> float:
-    if not hasattr(values, "get"):
-        return 0.0
-    raw = values.get(key)  # type: ignore[union-attr]
+def _mapping_score(values: Mapping[str, float], key: str) -> float:
+    raw = values.get(key)
     if isinstance(raw, int | float) and not isinstance(raw, bool):
         return max(0.0, min(1.0, float(raw)))
     return 0.0
