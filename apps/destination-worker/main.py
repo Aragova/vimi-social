@@ -10,7 +10,10 @@ from vimi_social.core.config import get_settings
 from vimi_social.db.base import build_engine
 from vimi_social.publication.activities import PublicationActivities
 from vimi_social.source.interest_activities import XInterestProfileActivities
-from vimi_social.source.x_user_context import XUserContextClient
+from vimi_social.source.x_user_context import (
+    X_HOME_TIMELINE_SEED_LIMIT,
+    XUserContextClient,
+)
 
 
 async def run() -> None:
@@ -29,12 +32,17 @@ async def run() -> None:
         session_factory,
         media_root=Path(settings.media_root),
     )
+    timeline_seed_limit = min(
+        X_HOME_TIMELINE_SEED_LIMIT,
+        max(0, settings.scout_retrieval_budget - 10),
+    )
     interest_activities = XInterestProfileActivities(
         session_factory,
         client=XUserContextClient(
             list_sample_limit=settings.x_interest_list_sample_limit,
         ),
         profile_ttl=timedelta(hours=max(1, settings.x_interest_profile_ttl_hours)),
+        home_timeline_limit=timeline_seed_limit,
     )
     worker = Worker(
         client,
@@ -43,6 +51,7 @@ async def run() -> None:
             publication_activities.publish_destination,
             publication_activities.reconcile_destination_publication,
             interest_activities.sync_x_user_interest_profile,
+            interest_activities.fetch_x_home_timeline_seed,
         ],
     )
     try:
