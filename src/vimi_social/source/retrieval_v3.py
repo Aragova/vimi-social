@@ -1,0 +1,331 @@
+import re
+from collections.abc import AsyncIterator
+from dataclasses import replace
+
+from vimi_social.domain.source import CandidateContent
+from vimi_social.source.personalization import (
+    PersonalizedFilteringCandidateCurator,
+    PersonalizedScoutActivities,
+)
+from vimi_social.source.query_planner import (
+    MultilingualQueryPlanner,
+    ScoutQueryPlan,
+    ScoutQueryRound,
+)
+
+_TOKEN = re.compile(r"[^\W_]+(?:[-'][^\W_]+)*", re.UNICODE)
+_URL = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+_LINK_FARM = re.compile(
+    r"\b(?:best|top)\b.{0,80}\b(?:sites?|websites?|directories|directory)\b",
+    re.IGNORECASE,
+)
+_PROMO = re.compile(
+    r"\b(?:click\s+here|visit\s+(?:our|the)|free\s+links?|link\s+in\s+bio)\b",
+    re.IGNORECASE,
+)
+_CONCEPT_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "at",
+    "about",
+    "for",
+    "in",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "with",
+    "в",
+    "для",
+    "и",
+    "из",
+    "или",
+    "к",
+    "на",
+    "о",
+    "об",
+    "по",
+    "про",
+    "с",
+    "со",
+}
+_CONCEPT_VARIANT_LIMIT = 3
+_RELEVANT_TARGET = 10
+_LONG_FORM_TARGET = 3
+_LONG_FORM_MIN_MS = 5 * 60 * 1000
+_LONG_FORM_MAX_MS = 30 * 60 * 1000
+_DURATION_RANK_WEIGHT = 0.06
+_SPAM_PENALTY_WEIGHT = 0.35
+
+
+class ConceptQueryPlanner(MultilingualQueryPlanner):
+    """Add bounded multi-concept recall before the existing broad OR fallback."""
+
+    def __init__(self, delegate: MultilingualQueryPlanner) -> None:
+        self._delegate = delegate
+
+    async def plan(
+        self,
+        intent: str,
+        preferred_languages: tuple[str, ...],
+    ) -> ScoutQueryPlan:
+        return await self._delegate.plan(intent, preferred_languages)
+
+    async def search_rounds(
+        self,
+        plan: ScoutQueryPlan,
+        intent: str,
+        preferred_languages: tuple[str, ...],
+    ) -> AsyncIterator[ScoutQueryRound]:
+        normalized_languages = {
+            language.strip().lower()
+            for language in preferred_languages
+            if language.strip()
+        }
+        emitted: set[tuple[str, ...]] = set()
+
+        for variant in plan.query_variants:
+            concepts = _concept_variants(variant)
+            if not concepts or concepts in emitted:
+                continue
+            emitted.add(concepts)
+            tokens = _content_tokens(variant)
+            specificity = min(1.0, 2 / max(1, len(tokens)))
+            if all(concept.isascii() for concept in concepts) and "en" in normalized_languages:
+                round_languages = ("en",)
+            elif any(not concept.isascii() for concept in concepts) and "ru" in normalized_languages:
+                round_languages = ("ru",)
+            else:
+                round_languages = ()
+            yield ScoutQueryRound(
+                query_variants=concepts,
+                preferred_languages=round_languages,
+                relaxation_level=0,
+                specificity=specificity,
+                strategy="provider_concept_recall",
+                max_pages=1,
+            )
+
+        async for search_round in self._delegate.search_rounds(
+            plan,
+            intent,
+            preferred_languages,
+        ):
+            yield search_round
+
+
+class RetrievalV3ScoutActivities(PersonalizedScoutActivities):
+    """Keep retrieval open while X only returns short-but-eligible video results."""
+
+    async def _rank_relevant_pool(
+        self,
+        query_variants: tuple[str, ...],
+        preferred_languages: tuple[str, ...],
+        discovered: list[CandidateContent],
+    ) -> tuple[CandidateContent, ...]:
+        relevant = await super()._rank_relevant_pool(
+            query_variants,
+            preferred_languages,
+            discovered,
+        )
+        return _retrieval_target_view(relevant)
+
+
+class RetrievalV3CandidateCurator(PersonalizedFilteringCandidateCurator):
+    """Apply bounded duration preference and generic SEO/link-farm suppression."""
+
+    def rank(
+        self,
+        candidates: tuple[CandidateContent, ...],
+        *,
+        query_variants: tuple[str, ...],
+        preferred_languages: tuple[str, ...],
+        limit: int,
+        semantic_scores: tuple[float, ...] | None = None,
+        visual_scores: tuple[float | None, ...] | None = None,
+        preview_ocr_texts: tuple[str | None, ...] | None = None,
+        preview_ocr_semantic_scores: tuple[float | None, ...] | None = None,
+        visual_weight: float = 0.15,
+        preview_ocr_weight: float = 0.10,
+        minimum_relevance: float = 0.0,
+    ) -> tuple[CandidateContent, ...]:
+        if limit < 1:
+            return ()
+
+        ranked = super().rank(
+            candidates,
+            query_variants=query_variants,
+            preferred_languages=preferred_languages,
+            limit=max(1, len(candidates)),
+            semantic_scores=semantic_scores,
+            visual_scores=visual_scores,
+            preview_ocr_texts=preview_ocr_texts,
+            preview_ocr_semantic_scores=preview_ocr_semantic_scores,
+            visual_weight=visual_weight,
+            preview_ocr_weight=preview_ocr_weight,
+            minimum_relevance=minimum_relevance,
+        )
+        if not ranked:
+            return ()
+
+        rescored: list[
+            tuple[float, float, float, float, float, float, float, int, CandidateContent]
+        ] = []
+        for index, candidate in enumerate(ranked):
+            metadata = dict(candidate.connector_metadata)
+            personalized = _metadata_float(
+                metadata,
+                "curator_personalized_score",
+                _metadata_float(metadata, "curator_relevance_score", 0.0),
+            )
+            relevance = _metadata_float(metadata, "curator_relevance_score", 0.0)
+            duration = _metadata_float(
+                metadata,
+                "curator_duration_preference_score",
+                _duration_preference(candidate),
+            )
+            spam_penalty = _link_farm_penalty(candidate)
+            v3_score = round(
+                personalized
+                + (_DURATION_RANK_WEIGHT * duration)
+                - (_SPAM_PENALTY_WEIGHT * spam_penalty),
+                6,
+            )
+            metadata["curator_spam_penalty_score"] = spam_penalty
+            metadata["curator_v3_score"] = v3_score
+            metadata["curator_ranking_score"] = v3_score
+            updated = replace(candidate, connector_metadata=metadata)
+            rescored.append(
+                (
+                    v3_score,
+                    personalized,
+                    relevance,
+                    _metadata_float(
+                        metadata,
+                        "curator_semantic_relevance_score",
+                        -1.0,
+                    ),
+                    _metadata_float(metadata, "curator_lexical_relevance_score", 0.0),
+                    duration,
+                    _metadata_float(metadata, "curator_quality_score", 0.0),
+                    -index,
+                    updated,
+                )
+            )
+
+        rescored.sort(key=lambda item: item[:8], reverse=True)
+        result: list[CandidateContent] = []
+        for rank, item in enumerate(rescored[:limit], start=1):
+            candidate = item[8]
+            metadata = dict(candidate.connector_metadata)
+            metadata["curator_rank"] = rank
+            result.append(replace(candidate, connector_metadata=metadata))
+        return tuple(result)
+
+
+def _concept_variants(value: str) -> tuple[str, ...]:
+    tokens = _content_tokens(value)
+    if len(tokens) < 3:
+        return ()
+    midpoint = (len(tokens) - 1) / 2
+    pivot_index = min(
+        range(len(tokens)),
+        key=lambda index: (
+            abs(index - midpoint),
+            -len(tokens[index]),
+            index,
+        ),
+    )
+    pivot = tokens[pivot_index]
+    ordered_indices = sorted(
+        (index for index in range(len(tokens)) if index != pivot_index),
+        key=lambda index: (abs(index - pivot_index), index),
+    )
+    result: list[str] = []
+    for index in ordered_indices:
+        left, right = sorted((pivot, tokens[index]), key=lambda item: tokens.index(item))
+        concept = f"{left} {right}"
+        if concept not in result:
+            result.append(concept)
+        if len(result) >= _CONCEPT_VARIANT_LIMIT:
+            break
+    return tuple(result)
+
+
+def _content_tokens(value: str) -> tuple[str, ...]:
+    return tuple(
+        dict.fromkeys(
+            token
+            for token in _TOKEN.findall(value)
+            if token.casefold() not in _CONCEPT_STOPWORDS
+        )
+    )
+
+
+def _retrieval_target_view(
+    relevant: tuple[CandidateContent, ...],
+) -> tuple[CandidateContent, ...]:
+    if len(relevant) < _RELEVANT_TARGET:
+        return relevant
+
+    known_durations = tuple(
+        candidate.duration_ms
+        for candidate in relevant
+        if candidate.duration_ms is not None and candidate.duration_ms > 0
+    )
+    if len(known_durations) < _LONG_FORM_TARGET:
+        return relevant
+
+    preferred_long_form = sum(
+        _LONG_FORM_MIN_MS <= duration <= _LONG_FORM_MAX_MS
+        for duration in known_durations
+    )
+    if preferred_long_form >= _LONG_FORM_TARGET:
+        return relevant
+
+    # ScoutActivities only checks len(pool) >= 10 to decide whether recall can stop.
+    # Return a bounded target-view here without discarding the actual discovered pool,
+    # so the next concept/fallback round may continue inside the same read budget.
+    return relevant[: _RELEVANT_TARGET - 1]
+
+
+def _link_farm_penalty(candidate: CandidateContent) -> float:
+    text = candidate.caption or candidate.title or ""
+    if not text:
+        return 0.0
+    normalized = " ".join(text.split())
+    tokens = _TOKEN.findall(normalized)
+    url_count = len(_URL.findall(normalized))
+    penalty = 0.0
+    if _LINK_FARM.search(normalized):
+        penalty += 0.65
+    if _PROMO.search(normalized):
+        penalty += 0.25
+    if url_count >= 2:
+        penalty += 0.25
+    elif url_count == 1 and len(tokens) <= 12:
+        penalty += 0.12
+    return round(min(1.0, penalty), 6)
+
+
+def _duration_preference(candidate: CandidateContent) -> float:
+    duration_ms = candidate.duration_ms
+    if duration_ms is None or duration_ms <= 0:
+        return 0.50
+    seconds = duration_ms / 1000
+    if seconds < 60:
+        return 0.0
+    if seconds < 300:
+        return 0.70
+    if seconds <= 1800:
+        return 1.0
+    return 0.90
+
+
+def _metadata_float(metadata: dict[str, object], key: str, default: float) -> float:
+    value = metadata.get(key)
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return float(value)
+    return default
