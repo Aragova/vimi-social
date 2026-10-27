@@ -1,4 +1,4 @@
-from contextvars import ContextVar, Token
+from contextvars import ContextVar
 
 from temporalio import activity
 
