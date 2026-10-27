@@ -12,8 +12,9 @@ _URL = re.compile(r"https?://\S+", re.IGNORECASE)
 _STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
     "in", "is", "it", "of", "on", "or", "that", "the", "this", "to",
-    "with", "you", "your", "в", "для", "и", "из", "или", "на", "о", "об", "от",
-    "по", "про", "с", "со", "что",
+    "with", "you", "your", "\u0432", "\u0434\u043b\u044f", "\u0438", "\u0438\u0437",
+    "\u0438\u043b\u0438", "\u043d\u0430", "\u043e", "\u043e\u0431", "\u043e\u0442",
+    "\u043f\u043e", "\u043f\u0440\u043e", "\u0441", "\u0441\u043e", "\u0447\u0442\u043e",
 }
 _MAX_TERMS = 160
 _MAX_HASHTAGS = 96
