@@ -12,6 +12,18 @@ _MIN_VIDEO_DURATION_MS = 60_000
 _URL = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
 _MENTION = re.compile(r"(?<!\w)@[\w_]+", re.UNICODE)
 _TOKEN = re.compile(r"[^\W_]+", re.UNICODE)
+_CONTINUATION_STATE_KEYS = (
+    "retrieval_query",
+    "retrieval_query_variants",
+    "retrieval_relaxation_level",
+    "retrieval_specificity",
+    "retrieval_language_mode",
+    "x_search_scope",
+    "x_search_query",
+    "x_next_token",
+    "x_page_start_token",
+    "x_continuation_generation",
+)
 
 
 def filter_scout_candidates(
@@ -26,7 +38,9 @@ def filter_scout_candidates(
     durations below the configured minimum are rejected. Near-duplicate suppression is
     intentionally conservative and compares caption/title text after removing URLs and
     mentions. Existing persisted candidates are treated as immutable representatives so
-    continuation pages cannot re-introduce the same promotional template.
+    continuation pages cannot re-introduce the same promotional template. When one of
+    two duplicates survives, the newest retrieval/continuation state is carried onto the
+    surviving content so deduplication cannot rewind the paid X search cursor.
     """
 
     minimum_duration = max(0, minimum_video_duration_ms)
@@ -64,9 +78,13 @@ def filter_scout_candidates(
             result_texts.append(canonical)
             continue
 
-        if _representative_key(candidate) > _representative_key(result[duplicate_index]):
-            result[duplicate_index] = candidate
+        current = result[duplicate_index]
+        if _representative_key(candidate) > _representative_key(current):
+            winner, other = candidate, current
             result_texts[duplicate_index] = canonical
+        else:
+            winner, other = current, candidate
+        result[duplicate_index] = _with_latest_retrieval_state(winner, other)
 
     return tuple(result)
 
@@ -193,6 +211,35 @@ def _offset_ranks(
         metadata["curator_rank"] = rank
         result.append(replace(candidate, connector_metadata=metadata))
     return tuple(result)
+
+
+def _with_latest_retrieval_state(
+    winner: CandidateContent,
+    other: CandidateContent,
+) -> CandidateContent:
+    if _retrieval_state_key(other) < _retrieval_state_key(winner):
+        return winner
+
+    metadata = dict(winner.connector_metadata)
+    for key in _CONTINUATION_STATE_KEYS:
+        metadata.pop(key, None)
+    for key in _CONTINUATION_STATE_KEYS:
+        if key in other.connector_metadata:
+            metadata[key] = other.connector_metadata[key]
+    return replace(winner, connector_metadata=metadata)
+
+
+def _retrieval_state_key(candidate: CandidateContent) -> tuple[int, int, int]:
+    metadata = candidate.connector_metadata
+    level = _metadata_int(metadata, "retrieval_relaxation_level", -1)
+    language_mode = metadata.get("retrieval_language_mode")
+    language_rank = (
+        len(tuple(part for part in language_mode.split("+") if part))
+        if isinstance(language_mode, str)
+        else 0
+    )
+    generation = _metadata_int(metadata, "x_continuation_generation", 0)
+    return (level, language_rank, generation)
 
 
 def _duration_preference_score(candidate: CandidateContent) -> float:
