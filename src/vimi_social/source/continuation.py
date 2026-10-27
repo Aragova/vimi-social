@@ -321,9 +321,12 @@ class ScoutContinuationActivities:
             return self._usage_repository.commit(session, request_key)
 
     def _release_usage_if_reserved(self, task: SourceTask, request_key: OperationKey) -> None:
-        with self._session_factory() as session, tenant_transaction(session, task.tenant_id):
-            with suppress(ReservationStateConflict):
-                self._usage_repository.release(session, request_key)
+        with (
+            self._session_factory() as session,
+            tenant_transaction(session, task.tenant_id),
+            suppress(ReservationStateConflict),
+        ):
+            self._usage_repository.release(session, request_key)
 
     def _retire_ambiguous_continuation(
         self,
