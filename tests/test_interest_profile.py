@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID
@@ -15,6 +16,7 @@ from vimi_social.source.interest_profile import (
     apply_interest_profile,
     build_interest_profile,
     build_interest_summary,
+    build_personalized_retrieval_terms,
 )
 
 
@@ -66,12 +68,15 @@ def test_bookmarks_contribute_stronger_taste_signal_than_likes_and_following() -
     snapshot = XInterestSnapshot(
         user_id="me",
         following=(
-            XInterestUser(id="follow-author", description="travel documentary"),
+            XInterestUser(
+                id="follow-author",
+                description="travel documentary follow for more content",
+            ),
         ),
         liked_posts=(
             XInterestPost(
                 id="liked",
-                text="city nightlife #night",
+                text="city nightlife #night #newvideo",
                 author_id="liked-author",
             ),
         ),
@@ -98,6 +103,10 @@ def test_bookmarks_contribute_stronger_taste_signal_than_likes_and_following() -
     assert draft.author_weights["liked-author"] < draft.author_weights["saved-author"]
     assert draft.author_weights["follow-author"] < draft.author_weights["liked-author"]
     assert draft.hashtag_weights["twink"] == 1.0
+    assert "newvideo" not in draft.hashtag_weights
+    assert "follow" not in draft.term_weights
+    assert "content" not in draft.term_weights
+    assert "more" not in draft.term_weights
     assert draft.term_weights["twink"] > 0
     assert draft.source_stats == {
         "following": 1,
@@ -115,6 +124,35 @@ def test_interest_summary_uses_only_compact_persisted_aggregates() -> None:
     assert summary == "user interests: twink cinematic"
     assert "x-user-1" not in summary
     assert "fav-author" not in summary
+
+
+def test_personalized_retrieval_terms_keep_only_profile_signals_related_to_intent() -> None:
+    profile = replace(
+        _profile(),
+        term_weights={
+            "content": 1.0,
+            "gay": 0.44,
+            "twink": 0.40,
+            "travel": 0.95,
+        },
+        hashtag_weights={
+            "gaycontent": 1.0,
+            "cuteguys": 1.0,
+            "newvideo": 1.0,
+            "gayporn": 0.20,
+        },
+    )
+
+    terms = build_personalized_retrieval_terms(
+        profile,
+        ("Гей порно твинк молодые", "Gay porn twink young"),
+    )
+
+    assert terms == ("gaycontent", "gay", "twink", "gayporn")
+    assert "content" not in terms
+    assert "newvideo" not in terms
+    assert "travel" not in terms
+    assert "cuteguys" not in terms
 
 
 def test_candidate_affinity_is_explainable_and_zero_for_unrelated_content() -> None:
