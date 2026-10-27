@@ -59,9 +59,21 @@ def test_filter_keeps_unknown_duration_fail_open() -> None:
 
 def test_filter_suppresses_exact_text_duplicates_across_different_posts() -> None:
     candidates = (
-        _candidate("first", "Top and bottom Gay video promo repeated caption", duration_ms=300_000),
-        _candidate("second", "Top and bottom Gay video promo repeated caption", duration_ms=600_000),
-        _candidate("third", "A genuinely different long-form video", duration_ms=600_000),
+        _candidate(
+            "first",
+            "Top and bottom Gay video promo repeated caption",
+            duration_ms=300_000,
+        ),
+        _candidate(
+            "second",
+            "Top and bottom Gay video promo repeated caption",
+            duration_ms=600_000,
+        ),
+        _candidate(
+            "third",
+            "A genuinely different long-form video",
+            duration_ms=600_000,
+        ),
     )
 
     filtered = filter_scout_candidates(candidates)
