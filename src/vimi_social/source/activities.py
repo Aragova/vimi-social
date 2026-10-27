@@ -58,6 +58,7 @@ _CONTINUATION_CARRIER_KEYS = (
     "x_search_scope",
     "x_search_query",
     "x_next_token",
+    "x_page_start_token",
     "x_continuation_generation",
 )
 
@@ -206,12 +207,20 @@ class ScoutActivities:
                         break
                     except SourceConnectorUnavailable:
                         source_failure_code = "SOURCE_UNAVAILABLE"
+                        if pagination_token is not None and round_continuation_state is not None:
+                            round_continuation_state = _retire_ambiguous_refill_state(
+                                round_continuation_state,
+                                page_start_token=pagination_token,
+                                continuation_generation=continuation_generation,
+                            )
+                            latest_continuation_state = round_continuation_state
                         break
 
                     if isinstance(round_candidates, SourceSearchCandidates):
                         round_continuation_state = _capture_continuation_state(
                             round_candidates,
                             search_round,
+                            requested_token=pagination_token,
                             continuation_generation=continuation_generation,
                             previous=round_continuation_state,
                         )
@@ -637,6 +646,7 @@ def _capture_continuation_state(
     candidates: SourceSearchCandidates,
     search_round: ScoutQueryRound,
     *,
+    requested_token: str | None,
     continuation_generation: int,
     previous: Mapping[str, object] | None,
 ) -> dict[str, object]:
@@ -653,11 +663,28 @@ def _capture_continuation_state(
     state["retrieval_specificity"] = search_round.specificity
     state["retrieval_language_mode"] = "+".join(search_round.preferred_languages)
     state["x_continuation_generation"] = continuation_generation
+    if requested_token is not None:
+        state["x_page_start_token"] = requested_token
+    else:
+        state.pop("x_page_start_token", None)
     if candidates.next_token:
         state["x_next_token"] = candidates.next_token
     else:
         state.pop("x_next_token", None)
     return state
+
+
+def _retire_ambiguous_refill_state(
+    state: Mapping[str, object],
+    *,
+    page_start_token: str,
+    continuation_generation: int,
+) -> dict[str, object]:
+    retired = dict(state)
+    retired["x_page_start_token"] = page_start_token
+    retired.pop("x_next_token", None)
+    retired["x_continuation_generation"] = continuation_generation
+    return retired
 
 
 def _apply_continuation_state(
