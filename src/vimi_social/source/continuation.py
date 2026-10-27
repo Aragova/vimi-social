@@ -463,6 +463,9 @@ def _with_continuation_provenance(
 
 
 def _next_token_from_candidates(candidates: tuple[CandidateContent, ...]) -> str | None:
+    result_token = getattr(candidates, "next_token", None)
+    if isinstance(result_token, str) and result_token:
+        return result_token
     for candidate in candidates:
         token = candidate.connector_metadata.get("x_next_token")
         if isinstance(token, str) and token:
