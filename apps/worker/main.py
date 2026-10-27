@@ -11,12 +11,12 @@ from vimi_social.db.base import build_engine
 from vimi_social.media.delivery import MediaPreparationDeliveryActivities
 from vimi_social.publication.delivery import PublicationDeliveryActivities
 from vimi_social.publication.preview import PublicationPreviewActivities
-from vimi_social.source.activities import ScoutActivities
-from vimi_social.source.candidate_filter import (
-    FilteringCandidateCurator,
-    FilteringScoutContinuationActivities,
-)
 from vimi_social.source.connectors import SourceConnectorRegistry
+from vimi_social.source.personalization import (
+    PersonalizedFilteringCandidateCurator,
+    PersonalizedFilteringScoutContinuationActivities,
+    PersonalizedScoutActivities,
+)
 from vimi_social.source.query_planner import (
     EnglishIntentTranslator,
     FallbackEnglishIntentTranslator,
@@ -87,7 +87,7 @@ async def run() -> None:
     else:
         translator = None
     query_planner = MultilingualQueryPlanner(translator)
-    scout_curator = FilteringCandidateCurator()
+    scout_curator = PersonalizedFilteringCandidateCurator()
 
     messenger: TelegramMessenger | None = None
     if settings.telegram_bot_token:
@@ -96,7 +96,7 @@ async def run() -> None:
             TelegramBotApiClient(settings.telegram_bot_token),
         )
 
-    scout_activities = ScoutActivities(
+    scout_activities = PersonalizedScoutActivities(
         session_factory,
         registry,
         messenger,
@@ -112,7 +112,7 @@ async def run() -> None:
         retrieval_round_limit=settings.scout_retrieval_round_limit,
         preview_evidence_limit=settings.scout_preview_evidence_limit,
     )
-    scout_continuation = FilteringScoutContinuationActivities(
+    scout_continuation = PersonalizedFilteringScoutContinuationActivities(
         session_factory,
         registry,
         messenger,
