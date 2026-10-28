@@ -142,7 +142,21 @@ def passes_query_gate(
     query_token_count: int,
     minimum_relevance: float,
 ) -> bool:
-    if "home_timeline" in candidate_origins(candidate):
+    origins = candidate_origins(candidate)
+    if semantic_raw is None:
+        search_ok = lexical >= minimum_relevance
+    else:
+        text_gate = (0.35 * lexical) + (0.65 * calibrate_e5(semantic_raw))
+        search_ok = text_gate >= minimum_relevance
+
+    # If Search API independently retrieved this post, preserve that eligibility even
+    # when the same provider post was also present in Home Timeline. Timeline provenance
+    # may still influence personalization/ranking, but it must never make a valid Search
+    # result harder to qualify.
+    if "search" in origins:
+        return search_ok
+
+    if "home_timeline" in origins:
         semantic_minimum = (
             TIMELINE_LONG_FORM_SEMANTIC_MINIMUM
             if is_preferred_long_form(candidate)
@@ -153,10 +167,7 @@ def passes_query_gate(
         lexical_ok = lexical_required > 0 and lexical_matches >= lexical_required
         return semantic_ok or lexical_ok
 
-    if semantic_raw is None:
-        return lexical >= minimum_relevance
-    text_gate = (0.35 * lexical) + (0.65 * calibrate_e5(semantic_raw))
-    return text_gate >= minimum_relevance
+    return search_ok
 
 
 def score_candidate(
