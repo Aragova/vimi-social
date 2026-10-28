@@ -16,6 +16,7 @@ from vimi_social.publication.x_adapter import (
 from vimi_social.source.interest_profile import build_interest_profile
 from vimi_social.source.interest_repository import UserInterestProfileRepository
 from vimi_social.source.repository import SourceTaskRepository
+from vimi_social.source.timeline_wire import to_temporal_safe_timeline_candidate
 from vimi_social.source.x_oauth_refresh import (
     XOAuthRefreshUnavailable,
     XOAuthTokenManager,
@@ -192,7 +193,9 @@ class XInterestProfileActivities:
             return XTimelineSeedResult(failure_code="TIMELINE_UNAVAILABLE")
 
         return XTimelineSeedResult(
-            candidates=candidates,
+            candidates=tuple(
+                to_temporal_safe_timeline_candidate(candidate) for candidate in candidates
+            ),
             posts_read=posts_read,
         )
 
