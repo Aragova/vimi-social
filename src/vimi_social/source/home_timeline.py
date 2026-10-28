@@ -236,10 +236,30 @@ def _merge_provider_result(
     provider_result: tuple[CandidateContent, ...],
     seeds: tuple[CandidateContent, ...],
 ) -> tuple[CandidateContent, ...]:
-    # Keep the provider result first. ScoutActivities captures continuation metadata
-    # from the first returned candidate, so this preserves x_search_scope/query while
-    # still adding the independent Home Timeline seeds to the same ranking pool.
-    combined = (*provider_result, *seeds)
+    # Keep provider ordering so continuation metadata remains discoverable from the
+    # first result, but let an exact Home Timeline duplicate replace the provider
+    # copy in-place. ScoutActivities deduplicates by (source, source_id) with the first
+    # copy winning; without this replacement the personalized timeline provenance is
+    # discarded before the timeline-specific relevance gate can run.
+    seeds_by_key = {(seed.source, seed.source_id): seed for seed in seeds}
+    provider_keys: set[tuple[str, str]] = set()
+    merged_provider: list[CandidateContent] = []
+    for candidate in provider_result:
+        key = (candidate.source, candidate.source_id)
+        provider_keys.add(key)
+        seed = seeds_by_key.get(key)
+        if seed is None:
+            merged_provider.append(candidate)
+            continue
+
+        metadata = dict(candidate.connector_metadata)
+        metadata.update(seed.connector_metadata)
+        merged_provider.append(replace(seed, connector_metadata=metadata))
+
+    combined = (
+        *merged_provider,
+        *(seed for seed in seeds if (seed.source, seed.source_id) not in provider_keys),
+    )
     if isinstance(provider_result, SourceSearchCandidates):
         return SourceSearchCandidates(combined, next_token=provider_result.next_token)
     return combined
