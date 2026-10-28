@@ -257,7 +257,7 @@ def test_filtered_curator_prefers_five_to_thirty_minute_video_on_equal_relevance
     )
 
     ranked = FilteringCandidateCurator().rank(
-        (one-minute, ten-minutes),
+        (one_minute, ten_minutes),
         query_variants=("Bangkok nightlife",),
         preferred_languages=("en",),
         limit=10,
