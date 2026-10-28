@@ -129,6 +129,27 @@ def test_filter_suppresses_near_duplicate_promotional_templates() -> None:
     assert [candidate.source_id for candidate in filtered] == ["promo-2"]
 
 
+def test_filter_keeps_precision_validated_timeline_near_duplicate() -> None:
+    caption = "Top and bottom Gay video promo repeated caption"
+    search = _candidate("search", caption, duration_ms=1_800_000, likes=100)
+    timeline = _candidate("timeline", caption, duration_ms=1_020_000, likes=1)
+    metadata = dict(timeline.connector_metadata)
+    metadata.update(
+        {
+            "x_candidate_origin": "home_timeline",
+            "curator_timeline_gate_method": "semantic",
+            "curator_timeline_semantic_raw_score": 0.826,
+        }
+    )
+    timeline = replace(timeline, connector_metadata=metadata)
+
+    filtered = filter_scout_candidates((search, timeline))
+
+    assert [candidate.source_id for candidate in filtered] == ["timeline"]
+    assert filtered[0].connector_metadata["x_candidate_origin"] == "home_timeline"
+    assert filtered[0].connector_metadata["curator_timeline_gate_method"] == "semantic"
+
+
 def test_filter_does_not_merge_distinct_content_with_some_shared_tags() -> None:
     candidates = (
         _candidate("city", "Bangkok night market walking tour #gay #video #travel #night"),
