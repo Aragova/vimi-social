@@ -110,6 +110,51 @@ def test_exact_duplicate_merges_timeline_origin_and_search_state() -> None:
     assert candidate.connector_metadata["retrieval_relaxation_level"] == 1
 
 
+def test_exact_duplicate_latest_search_copy_retires_old_cursor() -> None:
+    older = _prepare_search(
+        _candidate(
+            "shared-search",
+            metadata={
+                "x_search_scope": "all",
+                "x_search_query": "query",
+                "x_next_token": "stale-page",
+            },
+        )
+    )
+    newer_round = ScoutQueryRound(
+        query_variants=("gay", "twink"),
+        preferred_languages=(),
+        relaxation_level=2,
+        specificity=0.5,
+        strategy="provider_or_unrestricted",
+        max_pages=1,
+    )
+    newer = prepare_search_candidate(
+        _candidate(
+            "shared-search",
+            metadata={
+                "x_search_scope": "all",
+                "x_search_query": "new-query",
+            },
+        ),
+        query_variants=newer_round.query_variants,
+        preferred_languages=newer_round.preferred_languages,
+        relaxation_level=newer_round.relaxation_level,
+        specificity=newer_round.specificity,
+        strategy=newer_round.strategy,
+        continuation_generation=1,
+    )
+
+    merged = merge_exact_candidates((older, newer))
+
+    assert len(merged) == 1
+    metadata = merged[0].connector_metadata
+    assert metadata["x_search_query"] == "new-query"
+    assert metadata["retrieval_relaxation_level"] == 2
+    assert metadata["x_continuation_generation"] == 1
+    assert "x_next_token" not in metadata
+
+
 def test_similar_text_with_different_ids_is_not_deduplicated() -> None:
     first = _candidate("one", text="same promotional looking caption")
     second = _candidate("two", text="same promotional looking caption")
