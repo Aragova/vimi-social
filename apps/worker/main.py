@@ -117,6 +117,7 @@ async def run() -> None:
         HomeTimelineSeedRegistry(
             registry,
             provider_read_budget=search_retrieval_budget,
+            timeline_reserved_budget=timeline_seed_limit,
         ),
         messenger,
         query_planner=query_planner,
