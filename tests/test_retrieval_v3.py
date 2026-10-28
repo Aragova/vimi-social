@@ -296,3 +296,57 @@ async def test_home_timeline_registry_caps_provider_reads_without_capping_seed_p
     assert [candidate.source_id for candidate in second] == ["provider-2"]
     assert third == ()
     assert provider.request_limits == [30, 10]
+
+
+@pytest.mark.asyncio
+async def test_home_timeline_registry_reclaims_reserve_when_no_provider_read_occurred() -> None:
+    provider = _RecordingXConnector()
+    registry = HomeTimelineSeedRegistry(
+        SourceConnectorRegistry((provider,)),
+        provider_read_budget=40,
+        timeline_reserved_budget=10,
+        seed_posts_read_getter=lambda: 0,
+        seed_failure_code_getter=lambda: "NO_ACCOUNT",
+    )
+    connector = registry.route(("x",))[0]
+    request = ScoutSearchRequest(
+        intent="gay porn twink young",
+        requested_sources=("x",),
+        preferred_languages=("en",),
+        query_variants=("gay porn twink young",),
+        max_results=30,
+    )
+
+    await connector.search(request)
+    await connector.search(request)
+    third = await connector.search(request)
+
+    assert third == ()
+    assert provider.request_limits == [30, 20]
+
+
+@pytest.mark.asyncio
+async def test_home_timeline_registry_keeps_reserve_for_ambiguous_failure() -> None:
+    provider = _RecordingXConnector()
+    registry = HomeTimelineSeedRegistry(
+        SourceConnectorRegistry((provider,)),
+        provider_read_budget=40,
+        timeline_reserved_budget=10,
+        seed_posts_read_getter=lambda: 0,
+        seed_failure_code_getter=lambda: "TIMELINE_UNAVAILABLE",
+    )
+    connector = registry.route(("x",))[0]
+    request = ScoutSearchRequest(
+        intent="gay porn twink young",
+        requested_sources=("x",),
+        preferred_languages=("en",),
+        query_variants=("gay porn twink young",),
+        max_results=30,
+    )
+
+    await connector.search(request)
+    await connector.search(request)
+    third = await connector.search(request)
+
+    assert third == ()
+    assert provider.request_limits == [30, 10]
