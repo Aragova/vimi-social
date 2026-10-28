@@ -13,6 +13,7 @@ from vimi_social.publication.delivery import PublicationDeliveryActivities
 from vimi_social.publication.preview import PublicationPreviewActivities
 from vimi_social.source.connectors import SourceConnectorRegistry
 from vimi_social.source.continuation import ScoutContinuationActivities
+from vimi_social.source.preflight import ScoutSourcePreflightActivities
 from vimi_social.source.query_planner import (
     EnglishIntentTranslator,
     FallbackEnglishIntentTranslator,
@@ -98,6 +99,7 @@ async def run() -> None:
         X_HOME_TIMELINE_SEED_LIMIT,
         max(0, settings.scout_retrieval_budget - 10),
     )
+    scout_preflight = ScoutSourcePreflightActivities(session_factory, registry)
     scout_activities = UnifiedScoutActivities(
         session_factory,
         registry,
@@ -142,6 +144,7 @@ async def run() -> None:
             DestinationPublicationWorkflow,
         ],
         activities=[
+            scout_preflight.validate_scout_sources,
             scout_activities.execute_scout_task,
             scout_activities.deliver_scout_results,
             scout_continuation.continue_scout_results,
