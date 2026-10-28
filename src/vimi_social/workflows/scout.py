@@ -14,6 +14,7 @@ from vimi_social.domain.source import (
     XTimelineSeedResult,
 )
 
+_SOURCE_PREFLIGHT_PATCH = "scout-source-preflight-v1"
 _X_INTEREST_SYNC_PATCH = "scout-x-interest-sync-v1"
 _X_HOME_TIMELINE_SEED_PATCH = "scout-x-home-timeline-seed-v1"
 
@@ -22,10 +23,26 @@ _X_HOME_TIMELINE_SEED_PATCH = "scout-x-home-timeline-seed-v1"
 class ScoutWorkflow:
     @workflow.run
     async def run(self, workflow_input: ScoutWorkflowInput) -> ScoutRunResult:
+        sources_available = True
+        if workflow.patched(_SOURCE_PREFLIGHT_PATCH):
+            # Fail closed for paid context reads. If the preflight activity itself
+            # is unavailable, the main Scout activity still performs its own route
+            # validation, but no user-context provider read is attempted first.
+            sources_available = False
+            with suppress(ActivityError):
+                sources_available = await workflow.execute_activity(
+                    "validate_scout_sources",
+                    workflow_input,
+                    result_type=bool,
+                    schedule_to_close_timeout=timedelta(seconds=30),
+                    start_to_close_timeout=timedelta(seconds=30),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
+
         # Preserve deterministic replay for Scout histories created before the
         # personalization activity existed. New histories record this patch marker
         # and run the best-effort profile refresh before provider discovery.
-        if workflow.patched(_X_INTEREST_SYNC_PATCH):
+        if sources_available and workflow.patched(_X_INTEREST_SYNC_PATCH):
             # User-context reads can incur provider charges. Refresh is best-effort,
             # never retried automatically, and must not block an otherwise valid
             # Scout run. schedule_to_close_timeout also bounds queue wait when the
@@ -42,7 +59,7 @@ class ScoutWorkflow:
                 )
 
         seed_result = XTimelineSeedResult()
-        if workflow.patched(_X_HOME_TIMELINE_SEED_PATCH):
+        if sources_available and workflow.patched(_X_HOME_TIMELINE_SEED_PATCH):
             # This is a separate candidate source from Search API. It executes on
             # the credential-owning destination worker so the OAuth token never
             # enters Scout worker environment or workflow history. Provider reads
