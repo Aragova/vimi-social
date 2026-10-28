@@ -122,12 +122,24 @@ def is_preferred_long_form(candidate: CandidateContent) -> bool:
     return duration is not None and LONG_FORM_MIN_MS <= duration <= LONG_FORM_MAX_MS
 
 
+def distinct_query_token_count(query_variants: tuple[str, ...]) -> int:
+    return len(
+        {
+            token.casefold()
+            for variant in query_variants
+            for token in _TOKEN.findall(variant)
+            if token
+        }
+    )
+
+
 def passes_query_gate(
     candidate: CandidateContent,
     *,
     semantic_raw: float | None,
     lexical: float,
     lexical_matches: int,
+    query_token_count: int,
     minimum_relevance: float,
 ) -> bool:
     if "home_timeline" in candidate_origins(candidate):
@@ -137,7 +149,8 @@ def passes_query_gate(
             else TIMELINE_SEMANTIC_MINIMUM
         )
         semantic_ok = semantic_raw is not None and semantic_raw >= semantic_minimum
-        lexical_ok = lexical_matches >= TIMELINE_LEXICAL_MIN_MATCHES
+        lexical_required = min(TIMELINE_LEXICAL_MIN_MATCHES, max(0, query_token_count))
+        lexical_ok = lexical_required > 0 and lexical_matches >= lexical_required
         return semantic_ok or lexical_ok
 
     if semantic_raw is None:
