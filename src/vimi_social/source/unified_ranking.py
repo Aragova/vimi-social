@@ -8,6 +8,7 @@ from vimi_social.domain.source import CandidateContent
 
 _TOKEN = re.compile(r"[^\W_]+(?:[-'][^\W_]+)*", re.UNICODE)
 _URL = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+_HASHTAG = re.compile(r"(?<!\w)#([\w-]+)", re.UNICODE)
 _LINK_FARM = re.compile(
     r"\b(?:best|top)\b.{0,80}\b(?:sites?|websites?|directories|directory)\b",
     re.IGNORECASE,
@@ -27,6 +28,7 @@ PERSONAL_AFFINITY_WEIGHT = 0.10
 DURATION_WEIGHT = 0.15
 QUALITY_WEIGHT = 0.03
 SPAM_WEIGHT = 0.35
+HASHTAG_STUFFING_WEIGHT = 0.45
 _EXACT_RETRIEVAL_STATE_KEYS = (
     "retrieval_query",
     "retrieval_query_variants",
@@ -209,12 +211,14 @@ def score_candidate(
     duration = duration_preference(candidate)
     quality = quality_score(candidate)
     spam = spam_penalty(candidate)
+    hashtag_stuffing = hashtag_stuffing_penalty(candidate)
     final = round(
         relevance
         + (PERSONAL_AFFINITY_WEIGHT * affinity)
         + (DURATION_WEIGHT * duration)
         + (QUALITY_WEIGHT * quality)
-        - (SPAM_WEIGHT * spam),
+        - (SPAM_WEIGHT * spam)
+        - (HASHTAG_STUFFING_WEIGHT * hashtag_stuffing),
         6,
     )
 
@@ -234,6 +238,7 @@ def score_candidate(
     metadata["curator_duration_preference_score"] = duration
     metadata["curator_quality_score"] = quality
     metadata["curator_spam_penalty_score"] = spam
+    metadata["curator_hashtag_stuffing_penalty_score"] = hashtag_stuffing
     metadata["curator_v3_score"] = final
     metadata["curator_ranking_score"] = final
     return final, replace(candidate, connector_metadata=metadata)
@@ -352,6 +357,27 @@ def spam_penalty(candidate: CandidateContent) -> float:
     elif url_count == 1 and len(tokens) <= 12:
         penalty += 0.12
     return round(min(1.0, penalty), 6)
+
+
+def hashtag_stuffing_penalty(candidate: CandidateContent) -> float:
+    """Demote hashtag-dense captions without deleting distinct provider posts."""
+
+    text = " ".join((candidate.caption or candidate.title or "").split())
+    if not text:
+        return 0.0
+    hashtags = _HASHTAG.findall(text)
+    hashtag_count = len(hashtags)
+    if hashtag_count < 4:
+        return 0.0
+    token_count = max(1, len(_TOKEN.findall(text)))
+    hashtag_ratio = hashtag_count / token_count
+    if hashtag_count >= 8 and hashtag_ratio >= 0.50:
+        return 1.0
+    if hashtag_count >= 6 and hashtag_ratio >= 0.50:
+        return 0.80
+    if hashtag_count >= 4 and hashtag_ratio >= 0.60:
+        return 0.50
+    return 0.0
 
 
 def _merge_exact_pair(left: CandidateContent, right: CandidateContent) -> CandidateContent:
