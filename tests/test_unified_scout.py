@@ -210,6 +210,18 @@ def test_single_token_timeline_query_allows_one_lexical_match() -> None:
     )
 
 
+def test_translated_single_token_variant_does_not_require_union_match_count() -> None:
+    candidate = prepare_timeline_seeds((_candidate("football-en", text="football highlights"),))[0]
+    assert passes_query_gate(
+        candidate,
+        semantic_raw=None,
+        lexical=1.0,
+        lexical_matches=1,
+        query_token_count=2,
+        minimum_relevance=0.18,
+    )
+
+
 def test_round_identity_keeps_language_broadening_distinct() -> None:
     query = ("gay twink",)
     assert round_identity(query, ("en",)) != round_identity(query, ())
