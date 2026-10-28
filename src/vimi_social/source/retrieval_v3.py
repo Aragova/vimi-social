@@ -37,19 +37,19 @@ _CONCEPT_STOPWORDS = {
     "the",
     "to",
     "with",
-    "\u0432",
-    "\u0434\u043b\u044f",
-    "\u0438",
-    "\u0438\u0437",
-    "\u0438\u043b\u0438",
-    "\u043a",
-    "\u043d\u0430",
-    "\u043e",
-    "\u043e\u0431",
-    "\u043f\u043e",
-    "\u043f\u0440\u043e",
-    "\u0441",
-    "\u0441\u043e",
+    "в",
+    "для",
+    "и",
+    "из",
+    "или",
+    "к",
+    "на",
+    "о",
+    "об",
+    "по",
+    "про",
+    "с",
+    "со",
 }
 _CONCEPT_VARIANT_LIMIT = 3
 _RELEVANT_TARGET = 10
@@ -58,6 +58,8 @@ _LONG_FORM_MIN_MS = 5 * 60 * 1000
 _LONG_FORM_MAX_MS = 30 * 60 * 1000
 _DURATION_RANK_WEIGHT = 0.06
 _SPAM_PENALTY_WEIGHT = 0.35
+_TIMELINE_SEMANTIC_RAW_MINIMUM = 0.84
+_TIMELINE_LEXICAL_MIN_MATCHES = 2
 
 
 class ConceptQueryPlanner(MultilingualQueryPlanner):
@@ -163,15 +165,39 @@ class RetrievalV3CandidateCurator(PersonalizedFilteringCandidateCurator):
         if limit < 1:
             return ()
 
-        ranked = super().rank(
+        gated, indices = _apply_home_timeline_precision_gate(
             candidates,
             query_variants=query_variants,
-            preferred_languages=preferred_languages,
-            limit=max(1, len(candidates)),
             semantic_scores=semantic_scores,
-            visual_scores=visual_scores,
-            preview_ocr_texts=preview_ocr_texts,
-            preview_ocr_semantic_scores=preview_ocr_semantic_scores,
+        )
+        if not gated:
+            return ()
+
+        ranked = super().rank(
+            gated,
+            query_variants=query_variants,
+            preferred_languages=preferred_languages,
+            limit=max(1, len(gated)),
+            semantic_scores=(
+                tuple(semantic_scores[index] for index in indices)
+                if semantic_scores is not None
+                else None
+            ),
+            visual_scores=(
+                tuple(visual_scores[index] for index in indices)
+                if visual_scores is not None
+                else None
+            ),
+            preview_ocr_texts=(
+                tuple(preview_ocr_texts[index] for index in indices)
+                if preview_ocr_texts is not None
+                else None
+            ),
+            preview_ocr_semantic_scores=(
+                tuple(preview_ocr_semantic_scores[index] for index in indices)
+                if preview_ocr_semantic_scores is not None
+                else None
+            ),
             visual_weight=visual_weight,
             preview_ocr_weight=preview_ocr_weight,
             minimum_relevance=minimum_relevance,
@@ -232,6 +258,72 @@ class RetrievalV3CandidateCurator(PersonalizedFilteringCandidateCurator):
             metadata["curator_rank"] = rank
             result.append(replace(candidate, connector_metadata=metadata))
         return tuple(result)
+
+
+def _apply_home_timeline_precision_gate(
+    candidates: tuple[CandidateContent, ...],
+    *,
+    query_variants: tuple[str, ...],
+    semantic_scores: tuple[float, ...] | None,
+) -> tuple[tuple[CandidateContent, ...], tuple[int, ...]]:
+    """Keep timeline recall query-safe without requiring literal caption wording.
+
+    Home Timeline is personalized but not query-constrained. A strong local E5 match
+    therefore acts as the primary absolute gate. When E5 is unavailable, require at
+    least two distinct lexical intent tokens. Candidates that pass this source-specific
+    gate are handed to the normal Curator for the same filtering/ranking as Search API
+    results; their broad retrieval specificity is preserved separately for diagnostics.
+    """
+
+    query_tokens = _normalized_content_tokens(" ".join(query_variants))
+    lexical_required = min(_TIMELINE_LEXICAL_MIN_MATCHES, len(query_tokens))
+    kept: list[CandidateContent] = []
+    indices: list[int] = []
+
+    for index, candidate in enumerate(candidates):
+        if candidate.connector_metadata.get("x_candidate_origin") != "home_timeline":
+            kept.append(candidate)
+            indices.append(index)
+            continue
+
+        text = " ".join(
+            part
+            for part in (candidate.title, candidate.caption, " ".join(candidate.tags))
+            if part
+        )
+        candidate_tokens = set(_normalized_content_tokens(text))
+        lexical_matches = len(set(query_tokens) & candidate_tokens)
+        semantic_raw = semantic_scores[index] if semantic_scores is not None else None
+        semantic_ok = (
+            semantic_raw is not None
+            and float(semantic_raw) >= _TIMELINE_SEMANTIC_RAW_MINIMUM
+        )
+        lexical_ok = lexical_required > 0 and lexical_matches >= lexical_required
+        if not semantic_ok and not lexical_ok:
+            continue
+
+        metadata = dict(candidate.connector_metadata)
+        metadata["curator_timeline_gate_method"] = (
+            "semantic" if semantic_ok else "lexical_fallback"
+        )
+        metadata["curator_timeline_lexical_match_count"] = lexical_matches
+        metadata["curator_timeline_semantic_raw_score"] = (
+            round(float(semantic_raw), 6) if semantic_raw is not None else None
+        )
+        if "retrieval_specificity" in metadata:
+            metadata["retrieval_source_specificity"] = metadata["retrieval_specificity"]
+            # The timeline-specific gate above already enforces absolute query
+            # relevance. Removing this field prevents the generic broad-search gate
+            # from applying a second lexical-heavy threshold to the same candidate.
+            metadata.pop("retrieval_specificity", None)
+        kept.append(replace(candidate, connector_metadata=metadata))
+        indices.append(index)
+
+    return tuple(kept), tuple(indices)
+
+
+def _normalized_content_tokens(value: str) -> tuple[str, ...]:
+    return tuple(token.casefold() for token in _content_tokens(value))
 
 
 def _concept_variants(value: str) -> tuple[str, ...]:
