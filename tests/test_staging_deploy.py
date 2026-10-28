@@ -116,3 +116,9 @@ def test_staging_deploy_rebuilds_local_ai_image() -> None:
     deploy = (REPO_ROOT / "scripts/deploy_staging.sh").read_text()
 
     assert "compose build bot local-ai" in deploy
+
+
+def test_staging_deploy_initializes_x_oauth_state_volume() -> None:
+    deploy = (REPO_ROOT / "scripts/deploy_staging.sh").read_text()
+
+    assert "run_one_shot x-oauth-init" in deploy

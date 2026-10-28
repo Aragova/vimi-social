@@ -12,18 +12,18 @@ from vimi_social.media.delivery import MediaPreparationDeliveryActivities
 from vimi_social.publication.delivery import PublicationDeliveryActivities
 from vimi_social.publication.preview import PublicationPreviewActivities
 from vimi_social.source.connectors import SourceConnectorRegistry
-from vimi_social.source.personalization import (
-    PersonalizedFilteringCandidateCurator,
-    PersonalizedFilteringScoutContinuationActivities,
-    PersonalizedScoutActivities,
-)
+from vimi_social.source.continuation import ScoutContinuationActivities
+from vimi_social.source.preflight import ScoutSourcePreflightActivities
 from vimi_social.source.query_planner import (
     EnglishIntentTranslator,
     FallbackEnglishIntentTranslator,
     MultilingualQueryPlanner,
     OpenAIEnglishIntentTranslator,
 )
+from vimi_social.source.unified_continuation import UnifiedContinuationCandidateCurator
+from vimi_social.source.unified_scout import UnifiedScoutActivities
 from vimi_social.source.x_connector import XSourceConnector
+from vimi_social.source.x_user_context import X_HOME_TIMELINE_SEED_LIMIT
 from vimi_social.telegram.client import TelegramBotApiClient
 from vimi_social.telegram.outgoing import TelegramMessenger, TelegramOutgoingStore
 from vimi_social.workflows.destination_publication import DestinationPublicationWorkflow
@@ -87,7 +87,6 @@ async def run() -> None:
     else:
         translator = None
     query_planner = MultilingualQueryPlanner(translator)
-    scout_curator = PersonalizedFilteringCandidateCurator()
 
     messenger: TelegramMessenger | None = None
     if settings.telegram_bot_token:
@@ -96,12 +95,16 @@ async def run() -> None:
             TelegramBotApiClient(settings.telegram_bot_token),
         )
 
-    scout_activities = PersonalizedScoutActivities(
+    timeline_seed_limit = min(
+        X_HOME_TIMELINE_SEED_LIMIT,
+        max(0, settings.scout_retrieval_budget - 10),
+    )
+    scout_preflight = ScoutSourcePreflightActivities(session_factory, registry)
+    scout_activities = UnifiedScoutActivities(
         session_factory,
         registry,
         messenger,
         query_planner=query_planner,
-        curator=scout_curator,
         semantic_scorer=local_ai_client,
         visual_scorer=visual_ai_client,
         preview_ocr_extractor=visual_ai_client,
@@ -111,13 +114,14 @@ async def run() -> None:
         retrieval_budget=settings.scout_retrieval_budget,
         retrieval_round_limit=settings.scout_retrieval_round_limit,
         preview_evidence_limit=settings.scout_preview_evidence_limit,
+        timeline_reserved_budget=timeline_seed_limit,
     )
-    scout_continuation = PersonalizedFilteringScoutContinuationActivities(
+    scout_continuation = ScoutContinuationActivities(
         session_factory,
         registry,
         messenger,
         query_planner=query_planner,
-        curator=scout_curator,
+        curator=UnifiedContinuationCandidateCurator(),
         semantic_scorer=local_ai_client,
         semantic_minimum_relevance=settings.semantic_relevance_min_score,
         batch_size=settings.scout_retrieval_round_limit,
@@ -140,6 +144,7 @@ async def run() -> None:
             DestinationPublicationWorkflow,
         ],
         activities=[
+            scout_preflight.validate_scout_sources,
             scout_activities.execute_scout_task,
             scout_activities.deliver_scout_results,
             scout_continuation.continue_scout_results,

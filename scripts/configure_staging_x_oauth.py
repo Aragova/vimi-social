@@ -20,6 +20,7 @@ from vimi_social.ops.staging_x_oauth import (
     authorization_url,
     callback_code,
     request_target,
+    upsert_env_value,
     write_env_value,
 )
 
@@ -209,7 +210,7 @@ def _parse_args() -> argparse.Namespace:
         description=(
             "Generate a fresh X OAuth 2.0 authorization URL, obtain the callback, "
             "exchange the short-lived code immediately, and store the user access "
-            "token in .env.staging without printing credentials."
+            "and refresh credentials in the protected staging env without printing them."
         )
     )
     parser.add_argument("--env-file", type=Path, default=Path(".env.staging"))
@@ -316,13 +317,20 @@ def main() -> int:
         "VIMI_DEST_X_PRIMARY_TOKEN",
         access_token,
     )
+    upsert_env_value(args.env_file, "VIMI_X_OAUTH_CLIENT_ID", client_id)
+    upsert_env_value(args.env_file, "VIMI_X_OAUTH_CLIENT_SECRET", client_secret)
 
     if refresh_token:
         args.refresh_token_file.write_text(refresh_token + "\n")
         args.refresh_token_file.chmod(0o600)
+        upsert_env_value(
+            args.env_file,
+            "VIMI_DEST_X_PRIMARY_REFRESH_TOKEN",
+            refresh_token,
+        )
 
     print("OK: X user access token obtained")
-    print("OK: VIMI_DEST_X_PRIMARY_TOKEN saved to staging env")
+    print("OK: staging OAuth refresh configuration saved")
     if refresh_token:
         print("OK: X refresh token saved")
     else:

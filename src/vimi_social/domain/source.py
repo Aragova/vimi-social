@@ -2,6 +2,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 from uuid import UUID
 
 from vimi_social.domain.identity import OperationKey, TenantId
@@ -65,7 +66,22 @@ class CandidateContent:
     explicitness_score: float | None
     provenance_hint: str
     availability: str
-    connector_metadata: Mapping[str, object]
+    # Connector metadata is JSON-shaped provider data that crosses Temporal
+    # activity/workflow boundaries. ``object`` is too concrete for Temporal's
+    # typed JSON converter (it attempts to instantiate ``object`` on decode),
+    # while ``Any`` preserves the JSON values exactly as decoded.
+    connector_metadata: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class XTimelineSeedResult:
+    candidates: tuple[CandidateContent, ...] = ()
+    posts_read: int = 0
+    failure_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.posts_read < 0:
+            raise ValueError("X timeline seed posts_read must not be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +136,13 @@ class ScoutWorkflowInput:
     operation_key: str
     execution_token: str
     interest_task_queue: str = "vimi-social-destination"
+    seed_candidates: tuple[CandidateContent, ...] = ()
+    seed_posts_read: int = 0
+    seed_failure_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.seed_posts_read < 0:
+            raise ValueError("Scout seed_posts_read must not be negative")
 
 
 @dataclass(frozen=True, slots=True)
