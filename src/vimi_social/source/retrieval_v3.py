@@ -59,6 +59,7 @@ _LONG_FORM_MAX_MS = 30 * 60 * 1000
 _DURATION_RANK_WEIGHT = 0.06
 _SPAM_PENALTY_WEIGHT = 0.35
 _TIMELINE_SEMANTIC_RAW_MINIMUM = 0.84
+_TIMELINE_LONG_FORM_SEMANTIC_RAW_MINIMUM = 0.81
 _TIMELINE_LEXICAL_MIN_MATCHES = 2
 
 
@@ -269,10 +270,12 @@ def _apply_home_timeline_precision_gate(
     """Keep timeline recall query-safe without requiring literal caption wording.
 
     Home Timeline is personalized but not query-constrained. A strong local E5 match
-    therefore acts as the primary absolute gate. When E5 is unavailable, require at
-    least two distinct lexical intent tokens. Candidates that pass this source-specific
-    gate are handed to the normal Curator for the same filtering/ranking as Search API
-    results; their broad retrieval specificity is preserved separately for diagnostics.
+    therefore acts as the primary absolute gate. Preferred 5-30 minute videos receive
+    a narrowly lower semantic floor calibrated from staging measurements; all other
+    timeline candidates keep the stricter general floor. When E5 is unavailable,
+    require at least two distinct lexical intent tokens. Candidates that pass this
+    source-specific gate are handed to the normal Curator for the same filtering and
+    ranking as Search API results.
     """
 
     query_tokens = _normalized_content_tokens(" ".join(query_variants))
@@ -294,10 +297,8 @@ def _apply_home_timeline_precision_gate(
         candidate_tokens = set(_normalized_content_tokens(text))
         lexical_matches = len(set(query_tokens) & candidate_tokens)
         semantic_raw = semantic_scores[index] if semantic_scores is not None else None
-        semantic_ok = (
-            semantic_raw is not None
-            and float(semantic_raw) >= _TIMELINE_SEMANTIC_RAW_MINIMUM
-        )
+        semantic_minimum = _timeline_semantic_raw_minimum(candidate)
+        semantic_ok = semantic_raw is not None and float(semantic_raw) >= semantic_minimum
         lexical_ok = lexical_required > 0 and lexical_matches >= lexical_required
         if not semantic_ok and not lexical_ok:
             continue
@@ -310,6 +311,7 @@ def _apply_home_timeline_precision_gate(
         metadata["curator_timeline_semantic_raw_score"] = (
             round(float(semantic_raw), 6) if semantic_raw is not None else None
         )
+        metadata["curator_timeline_semantic_minimum"] = semantic_minimum
         if "retrieval_specificity" in metadata:
             metadata["retrieval_source_specificity"] = metadata["retrieval_specificity"]
             # The timeline-specific gate above already enforces absolute query
@@ -320,6 +322,16 @@ def _apply_home_timeline_precision_gate(
         indices.append(index)
 
     return tuple(kept), tuple(indices)
+
+
+def _timeline_semantic_raw_minimum(candidate: CandidateContent) -> float:
+    duration_ms = candidate.duration_ms
+    if (
+        duration_ms is not None
+        and _LONG_FORM_MIN_MS <= duration_ms <= _LONG_FORM_MAX_MS
+    ):
+        return _TIMELINE_LONG_FORM_SEMANTIC_RAW_MINIMUM
+    return _TIMELINE_SEMANTIC_RAW_MINIMUM
 
 
 def _normalized_content_tokens(value: str) -> tuple[str, ...]:
