@@ -2,6 +2,7 @@ import math
 import re
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import replace
+from typing import cast
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
@@ -189,9 +190,6 @@ class UnifiedScoutActivities(ScoutActivities):
         )
         profile = self._load_profile(task)
 
-        # Timeline is a first-class source, not a registry side effect. This guarantees
-        # every successfully fetched seed enters the same pool even when Search API
-        # fails, returns no overlap, or stops early.
         discovered = list(_prepare_timeline_seeds(workflow_input.seed_candidates))
         retrieval_spent = _timeline_read_charge(
             posts_read=workflow_input.seed_posts_read,
@@ -225,8 +223,6 @@ class UnifiedScoutActivities(ScoutActivities):
                         max_results=request_limit,
                         pagination_token=pagination_token,
                     )
-                    # Reserve before provider I/O. An ambiguous provider failure may have
-                    # consumed the read even when its response never reached ViMi.
                     retrieval_spent += request_limit
                     try:
                         fetched = await connector.search(request)
@@ -609,8 +605,6 @@ def _merge_exact_pair(left: CandidateContent, right: CandidateContent) -> Candid
     right_origins = _candidate_origins(right)
     origins = tuple(dict.fromkeys((*left_origins, *right_origins)))
 
-    # Prefer the richer payload, but merge metadata from both. Search continuation state
-    # survives while Home Timeline provenance remains explicit for relevance gating.
     if _payload_richness(right) > _payload_richness(left):
         winner, other = right, left
     else:
@@ -644,7 +638,8 @@ def _merge_exact_pair(left: CandidateContent, right: CandidateContent) -> Candid
 def _candidate_origins(candidate: CandidateContent) -> tuple[str, ...]:
     raw = candidate.connector_metadata.get("x_candidate_origins")
     if isinstance(raw, list | tuple):
-        values = tuple(value for value in raw if isinstance(value, str) and value)
+        items = cast(list[object] | tuple[object, ...], raw)
+        values = tuple(value for value in items if isinstance(value, str) and value)
         if values:
             return values
     origin = candidate.connector_metadata.get("x_candidate_origin")
