@@ -27,6 +27,19 @@ PERSONAL_AFFINITY_WEIGHT = 0.10
 DURATION_WEIGHT = 0.15
 QUALITY_WEIGHT = 0.03
 SPAM_WEIGHT = 0.35
+_EXACT_RETRIEVAL_STATE_KEYS = (
+    "retrieval_query",
+    "retrieval_query_variants",
+    "retrieval_relaxation_level",
+    "retrieval_specificity",
+    "retrieval_language_mode",
+    "retrieval_strategy",
+    "x_search_scope",
+    "x_search_query",
+    "x_next_token",
+    "x_page_start_token",
+    "x_continuation_generation",
+)
 
 
 def prepare_timeline_seeds(
@@ -323,9 +336,11 @@ def _merge_exact_pair(left: CandidateContent, right: CandidateContent) -> Candid
         else None
     )
     if search_copy is not None:
-        for key, value in search_copy.connector_metadata.items():
-            if key.startswith("x_") or key.startswith("retrieval_"):
-                metadata[key] = value
+        for key in _EXACT_RETRIEVAL_STATE_KEYS:
+            metadata.pop(key, None)
+        for key in _EXACT_RETRIEVAL_STATE_KEYS:
+            if key in search_copy.connector_metadata:
+                metadata[key] = search_copy.connector_metadata[key]
 
     metadata["x_candidate_origins"] = list(origins)
     metadata["x_candidate_origin"] = (
