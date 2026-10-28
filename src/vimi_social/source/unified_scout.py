@@ -31,6 +31,7 @@ from vimi_social.source.interest_profile import (
     build_personalized_retrieval_terms,
 )
 from vimi_social.source.interest_repository import UserInterestProfileRepository
+from vimi_social.source.ocr import PreviewOcrExtractor, PreviewOcrUnavailable
 from vimi_social.source.query_planner import (
     MultilingualQueryPlanner,
     ScoutQueryPlan,
@@ -43,7 +44,6 @@ from vimi_social.source.semantic import (
     SemanticRelevanceUnavailable,
 )
 from vimi_social.source.visual import VisualRelevanceScorer, VisualRelevanceUnavailable
-from vimi_social.source.ocr import PreviewOcrExtractor, PreviewOcrUnavailable
 from vimi_social.telegram.outgoing import TelegramMessenger
 from vimi_social.usage.repository import UsageRepository
 
@@ -259,10 +259,17 @@ class UnifiedScoutActivities(ScoutActivities):
                         break
                     if retrieval_spent >= self._retrieval_budget:
                         break
-                    if search_round.max_pages is not None and pages_read >= search_round.max_pages:
+                    if (
+                        search_round.max_pages is not None
+                        and pages_read >= search_round.max_pages
+                    ):
                         break
 
-                    next_token = fetched.next_token if isinstance(fetched, SourceSearchCandidates) else None
+                    next_token = (
+                        fetched.next_token
+                        if isinstance(fetched, SourceSearchCandidates)
+                        else None
+                    )
                     if next_token is None or next_token == pagination_token:
                         break
                     pagination_token = next_token
@@ -429,7 +436,11 @@ class UnifiedScoutActivities(ScoutActivities):
 
         final: list[tuple[float, float, float, float, float, int, CandidateContent]] = []
         for _, original_index, candidate in prelim:
-            semantic_raw = semantic_scores[original_index] if semantic_scores is not None else None
+            semantic_raw = (
+                semantic_scores[original_index]
+                if semantic_scores is not None
+                else None
+            )
             lexical, _ = _lexical_relevance(candidate, query_variants)
             key = _candidate_key(candidate)
             score, updated = _score_candidate(
@@ -493,7 +504,9 @@ class UnifiedScoutActivities(ScoutActivities):
                 batch = candidates[start : start + _LOCAL_AI_BATCH_LIMIT]
                 batch_scores = await scorer.score_candidates((summary,), batch)
                 if len(batch_scores) != len(batch):
-                    raise SemanticRelevanceUnavailable("taste semantic batch alignment mismatch")
+                    raise SemanticRelevanceUnavailable(
+                        "taste semantic batch alignment mismatch"
+                    )
                 scores.extend(batch_scores)
         except SemanticRelevanceUnavailable:
             return None
@@ -528,13 +541,12 @@ async def _search_rounds(
                 for language in preferred_languages
                 if language.strip()
             }
+            english_profile = "en" in normalized_languages and all(
+                term.isascii() for term in profile_terms
+            )
             yield ScoutQueryRound(
                 query_variants=profile_terms,
-                preferred_languages=(
-                    ("en",)
-                    if "en" in normalized_languages and all(term.isascii() for term in profile_terms)
-                    else ()
-                ),
+                preferred_languages=("en",) if english_profile else (),
                 relaxation_level=level,
                 specificity=1 / len(profile_terms),
                 strategy="profile_personalized_fallback",
@@ -606,7 +618,13 @@ def _merge_exact_pair(left: CandidateContent, right: CandidateContent) -> Candid
     metadata = dict(other.connector_metadata)
     metadata.update(winner.connector_metadata)
 
-    search_copy = right if "search" in right_origins else left if "search" in left_origins else None
+    search_copy = (
+        right
+        if "search" in right_origins
+        else left
+        if "search" in left_origins
+        else None
+    )
     if search_copy is not None:
         for key, value in search_copy.connector_metadata.items():
             if key.startswith("x_") or key.startswith("retrieval_"):
@@ -614,7 +632,11 @@ def _merge_exact_pair(left: CandidateContent, right: CandidateContent) -> Candid
 
     metadata["x_candidate_origins"] = list(origins)
     metadata["x_candidate_origin"] = (
-        "home_timeline" if "home_timeline" in origins else origins[0] if origins else "search"
+        "home_timeline"
+        if "home_timeline" in origins
+        else origins[0]
+        if origins
+        else "search"
     )
     return replace(winner, connector_metadata=metadata)
 
@@ -745,7 +767,11 @@ def _lexical_relevance(
 ) -> tuple[float, int]:
     searchable = " ".join(
         part
-        for part in (candidate.title or "", candidate.caption or "", " ".join(candidate.tags))
+        for part in (
+            candidate.title or "",
+            candidate.caption or "",
+            " ".join(candidate.tags),
+        )
         if part
     ).casefold()
     candidate_tokens = tuple(token.casefold() for token in _TOKEN.findall(searchable))
@@ -763,10 +789,17 @@ def _lexical_relevance(
         matches = sum(
             1
             for query_token in query_tokens
-            if any(_token_matches(query_token, candidate_token) for candidate_token in candidate_tokens)
+            if any(
+                _token_matches(query_token, candidate_token)
+                for candidate_token in candidate_tokens
+            )
         )
         coverage = matches / len(query_tokens)
-        phrase_bonus = 0.10 if len(query_tokens) > 1 and variant.casefold() in searchable else 0.0
+        phrase_bonus = (
+            0.10
+            if len(query_tokens) > 1 and variant.casefold() in searchable
+            else 0.0
+        )
         score = min(1.0, coverage + phrase_bonus)
         if (score, matches) > (best_score, best_matches):
             best_score, best_matches = score, matches
