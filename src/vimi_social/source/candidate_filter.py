@@ -160,7 +160,9 @@ class FilteringCandidateCurator(CandidateCurator):
         return tuple(result)
 
 
-class FilteringScoutContinuationActivities(ScoutContinuationActivities):
+class FilteringScoutContinuationActivities(
+    ScoutContinuationActivities
+):
     """Persist continuation pages without re-introducing short or duplicate spam."""
 
     def _persist_owned_continuation(
@@ -314,9 +316,19 @@ def _near_duplicate(
     return containment >= 0.88 and jaccard >= 0.70
 
 
-def _representative_key(candidate: CandidateContent) -> tuple[int, int, int]:
+def _representative_key(candidate: CandidateContent) -> tuple[int, int, int, int]:
+    # A Home Timeline candidate only reaches this filter after passing the
+    # source-specific precision gate in RetrievalV3CandidateCurator. Preserve that
+    # validated personalized representative when it collides with a text-near-duplicate
+    # Search API candidate; otherwise the Search copy can replace it and immediately be
+    # subjected to the stricter broad-search gate, dropping the whole duplicate cluster.
+    timeline_validated = int(
+        candidate.connector_metadata.get("x_candidate_origin") == "home_timeline"
+        and candidate.connector_metadata.get("curator_timeline_gate_method")
+        in {"semantic", "lexical_fallback"}
+    )
     duration = candidate.duration_ms if candidate.duration_ms is not None else 0
     engagement = sum(max(0, value) for value in candidate.engagement.values())
     acquisition = candidate.connector_metadata.get("acquisition_url")
     has_acquisition = int(isinstance(acquisition, str) and bool(acquisition))
-    return (duration, engagement, has_acquisition)
+    return (timeline_validated, duration, engagement, has_acquisition)
