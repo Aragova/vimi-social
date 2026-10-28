@@ -2,7 +2,12 @@ from vimi_social.domain.source import AdultClassification, CandidateContent
 from vimi_social.source.retrieval_v3 import RetrievalV3CandidateCurator
 
 
-def _timeline_candidate(source_id: str, text: str) -> CandidateContent:
+def _timeline_candidate(
+    source_id: str,
+    text: str,
+    *,
+    duration_ms: int = 600_000,
+) -> CandidateContent:
     return CandidateContent(
         id=None,
         source="x",
@@ -11,7 +16,7 @@ def _timeline_candidate(source_id: str, text: str) -> CandidateContent:
         author=f"author-{source_id}",
         published_at=None,
         media_type="video",
-        duration_ms=600_000,
+        duration_ms=duration_ms,
         width=1920,
         height=1080,
         title=text,
@@ -50,8 +55,70 @@ def test_timeline_strong_semantic_match_can_pass_without_literal_query_terms() -
     assert [item.source_id for item in ranked] == ["semantic-pass"]
     metadata = ranked[0].connector_metadata
     assert metadata["curator_timeline_gate_method"] == "semantic"
+    assert metadata["curator_timeline_semantic_minimum"] == 0.81
     assert metadata["retrieval_source_specificity"] == 0.0
     assert "retrieval_specificity" not in metadata
+
+
+def test_timeline_long_form_semantic_match_passes_calibrated_floor() -> None:
+    candidate = _timeline_candidate(
+        "long-semantic-pass",
+        "hearts full video",
+        duration_ms=19 * 60 * 1000,
+    )
+
+    ranked = RetrievalV3CandidateCurator().rank(
+        (candidate,),
+        query_variants=("gay porn twink young",),
+        preferred_languages=("en",),
+        limit=1,
+        semantic_scores=(0.818,),
+        minimum_relevance=0.18,
+    )
+
+    assert [item.source_id for item in ranked] == ["long-semantic-pass"]
+    metadata = ranked[0].connector_metadata
+    assert metadata["curator_timeline_gate_method"] == "semantic"
+    assert metadata["curator_timeline_semantic_raw_score"] == 0.818
+    assert metadata["curator_timeline_semantic_minimum"] == 0.81
+
+
+def test_timeline_long_form_semantic_match_below_calibrated_floor_is_rejected() -> None:
+    candidate = _timeline_candidate(
+        "long-semantic-reject",
+        "hearts full video",
+        duration_ms=19 * 60 * 1000,
+    )
+
+    ranked = RetrievalV3CandidateCurator().rank(
+        (candidate,),
+        query_variants=("gay porn twink young",),
+        preferred_languages=("en",),
+        limit=1,
+        semantic_scores=(0.809,),
+        minimum_relevance=0.18,
+    )
+
+    assert ranked == ()
+
+
+def test_timeline_short_video_keeps_stricter_semantic_floor() -> None:
+    candidate = _timeline_candidate(
+        "short-semantic-reject",
+        "hearts full video",
+        duration_ms=2 * 60 * 1000,
+    )
+
+    ranked = RetrievalV3CandidateCurator().rank(
+        (candidate,),
+        query_variants=("gay porn twink young",),
+        preferred_languages=("en",),
+        limit=1,
+        semantic_scores=(0.818,),
+        minimum_relevance=0.18,
+    )
+
+    assert ranked == ()
 
 
 def test_timeline_weak_semantic_match_is_rejected_without_lexical_support() -> None:
