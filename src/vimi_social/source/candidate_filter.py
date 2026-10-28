@@ -215,6 +215,15 @@ def _offset_ranks(
     return tuple(result)
 
 
+def _is_validated_timeline(candidate: CandidateContent) -> bool:
+    metadata = candidate.connector_metadata
+    return (
+        metadata.get("x_candidate_origin") == "home_timeline"
+        and metadata.get("curator_timeline_gate_method")
+        in {"semantic", "lexical_fallback"}
+    )
+
+
 def _with_latest_retrieval_state(
     winner: CandidateContent,
     other: CandidateContent,
@@ -228,6 +237,11 @@ def _with_latest_retrieval_state(
     for key in _CONTINUATION_STATE_KEYS:
         if key in other.connector_metadata:
             metadata[key] = other.connector_metadata[key]
+    # The timeline-specific precision gate has already validated this representative.
+    # Preserve provider cursor/query metadata, but do not restore broad-search
+    # specificity and accidentally subject the winner to the generic Search API gate.
+    if _is_validated_timeline(winner):
+        metadata.pop("retrieval_specificity", None)
     return replace(winner, connector_metadata=metadata)
 
 
@@ -322,11 +336,7 @@ def _representative_key(candidate: CandidateContent) -> tuple[int, int, int, int
     # validated personalized representative when it collides with a text-near-duplicate
     # Search API candidate; otherwise the Search copy can replace it and immediately be
     # subjected to the stricter broad-search gate, dropping the whole duplicate cluster.
-    timeline_validated = int(
-        candidate.connector_metadata.get("x_candidate_origin") == "home_timeline"
-        and candidate.connector_metadata.get("curator_timeline_gate_method")
-        in {"semantic", "lexical_fallback"}
-    )
+    timeline_validated = int(_is_validated_timeline(candidate))
     duration = candidate.duration_ms if candidate.duration_ms is not None else 0
     engagement = sum(max(0, value) for value in candidate.engagement.values())
     acquisition = candidate.connector_metadata.get("acquisition_url")
