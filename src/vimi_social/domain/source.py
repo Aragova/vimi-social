@@ -138,6 +138,7 @@ class ScoutWorkflowInput:
     interest_task_queue: str = "vimi-social-destination"
     seed_candidates: tuple[CandidateContent, ...] = ()
     seed_posts_read: int = 0
+    seed_failure_code: str | None = None
 
     def __post_init__(self) -> None:
         if self.seed_posts_read < 0:
