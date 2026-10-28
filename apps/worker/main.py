@@ -13,13 +13,13 @@ from vimi_social.publication.delivery import PublicationDeliveryActivities
 from vimi_social.publication.preview import PublicationPreviewActivities
 from vimi_social.source.connectors import SourceConnectorRegistry
 from vimi_social.source.continuation import ScoutContinuationActivities
-from vimi_social.source.curator import CandidateCurator
 from vimi_social.source.query_planner import (
     EnglishIntentTranslator,
     FallbackEnglishIntentTranslator,
     MultilingualQueryPlanner,
     OpenAIEnglishIntentTranslator,
 )
+from vimi_social.source.unified_continuation import UnifiedContinuationCandidateCurator
 from vimi_social.source.unified_scout import UnifiedScoutActivities
 from vimi_social.source.x_connector import XSourceConnector
 from vimi_social.source.x_user_context import X_HOME_TIMELINE_SEED_LIMIT
@@ -119,7 +119,7 @@ async def run() -> None:
         registry,
         messenger,
         query_planner=query_planner,
-        curator=CandidateCurator(),
+        curator=UnifiedContinuationCandidateCurator(),
         semantic_scorer=local_ai_client,
         semantic_minimum_relevance=settings.semantic_relevance_min_score,
         batch_size=settings.scout_retrieval_round_limit,
