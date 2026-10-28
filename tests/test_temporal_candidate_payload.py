@@ -59,6 +59,7 @@ async def test_scout_workflow_input_with_timeline_seed_round_trips_temporal_conv
         execution_token="00000000-0000-0000-0000-000000000001",
         seed_candidates=(candidate,),
         seed_posts_read=1,
+        seed_failure_code="TIMELINE_UNAVAILABLE",
     )
 
     payloads = await DataConverter.default.encode([expected])
