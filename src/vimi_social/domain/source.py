@@ -2,6 +2,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 from uuid import UUID
 
 from vimi_social.domain.identity import OperationKey, TenantId
@@ -65,7 +66,11 @@ class CandidateContent:
     explicitness_score: float | None
     provenance_hint: str
     availability: str
-    connector_metadata: Mapping[str, object]
+    # Connector metadata is JSON-shaped provider data that crosses Temporal
+    # activity/workflow boundaries. ``object`` is too concrete for Temporal's
+    # typed JSON converter (it attempts to instantiate ``object`` on decode),
+    # while ``Any`` preserves the JSON values exactly as decoded.
+    connector_metadata: Mapping[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
