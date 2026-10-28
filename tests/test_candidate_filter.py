@@ -131,7 +131,12 @@ def test_filter_suppresses_near_duplicate_promotional_templates() -> None:
 
 def test_filter_keeps_precision_validated_timeline_near_duplicate() -> None:
     caption = "Top and bottom Gay video promo repeated caption"
-    search = _candidate("search", caption, duration_ms=1_800_000, likes=100)
+    search = _with_retrieval_state(
+        _candidate("search", caption, duration_ms=1_800_000, likes=100),
+        level=3,
+        language_mode="ru+en",
+        token="latest-token",
+    )
     timeline = _candidate("timeline", caption, duration_ms=1_020_000, likes=1)
     metadata = dict(timeline.connector_metadata)
     metadata.update(
@@ -146,8 +151,12 @@ def test_filter_keeps_precision_validated_timeline_near_duplicate() -> None:
     filtered = filter_scout_candidates((search, timeline))
 
     assert [candidate.source_id for candidate in filtered] == ["timeline"]
-    assert filtered[0].connector_metadata["x_candidate_origin"] == "home_timeline"
-    assert filtered[0].connector_metadata["curator_timeline_gate_method"] == "semantic"
+    metadata = filtered[0].connector_metadata
+    assert metadata["x_candidate_origin"] == "home_timeline"
+    assert metadata["curator_timeline_gate_method"] == "semantic"
+    assert metadata["x_next_token"] == "latest-token"
+    assert metadata["retrieval_relaxation_level"] == 3
+    assert "retrieval_specificity" not in metadata
 
 
 def test_filter_does_not_merge_distinct_content_with_some_shared_tags() -> None:
@@ -248,7 +257,7 @@ def test_filtered_curator_prefers_five_to_thirty_minute_video_on_equal_relevance
     )
 
     ranked = FilteringCandidateCurator().rank(
-        (one_minute, ten_minutes),
+        (one-minute, ten-minutes),
         query_variants=("Bangkok nightlife",),
         preferred_languages=("en",),
         limit=10,
