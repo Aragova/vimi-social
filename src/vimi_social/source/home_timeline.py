@@ -24,7 +24,24 @@ _CURRENT_HOME_TIMELINE_SEEDS: ContextVar[tuple[CandidateContent, ...]] = Context
     "vimi_current_home_timeline_seeds",
     default=(),
 )
+_CURRENT_HOME_TIMELINE_POSTS_READ: ContextVar[int] = ContextVar(
+    "vimi_current_home_timeline_posts_read",
+    default=0,
+)
+_CURRENT_HOME_TIMELINE_FAILURE_CODE: ContextVar[str | None] = ContextVar(
+    "vimi_current_home_timeline_failure_code",
+    default=None,
+)
 _X_MIN_PAGE_SIZE = 10
+_DEFINITIVE_NO_TIMELINE_READ_FAILURES = frozenset(
+    {
+        "DISABLED_BY_BUDGET",
+        "NO_ACCOUNT",
+        "MULTIPLE_ACCOUNTS",
+        "NO_PROFILE",
+        "CREDENTIAL_UNAVAILABLE",
+    }
+)
 
 
 class HomeTimelineSeedRegistry(SourceConnectorRegistry):
@@ -36,18 +53,33 @@ class HomeTimelineSeedRegistry(SourceConnectorRegistry):
         *,
         seed_getter: Callable[[], tuple[CandidateContent, ...]] | None = None,
         provider_read_budget: int | None = None,
+        timeline_reserved_budget: int = 0,
+        seed_posts_read_getter: Callable[[], int] | None = None,
+        seed_failure_code_getter: Callable[[], str | None] | None = None,
     ) -> None:
         self._delegate = delegate
         self._seed_getter = seed_getter or _CURRENT_HOME_TIMELINE_SEEDS.get
         self._provider_read_budget = (
             None if provider_read_budget is None else max(0, provider_read_budget)
         )
+        self._timeline_reserved_budget = max(0, timeline_reserved_budget)
+        self._seed_posts_read_getter = (
+            seed_posts_read_getter or _CURRENT_HOME_TIMELINE_POSTS_READ.get
+        )
+        self._seed_failure_code_getter = (
+            seed_failure_code_getter or _CURRENT_HOME_TIMELINE_FAILURE_CODE.get
+        )
 
     def route(self, requested_sources: tuple[str, ...]) -> tuple[SourceConnector, ...]:
+        provider_limit = self._provider_read_budget
+        if provider_limit is not None and self._timeline_reserved_budget:
+            provider_limit += _reclaimed_timeline_budget(
+                reserved=self._timeline_reserved_budget,
+                posts_read=self._seed_posts_read_getter(),
+                failure_code=self._seed_failure_code_getter(),
+            )
         shared_budget = (
-            None
-            if self._provider_read_budget is None
-            else _ProviderReadBudget(self._provider_read_budget)
+            None if provider_limit is None else _ProviderReadBudget(provider_limit)
         )
         return tuple(
             _HomeTimelineSeedConnector(
@@ -146,6 +178,12 @@ class HomeTimelineRetrievalV3ScoutActivities(RetrievalV3ScoutActivities):
         workflow_input: ScoutWorkflowInput,
     ) -> ScoutRunResult:
         seed_token = _CURRENT_HOME_TIMELINE_SEEDS.set(workflow_input.seed_candidates)
+        posts_read_token = _CURRENT_HOME_TIMELINE_POSTS_READ.set(
+            workflow_input.seed_posts_read
+        )
+        failure_code_token = _CURRENT_HOME_TIMELINE_FAILURE_CODE.set(
+            workflow_input.seed_failure_code
+        )
         try:
             # PersonalizedScoutActivities owns the personalization context around
             # this call, so timeline seeds receive the same lexical + E5 taste,
@@ -153,7 +191,30 @@ class HomeTimelineRetrievalV3ScoutActivities(RetrievalV3ScoutActivities):
             # Search API candidates. No OAuth credential crosses this boundary.
             return await super().execute_scout_task(workflow_input)
         finally:
+            _CURRENT_HOME_TIMELINE_FAILURE_CODE.reset(failure_code_token)
+            _CURRENT_HOME_TIMELINE_POSTS_READ.reset(posts_read_token)
             _CURRENT_HOME_TIMELINE_SEEDS.reset(seed_token)
+
+
+def _reclaimed_timeline_budget(
+    *,
+    reserved: int,
+    posts_read: int,
+    failure_code: str | None,
+) -> int:
+    reserved = max(0, reserved)
+    if reserved == 0:
+        return 0
+    if posts_read > 0:
+        charged = min(reserved, posts_read)
+    elif failure_code in _DEFINITIVE_NO_TIMELINE_READ_FAILURES:
+        charged = 0
+    else:
+        # A successful empty page or provider/auth failure is ambiguous from a
+        # billing perspective. Keep the full reserve instead of risking a total
+        # read count above the configured budget.
+        charged = reserved
+    return reserved - charged
 
 
 def _prepare_home_timeline_seeds(
