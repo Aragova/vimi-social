@@ -103,6 +103,30 @@ def test_exact_duplicate_merges_timeline_origin_and_search_state() -> None:
     assert candidate.connector_metadata["retrieval_relaxation_level"] == 1
 
 
+def test_exact_duplicate_with_search_origin_keeps_search_gate() -> None:
+    timeline_only = prepare_timeline_seeds((_candidate("shared-gate"),))[0]
+    search = _prepare_search(_candidate("shared-gate"))
+    merged = merge_exact_candidates((timeline_only, search))[0]
+
+    assert merged.connector_metadata["x_candidate_origins"] == ["home_timeline", "search"]
+    assert not passes_query_gate(
+        timeline_only,
+        semantic_raw=0.83,
+        lexical=0.0,
+        lexical_matches=0,
+        query_token_count=4,
+        minimum_relevance=0.18,
+    )
+    assert passes_query_gate(
+        merged,
+        semantic_raw=0.83,
+        lexical=0.0,
+        lexical_matches=0,
+        query_token_count=4,
+        minimum_relevance=0.18,
+    )
+
+
 def test_exact_duplicate_latest_search_copy_retires_old_cursor() -> None:
     older = _prepare_search(
         _candidate(
