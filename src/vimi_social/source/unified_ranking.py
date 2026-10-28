@@ -163,7 +163,21 @@ def passes_query_gate(
             else TIMELINE_SEMANTIC_MINIMUM
         )
         semantic_ok = semantic_raw is not None and semantic_raw >= semantic_minimum
-        lexical_required = min(TIMELINE_LEXICAL_MIN_MATCHES, max(0, query_token_count))
+
+        # lexical_relevance returns the score and match count from the same best query
+        # variant. Infer that variant's token count from coverage instead of counting the
+        # union of alternative translations (for example, "футбол" + "football").
+        # This preserves the two-token precision requirement for multi-word queries while
+        # allowing a complete one-token translated variant to pass with one lexical hit.
+        lexical_required = 0
+        if lexical_matches > 0 and lexical > 0.0:
+            inferred_variant_tokens = math.ceil(lexical_matches / lexical)
+            available_tokens = max(1, query_token_count)
+            lexical_required = min(
+                TIMELINE_LEXICAL_MIN_MATCHES,
+                available_tokens,
+                max(1, inferred_variant_tokens),
+            )
         lexical_ok = lexical_required > 0 and lexical_matches >= lexical_required
         return semantic_ok or lexical_ok
 
