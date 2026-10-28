@@ -2,7 +2,13 @@ from vimi_social.domain.source import AdultClassification, CandidateContent
 from vimi_social.source.unified_continuation import UnifiedContinuationCandidateCurator
 
 
-def _candidate(source_id: str, *, duration_ms: int, text: str) -> CandidateContent:
+def _candidate(
+    source_id: str,
+    *,
+    duration_ms: int,
+    text: str,
+    metadata: dict[str, object] | None = None,
+) -> CandidateContent:
     return CandidateContent(
         id=None,
         source="x",
@@ -22,7 +28,7 @@ def _candidate(source_id: str, *, duration_ms: int, text: str) -> CandidateConte
         explicitness_score=None,
         provenance_hint="PUBLIC_X_POST_REUSE_RIGHTS_NOT_ESTABLISHED",
         availability="DISCOVERED_METADATA_ONLY",
-        connector_metadata={},
+        connector_metadata=metadata or {},
     )
 
 
@@ -32,7 +38,6 @@ def test_unified_continuation_rejects_known_sub_minute_video() -> None:
         _candidate("short", duration_ms=59_000, text="same caption"),
         _candidate("long", duration_ms=61_000, text="same caption"),
     )
-
     ranked = curator.rank(
         candidates,
         query_variants=("same", "caption"),
@@ -40,7 +45,6 @@ def test_unified_continuation_rejects_known_sub_minute_video() -> None:
         limit=10,
         minimum_relevance=0.0,
     )
-
     assert [candidate.source_id for candidate in ranked] == ["long"]
 
 
@@ -50,7 +54,6 @@ def test_unified_continuation_keeps_text_near_duplicates_with_distinct_ids() -> 
         _candidate("one", duration_ms=120_000, text="same caption"),
         _candidate("two", duration_ms=120_000, text="same caption"),
     )
-
     ranked = curator.rank(
         candidates,
         query_variants=("same", "caption"),
@@ -58,5 +61,23 @@ def test_unified_continuation_keeps_text_near_duplicates_with_distinct_ids() -> 
         limit=10,
         minimum_relevance=0.0,
     )
-
     assert {candidate.source_id for candidate in ranked} == {"one", "two"}
+
+
+def test_unified_continuation_uses_initial_search_relevance_gate() -> None:
+    curator = UnifiedContinuationCandidateCurator()
+    candidate = _candidate(
+        "semantic-only",
+        duration_ms=120_000,
+        text="unrelated caption words",
+        metadata={"retrieval_specificity": 0.25},
+    )
+    ranked = curator.rank(
+        (candidate,),
+        query_variants=("gay", "twink"),
+        preferred_languages=("en",),
+        limit=10,
+        semantic_scores=(0.85,),
+        minimum_relevance=0.18,
+    )
+    assert [item.source_id for item in ranked] == ["semantic-only"]
