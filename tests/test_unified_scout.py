@@ -1,10 +1,10 @@
 from vimi_social.domain.source import AdultClassification, CandidateContent
 from vimi_social.source.query_planner import ScoutQueryRound
 from vimi_social.source.unified_scout import (
-    _merge_exact_candidates,
-    _passes_query_gate,
-    _prepare_search_candidate,
-    _prepare_timeline_seeds,
+    _merge_exact_candidates,  # pyright: ignore[reportPrivateUsage]
+    _passes_query_gate,  # pyright: ignore[reportPrivateUsage]
+    _prepare_search_candidate,  # pyright: ignore[reportPrivateUsage]
+    _prepare_timeline_seeds,  # pyright: ignore[reportPrivateUsage]
 )
 
 
