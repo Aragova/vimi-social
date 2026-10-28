@@ -62,6 +62,7 @@ class ScoutWorkflow:
             workflow_input,
             seed_candidates=seed_result.candidates,
             seed_posts_read=seed_result.posts_read,
+            seed_failure_code=seed_result.failure_code,
         )
         result = await workflow.execute_activity(
             "execute_scout_task",
