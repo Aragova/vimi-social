@@ -11,6 +11,17 @@ from vimi_social.source.connectors import SourceConnectorRegistry, SourceConnect
 from vimi_social.source.repository import SourceTaskRepository
 
 
+def sources_available(
+    registry: SourceConnectorRegistry,
+    requested_sources: tuple[str, ...],
+) -> bool:
+    try:
+        registry.route(requested_sources)
+    except SourceConnectorUnavailable:
+        return False
+    return True
+
+
 class ScoutSourcePreflightActivities:
     """Validate source routing before any paid user-context provider read."""
 
@@ -28,11 +39,7 @@ class ScoutSourcePreflightActivities:
     @activity.defn(name="validate_scout_sources")
     async def validate_scout_sources(self, workflow_input: ScoutWorkflowInput) -> bool:
         task = self._authorized_task(workflow_input)
-        try:
-            self._registry.route(task.requested_sources)
-        except SourceConnectorUnavailable:
-            return False
-        return True
+        return sources_available(self._registry, task.requested_sources)
 
     def _authorized_task(self, workflow_input: ScoutWorkflowInput) -> SourceTask:
         operation_key = OperationKey(workflow_input.operation_key)
